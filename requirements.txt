@@ -1,0 +1,33 @@
+# === Core ML ===
+torch
+xgboost
+scikit-learn
+joblib
+
+# === Data ===
+ccxt
+pandas
+numpy
+pyarrow
+
+# === Web API ===
+uvicorn
+fastapi
+websocket-client
+
+# === NLP / Sentiment ===
+transformers
+feedparser
+beautifulsoup4
+requests
+
+# === Math / Quant ===
+scipy
+filterpy
+hmmlearn
+
+# === System ===
+python-dotenv
+GPUtil
+plyer
+platformdirs

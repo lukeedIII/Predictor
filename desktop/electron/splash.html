@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Nexus Shadow-Quant</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: transparent;
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      color: #E8ECF1;
+      overflow: hidden;
+      user-select: none;
+      -webkit-app-region: drag;
+    }
+
+    .splash {
+      width: 520px;
+      height: 380px;
+      background: linear-gradient(145deg, #0A0E17 0%, #0F1520 40%, #121A28 100%);
+      border: 1px solid rgba(129, 140, 248, 0.15);
+      border-radius: 20px;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      overflow: hidden;
+    }
+
+    /* Animated background particles */
+    .splash::before {
+      content: '';
+      position: absolute;
+      top: -50%;
+      left: -50%;
+      width: 200%;
+      height: 200%;
+      background: radial-gradient(circle at 30% 40%, rgba(129, 140, 248, 0.04) 0%, transparent 50%),
+        radial-gradient(circle at 70% 60%, rgba(96, 165, 250, 0.03) 0%, transparent 50%),
+        radial-gradient(circle at 50% 80%, rgba(52, 211, 153, 0.02) 0%, transparent 40%);
+      animation: drift 12s ease-in-out infinite;
+    }
+
+    @keyframes drift {
+
+      0%,
+      100% {
+        transform: translate(0, 0) rotate(0deg);
+      }
+
+      33% {
+        transform: translate(10px, -15px) rotate(1deg);
+      }
+
+      66% {
+        transform: translate(-8px, 10px) rotate(-1deg);
+      }
+    }
+
+    /* Glow ring around logo */
+    .logo-ring {
+      width: 100px;
+      height: 100px;
+      border-radius: 50%;
+      border: 2px solid rgba(129, 140, 248, 0.3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      position: relative;
+      z-index: 1;
+      animation: ring-pulse 3s ease-in-out infinite;
+    }
+
+    @keyframes ring-pulse {
+
+      0%,
+      100% {
+        box-shadow: 0 0 20px rgba(129, 140, 248, 0.1), inset 0 0 15px rgba(129, 140, 248, 0.05);
+      }
+
+      50% {
+        box-shadow: 0 0 40px rgba(129, 140, 248, 0.2), inset 0 0 25px rgba(129, 140, 248, 0.1);
+      }
+    }
+
+    .logo-icon {
+      font-size: 42px;
+      filter: drop-shadow(0 0 15px rgba(129, 140, 248, 0.4));
+    }
+
+    .title {
+      font-size: 22px;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      margin-top: 20px;
+      z-index: 1;
+      background: linear-gradient(135deg, #E8ECF1 0%, #818CF8 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+
+    .subtitle {
+      font-size: 11px;
+      letter-spacing: 0.15em;
+      color: #566A84;
+      margin-top: 6px;
+      z-index: 1;
+      text-transform: uppercase;
+      font-weight: 500;
+    }
+
+    /* Progress area */
+    .progress-area {
+      margin-top: 36px;
+      width: 320px;
+      z-index: 1;
+    }
+
+    .progress-bar {
+      width: 100%;
+      height: 4px;
+      background: rgba(129, 140, 248, 0.08);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+
+    .progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, #818CF8, #60A5FA);
+      border-radius: 2px;
+      transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+      box-shadow: 0 0 12px rgba(129, 140, 248, 0.4);
+    }
+
+    .progress-text {
+      margin-top: 12px;
+      font-size: 12px;
+      color: #8A9BB5;
+      text-align: center;
+      font-weight: 500;
+      letter-spacing: 0.02em;
+      min-height: 18px;
+      transition: color 0.3s ease;
+    }
+
+    .progress-text.error {
+      color: #F87171;
+    }
+
+    .progress-fill.error {
+      background: linear-gradient(90deg, #EF4444, #F87171);
+      box-shadow: 0 0 12px rgba(239, 68, 68, 0.4);
+    }
+
+    .error-icon {
+      font-size: 20px;
+      filter: drop-shadow(0 0 8px rgba(239, 68, 68, 0.4));
+    }
+
+    .progress-step {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      justify-content: center;
+    }
+
+    @keyframes spin-dot {
+      0% {
+        transform: rotate(0deg);
+      }
+
+      100% {
+        transform: rotate(360deg);
+      }
+    }
+
+    .spinner {
+      width: 12px;
+      height: 12px;
+      border: 2px solid rgba(129, 140, 248, 0.2);
+      border-top-color: #818CF8;
+      border-radius: 50%;
+      animation: spin-dot 0.8s linear infinite;
+    }
+
+    .version {
+      position: absolute;
+      bottom: 14px;
+      font-size: 10px;
+      color: #3B4A60;
+      letter-spacing: 0.05em;
+    }
+  </style>
+</head>
+
+<body>
+  <div class="splash">
+    <div class="logo-ring">
+      <span class="logo-icon">⚡</span>
+    </div>
+    <div class="title">Nexus Shadow-Quant</div>
+    <div class="subtitle">Institutional Crypto Intelligence</div>
+
+    <div class="progress-area">
+      <div class="progress-bar">
+        <div class="progress-fill" id="progressFill"></div>
+      </div>
+      <div class="progress-text">
+        <div class="progress-step">
+          <div class="spinner"></div>
+          <span id="statusText">Initializing engine...</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="version">v6.0.1 Beta Stable</div>
+  </div>
+
+  <script>
+    const fill = document.getElementById('progressFill');
+    const text = document.getElementById('statusText');
+
+    // Listen for boot progress from main process
+    const { ipcRenderer } = require('electron');
+    ipcRenderer.on('boot-progress', (_e, data) => {
+      if (data.stage === 'error') {
+        errorState = true;
+        fill.style.width = '100%';
+        fill.classList.add('error');
+        document.querySelector('.progress-text').classList.add('error');
+        document.querySelector('.spinner').style.display = 'none';
+        text.innerHTML = '<span class="error-icon">⛔</span> ' + (data.message || 'System check failed');
+        return;
+      }
+      if (data.progress >= 0) {
+        fill.style.width = data.progress + '%';
+      }
+      text.textContent = data.message || 'Loading...';
+    });
+
+    // Fallback animation if no IPC
+    let fakeProgress = 0;
+    let errorState = false;
+    const steps = [
+      [8, 'Checking system requirements...'],
+      [15, 'Initializing engine...'],
+      [30, 'Connecting to Binance...'],
+      [50, 'Loading market data...'],
+      [65, 'Initializing AI predictor...'],
+      [80, 'Checking model status...'],
+      [90, 'Starting paper trader...'],
+    ];
+    let stepIdx = 0;
+
+    setInterval(() => {
+      if (stepIdx < steps.length) {
+        const [target, msg] = steps[stepIdx];
+        if (fakeProgress < target) {
+          fakeProgress += 1;
+          fill.style.width = fakeProgress + '%';
+        } else {
+          text.textContent = msg;
+          stepIdx++;
+        }
+      }
+    }, 120);
+  </script>
+</body>
+
+</html>
