@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { IconSettings, IconWarning } from '../components/Icons';
 
 import { API_BASE } from '../hooks/useApi';
 const API = API_BASE;
@@ -141,7 +142,7 @@ export default function Settings() {
         <div className="settings-page">
             {/* Header */}
             <div className="mb-32">
-                <h1 className="settings-title">⚙️ Settings</h1>
+                <h1 className="settings-title"><IconSettings size={20} style={{ marginRight: 8, verticalAlign: -3 }} /> Settings</h1>
                 <p className="settings-subtitle">
                     Configure API keys and preferences. Keys are stored locally on your device.
                 </p>
@@ -201,7 +202,7 @@ export default function Settings() {
                                         color: vResult.valid ? 'var(--positive)' : 'var(--negative)',
                                     }}
                                 >
-                                    {vResult.valid ? '✅' : '❌'} {vResult.message}
+                                    {vResult.valid ? '✓' : '✗'} {vResult.message}
                                 </div>
                             )}
                         </div>
@@ -217,7 +218,7 @@ export default function Settings() {
                         onClick={handleSave}
                         disabled={saving}
                     >
-                        {saving ? 'Saving...' : '💾 Save All Keys'}
+                        {saving ? 'Saving...' : 'Save All Keys'}
                     </button>
                     {saveResult && (
                         <span className="text-13 text-positive">{saveResult}</span>
@@ -247,7 +248,7 @@ export default function Settings() {
             {/* Disclaimer */}
             <div className="mt-24 settings-disclaimer">
                 <p>
-                    ⚠️ <strong>Research Tool Disclaimer</strong> — Nexus Shadow-Quant is an educational
+                    <IconWarning size={14} style={{ marginRight: 6, verticalAlign: -2, color: 'var(--warning)' }} /> <strong>Research Tool Disclaimer</strong> — Nexus Shadow-Quant is an educational
                     and research tool. It is NOT financial advice. All predictions are statistical models
                     and do NOT guarantee profits. You are fully responsible for any trading decisions.
                 </p>

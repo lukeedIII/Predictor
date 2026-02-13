@@ -1,8 +1,13 @@
-import { useState, useEffect, useRef, Component, type ReactNode, type ErrorInfo } from 'react';
+import { useState, useEffect, useRef, useCallback, Component, type ReactNode, type ErrorInfo } from 'react';
 import { HashRouter, Routes, Route, NavLink } from 'react-router-dom';
 import { useApi } from './hooks/useApi';
 import { useKeyboardShortcuts, SHORTCUTS } from './hooks/useKeyboardShortcuts';
-import { WebSocketProvider, useWebSocket } from './hooks/useWebSocket';
+import { connectLiveWS, useLivePrice, useLiveChangePct, useLiveConnected } from './stores/liveStore';
+import { Toaster } from './stores/toastStore';
+import {
+  IconZap, IconDashboard, IconTrending, IconBot, IconSettings,
+  IconClock, IconMonitor, IconBrain, IconActivity, IconKeyboard, IconX,
+} from './components/Icons';
 import Dashboard from './pages/Dashboard';
 import PaperTrading from './pages/PaperTrading';
 import NexusAgent from './pages/NexusAgent';
@@ -42,12 +47,12 @@ function Titlebar() {
   const api = window.electronAPI;
   return (
     <div className="titlebar">
-      <span className="titlebar-title">⚡ NEXUS SHADOW-QUANT</span>
+      <span className="titlebar-title"><IconZap size={14} style={{ marginRight: 6, verticalAlign: -2 }} /> NEXUS SHADOW-QUANT</span>
       {api && (
         <div className="titlebar-controls">
-          <button className="titlebar-btn minimize" onClick={() => api.minimize()} />
-          <button className="titlebar-btn maximize" onClick={() => api.maximize()} />
-          <button className="titlebar-btn close" onClick={() => api.close()} />
+          <button className="titlebar-btn minimize" onClick={() => api.minimize()} aria-label="Minimize window" />
+          <button className="titlebar-btn maximize" onClick={() => api.maximize()} aria-label="Maximize window" />
+          <button className="titlebar-btn close" onClick={() => api.close()} aria-label="Close window" />
         </div>
       )}
     </div>
@@ -73,23 +78,23 @@ function Sidebar() {
 
   return (
     <div className="sidebar">
-      <div className="sidebar-logo">⚡</div>
+      <div className="sidebar-logo"><IconZap size={22} /></div>
       <nav className="sidebar-nav">
         <NavLink to="/" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`} end>
-          <span className="nav-icon" data-tooltip="Dashboard (Alt+1)">📊</span>
+          <span className="nav-icon" data-tooltip="Dashboard (Alt+1)" aria-label="Dashboard"><IconDashboard size={20} /></span>
         </NavLink>
         <NavLink to="/trading" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="nav-icon" data-tooltip="Paper Trading (Alt+2)">💹</span>
+          <span className="nav-icon" data-tooltip="Paper Trading (Alt+2)" aria-label="Paper Trading"><IconTrending size={20} /></span>
         </NavLink>
         <NavLink to="/agent" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="nav-icon" data-tooltip="Nexus Agent (Alt+3)">🤖</span>
+          <span className="nav-icon" data-tooltip="Nexus Agent (Alt+3)" aria-label="Nexus Agent"><IconBot size={20} /></span>
         </NavLink>
         <NavLink to="/settings" className={({ isActive }) => `nav-item ${isActive ? 'active' : ''}`}>
-          <span className="nav-icon" data-tooltip="Settings (Alt+4)">⚙️</span>
+          <span className="nav-icon" data-tooltip="Settings (Alt+4)" aria-label="Settings"><IconSettings size={20} /></span>
         </NavLink>
       </nav>
       <div className="sidebar-status">
-        <div className={`status-dot ${statusClass}`} data-tooltip={isReady ? 'System Online' : 'Loading...'} />
+        <div className={`status-dot ${statusClass}`} data-tooltip={isReady ? 'System Online' : 'Loading...'} aria-label={isReady ? 'System Online' : 'Loading'} />
         <span style={{ fontSize: 9, color: 'var(--text-4)' }}>
           {status?.version || '...'}
         </span>
@@ -109,7 +114,9 @@ function StatusBar() {
   };
 
   const { data: status } = useApi<StatusData>('/api/status', 5000);
-  const ws = useWebSocket();
+  const { connected: wsConnected, wsConnected: feedConnected } = useLiveConnected();
+  const livePrice = useLivePrice();
+  const changePct = useLiveChangePct();
 
   // UTC Clock — ticks every second
   const [utcTime, setUtcTime] = useState('');
@@ -128,39 +135,39 @@ function StatusBar() {
   const [priceDirection, setPriceDirection] = useState<'up' | 'down' | 'neutral'>('neutral');
 
   useEffect(() => {
-    if (ws.price !== null && prevPriceRef.current !== null) {
-      if (ws.price > prevPriceRef.current) setPriceDirection('up');
-      else if (ws.price < prevPriceRef.current) setPriceDirection('down');
+    if (livePrice !== null && prevPriceRef.current !== null) {
+      if (livePrice > prevPriceRef.current) setPriceDirection('up');
+      else if (livePrice < prevPriceRef.current) setPriceDirection('down');
     }
-    prevPriceRef.current = ws.price;
+    prevPriceRef.current = livePrice;
 
     // Reset flash after animation
     const timer = setTimeout(() => setPriceDirection('neutral'), 600);
     return () => clearTimeout(timer);
-  }, [ws.price]);
+  }, [livePrice]);
 
   const priceColor = priceDirection === 'up' ? 'var(--positive)'
     : priceDirection === 'down' ? 'var(--negative)'
       : 'var(--text-1)';
 
-  const changePctColor = (ws.change_pct ?? 0) >= 0 ? 'var(--positive)' : 'var(--negative)';
+  const changePctColor = (changePct ?? 0) >= 0 ? 'var(--positive)' : 'var(--negative)';
 
   return (
     <div className="status-bar">
       {/* UTC Clock */}
       <div className="status-bar-item status-bar-clock">
-        🕐 <span className="mono">{utcTime}</span> UTC
+        <IconClock size={13} style={{ marginRight: 4, verticalAlign: -2 }} /> <span className="mono">{utcTime}</span> UTC
       </div>
 
       {/* Live BTC Price */}
-      {ws.price !== null && ws.price > 0 && (
+      {livePrice !== null && livePrice > 0 && (
         <div className={`status-bar-item status-bar-price ${priceDirection !== 'neutral' ? 'price-flash-' + priceDirection : ''}`}>
           <span className="mono" style={{ color: priceColor, fontWeight: 600 }}>
-            ${ws.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+            ${livePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
           </span>
-          {ws.change_pct !== null && (
+          {changePct !== null && (
             <span className="mono" style={{ color: changePctColor, fontSize: '0.75rem', marginLeft: 6 }}>
-              {ws.change_pct >= 0 ? '+' : ''}{ws.change_pct.toFixed(2)}%
+              {changePct >= 0 ? '+' : ''}{changePct.toFixed(2)}%
             </span>
           )}
         </div>
@@ -174,34 +181,34 @@ function StatusBar() {
 
       {/* Our internal WS */}
       <div className="status-bar-item">
-        <span style={{ color: ws.connected ? 'var(--positive)' : 'var(--text-4)' }}>●</span>
-        WS {ws.connected ? 'Live' : 'Off'}
+        <span style={{ color: wsConnected ? 'var(--positive)' : 'var(--text-4)' }}>●</span>
+        WS {wsConnected ? 'Live' : 'Off'}
       </div>
 
       {/* Binance WS health */}
       <div className="status-bar-item">
-        <span style={{ color: ws.ws_connected ? 'var(--positive)' : 'var(--warning)' }}>●</span>
-        Feed {ws.ws_connected ? 'Live' : 'Off'}
+        <span style={{ color: feedConnected ? 'var(--positive)' : 'var(--warning)' }}>●</span>
+        Feed {feedConnected ? 'Live' : 'Off'}
       </div>
 
       {status?.device && (
         <div className="status-bar-item">
-          🖥️ {status.device.toUpperCase()}
+          <IconMonitor size={13} style={{ marginRight: 4, verticalAlign: -2 }} /> {status.device.toUpperCase()}
         </div>
       )}
       {status?.model_trained !== undefined && (
         <div className="status-bar-item">
-          🧠 {status.model_trained ? 'Model Ready' : 'Untrained'}
+          <IconBrain size={13} style={{ marginRight: 4, verticalAlign: -2 }} /> {status.model_trained ? 'Model Ready' : 'Untrained'}
         </div>
       )}
       {status?.bot_running !== undefined && (
         <div className="status-bar-item">
-          🤖 {status.bot_running ? 'Auto-Trading' : 'Standby'}
+          <IconBot size={13} style={{ marginRight: 4, verticalAlign: -2 }} /> {status.bot_running ? 'Auto-Trading' : 'Standby'}
         </div>
       )}
       {status?.positions_count !== undefined && status.positions_count > 0 && (
         <div className="status-bar-item">
-          📈 {status.positions_count} Open
+          <IconActivity size={13} style={{ marginRight: 4, verticalAlign: -2 }} /> {status.positions_count} Open
         </div>
       )}
     </div>
@@ -210,13 +217,64 @@ function StatusBar() {
 
 // ─── Shortcuts Help Overlay ──────────────────────
 function ShortcutsHelp({ show, onClose }: { show: boolean; onClose: () => void }) {
+  const modalRef = useRef<HTMLDivElement>(null);
+  const previousFocus = useRef<HTMLElement | null>(null);
+
+  // Focus trap + ESC handler
+  const handleKeyDown = useCallback((e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onClose();
+      return;
+    }
+    if (e.key === 'Tab' && modalRef.current) {
+      const focusable = modalRef.current.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])'
+      );
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (e.shiftKey) {
+        if (document.activeElement === first) { e.preventDefault(); last.focus(); }
+      } else {
+        if (document.activeElement === last) { e.preventDefault(); first.focus(); }
+      }
+    }
+  }, [onClose]);
+
+  useEffect(() => {
+    if (show) {
+      previousFocus.current = document.activeElement as HTMLElement;
+      document.addEventListener('keydown', handleKeyDown);
+      // Focus the close button after a tick so the modal is rendered
+      requestAnimationFrame(() => {
+        const btn = modalRef.current?.querySelector<HTMLElement>('.shortcuts-close');
+        btn?.focus();
+      });
+    }
+    return () => {
+      document.removeEventListener('keydown', handleKeyDown);
+      if (!show && previousFocus.current) {
+        previousFocus.current.focus();
+        previousFocus.current = null;
+      }
+    };
+  }, [show, handleKeyDown]);
+
   if (!show) return null;
   return (
-    <div className="shortcuts-overlay" onClick={onClose}>
-      <div className="shortcuts-modal" onClick={e => e.stopPropagation()}>
+    <div className="shortcuts-overlay" onClick={onClose} role="presentation">
+      <div
+        ref={modalRef}
+        className="shortcuts-modal"
+        onClick={e => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        aria-label="Keyboard shortcuts"
+      >
         <div className="shortcuts-header">
-          <span>⌨️ Keyboard Shortcuts</span>
-          <button className="shortcuts-close" onClick={onClose}>✕</button>
+          <span><IconKeyboard size={16} style={{ marginRight: 6, verticalAlign: -3 }} /> Keyboard Shortcuts</span>
+          <button className="shortcuts-close" onClick={onClose} aria-label="Close shortcuts panel"><IconX size={16} /></button>
         </div>
         <div className="shortcuts-list">
           {SHORTCUTS.map(s => (
@@ -269,7 +327,7 @@ export default function App() {
           height: '100vh', color: 'var(--text-3)', fontFamily: 'var(--font-mono)',
           fontSize: 14, flexDirection: 'column', gap: 12,
         }}>
-          <div style={{ fontSize: 32 }}>⚡</div>
+          <IconZap size={32} style={{ color: 'var(--accent)' }} />
           <div>Connecting to backend...</div>
         </div>
       </>
@@ -303,8 +361,15 @@ export default function App() {
 // Inner shell — needs to be inside HashRouter so useNavigate works
 function AppShell() {
   const { showHelp, setShowHelp } = useKeyboardShortcuts();
+
+  // Start WebSocket connection on mount (replaces old WebSocketProvider)
+  useEffect(() => {
+    const disconnect = connectLiveWS();
+    return disconnect;
+  }, []);
+
   return (
-    <WebSocketProvider>
+    <>
       <Titlebar />
       <div className="app-layout">
         <Sidebar />
@@ -321,6 +386,7 @@ function AppShell() {
       </div>
       <StatusBar />
       <ShortcutsHelp show={showHelp} onClose={() => setShowHelp(false)} />
-    </WebSocketProvider>
+      <Toaster />
+    </>
   );
 }

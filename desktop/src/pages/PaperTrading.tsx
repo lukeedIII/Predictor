@@ -1,7 +1,11 @@
 import { useState } from 'react';
 import { useApi, apiPost } from '../hooks/useApi';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { useLivePositions, useLiveStats, useLiveBotStatus } from '../stores/liveStore';
 import { AreaChart, Area, XAxis, YAxis, Tooltip, ResponsiveContainer } from 'recharts';
+import {
+    IconChart, IconLineChart, IconList, IconPlay, IconSquare,
+    IconArrowUp, IconArrowDown, IconXCircle,
+} from '../components/Icons';
 
 /* ─── Types ──────────────────────────────────────── */
 type Position = {
@@ -108,7 +112,7 @@ function StatsPanel({ stats }: { stats: StatsData | null }) {
     return (
         <div className="card">
             <div className="card-header">
-                <span className="card-title">📊 Performance</span>
+                <span className="card-title"><IconChart size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Performance</span>
             </div>
 
             {/* Balance hero */}
@@ -169,10 +173,10 @@ function EquityCurve({ points }: { points: Array<{ timestamp: string; balance: n
         return (
             <div className="card">
                 <div className="card-header">
-                    <span className="card-title">📈 Equity Curve</span>
+                    <span className="card-title"><IconLineChart size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Equity Curve</span>
                 </div>
                 <div className="empty-state p-30">
-                    <div className="text-32">📈</div>
+                    <div className="text-32"><IconLineChart size={32} style={{ color: 'var(--text-3)' }} /></div>
                     <div className="text-3 mt-8">Waiting for trade data...</div>
                 </div>
             </div>
@@ -191,7 +195,7 @@ function EquityCurve({ points }: { points: Array<{ timestamp: string; balance: n
     return (
         <div className="card">
             <div className="card-header">
-                <span className="card-title">📈 Equity Curve</span>
+                <span className="card-title"><IconLineChart size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Equity Curve</span>
             </div>
             <ResponsiveContainer width="100%" height={240}>
                 <AreaChart data={data} margin={{ top: 5, right: 10, left: 0, bottom: 0 }}>
@@ -228,7 +232,7 @@ function TradeHistory({ trades }: { trades: Array<Record<string, unknown>> }) {
         return (
             <div className="card">
                 <div className="card-header">
-                    <span className="card-title">📋 Trade History</span>
+                    <span className="card-title"><IconList size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Trade History</span>
                 </div>
                 <div className="empty-state p-20">No trades yet</div>
             </div>
@@ -238,7 +242,7 @@ function TradeHistory({ trades }: { trades: Array<Record<string, unknown>> }) {
     return (
         <div className="card" style={{ padding: 0 }}>
             <div className="card-header" style={{ padding: '16px 20px 8px' }}>
-                <span className="card-title">📋 Trade History</span>
+                <span className="card-title"><IconList size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Trade History</span>
                 <span className="text-12 text-3">{trades.length} trades</span>
             </div>
             <div className="table-scroll">
@@ -286,19 +290,20 @@ function TradeHistory({ trades }: { trades: Array<Record<string, unknown>> }) {
 
 /* ─── Page ───────────────────────────────────────── */
 export default function PaperTrading() {
-    // High-frequency data via WebSocket (2s push)
-    const ws = useWebSocket();
+    // Granular selectors — only re-render when these slices change
+    const rawPositions = useLivePositions();
+    const rawStats = useLiveStats();
+    const botRunning = useLiveBotStatus();
     // Large/infrequent data stays on REST polling
     const { data: tradeData } = useApi<TradeData>('/api/trade-history?limit=50', 10000);
     const { data: equityData } = useApi<EquityData>('/api/equity-history', 15000);
 
     const [loading, setLoading] = useState<string | null>(null);
 
-    const positions = (ws.positions || []) as unknown as Position[];
-    const stats = ws.stats as unknown as StatsData | null;
+    const positions = (rawPositions || []) as unknown as Position[];
+    const stats = rawStats as unknown as StatsData | null;
     const trades = tradeData?.trades || [];
     const equityPoints = equityData?.points || [];
-    const botRunning = ws.bot_running;
 
     const doAction = async (action: string, body?: object) => {
         setLoading(action);
@@ -317,7 +322,7 @@ export default function PaperTrading() {
             <div className="page-header">
                 <div className="page-title">Paper Trading</div>
                 <div className="page-subtitle">
-                    {botRunning ? '🟢 Auto-Trading Active' : '🔴 Standby'} · {positions.length} Open Positions
+                    <span className="status-dot" style={{ background: botRunning ? 'var(--positive)' : 'var(--negative)' }} /> {botRunning ? 'Auto-Trading Active' : 'Standby'} · {positions.length} Open Positions
                 </div>
             </div>
 
@@ -325,22 +330,22 @@ export default function PaperTrading() {
             <div className="controls-row animate-in animate-in-1">
                 {botRunning ? (
                     <button className="btn btn-danger" onClick={() => doAction('bot/stop')} disabled={loading !== null}>
-                        ⏹️ Stop Bot
+                        <IconSquare size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Stop Bot
                     </button>
                 ) : (
                     <button className="btn btn-primary" onClick={() => doAction('bot/start')} disabled={loading !== null}>
-                        ▶️ Start Bot
+                        <IconPlay size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Start Bot
                     </button>
                 )}
                 <button className="btn btn-success" onClick={() => doAction('trade/open', { direction: 'LONG' })} disabled={loading !== null}>
-                    📈 Manual Long
+                    <IconArrowUp size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Manual Long
                 </button>
                 <button className="btn btn-danger" onClick={() => doAction('trade/open', { direction: 'SHORT' })} disabled={loading !== null}>
-                    📉 Manual Short
+                    <IconArrowDown size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Manual Short
                 </button>
                 {positions.length > 0 && (
                     <button className="btn btn-warning" onClick={() => doAction('trade/close-all')} disabled={loading !== null}>
-                        ✖️ Close All
+                        <IconXCircle size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Close All
                     </button>
                 )}
             </div>

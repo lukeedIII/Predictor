@@ -27,7 +27,8 @@ import {
     type CandlestickData,
     type UTCTimestamp,
 } from 'lightweight-charts';
-import { useWebSocket } from '../hooks/useWebSocket';
+import { useLivePrice, useLiveChangePct, useLiveHigh24h, useLiveLow24h, useLiveVolumeBtc } from '../stores/liveStore';
+import { IconWarning } from './Icons';
 
 // ─── Types ──────────────────────────────────────────
 type Timeframe = '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
@@ -90,7 +91,12 @@ export default function TradingViewChart() {
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [crosshairData, setCrosshairData] = useState<CandlestickData | null>(null);
-    const ws = useWebSocket();
+    // Granular selectors — chart only re-renders on price/stats changes
+    const livePrice = useLivePrice();
+    const changePct = useLiveChangePct();
+    const high24h = useLiveHigh24h();
+    const low24h = useLiveLow24h();
+    const volumeBtc = useLiveVolumeBtc();
 
     // Track current candle for real-time updates
     const currentCandleRef = useRef<OHLCVRow | null>(null);
@@ -297,7 +303,7 @@ export default function TradingViewChart() {
 
     // ─── Real-Time Candle Update ──────────────────────
     useEffect(() => {
-        if (!ws.price || ws.price <= 0) return;
+        if (!livePrice || livePrice <= 0) return;
         const refs = chartRefs.current;
         if (!refs.candleSeries || !currentCandleRef.current) return;
 
@@ -309,17 +315,17 @@ export default function TradingViewChart() {
 
         if ((current.time as number) === candleStart) {
             // Update existing candle
-            current.high = Math.max(current.high, ws.price);
-            current.low = Math.min(current.low, ws.price);
-            current.close = ws.price;
+            current.high = Math.max(current.high, livePrice);
+            current.low = Math.min(current.low, livePrice);
+            current.close = livePrice;
         } else if (candleStart > (current.time as number)) {
             // New candle
             const newCandle: OHLCVRow = {
                 time: candleStart as UTCTimestamp,
-                open: ws.price,
-                high: ws.price,
-                low: ws.price,
-                close: ws.price,
+                open: livePrice,
+                high: livePrice,
+                low: livePrice,
+                close: livePrice,
             };
             currentCandleRef.current = newCandle;
         }
@@ -341,7 +347,7 @@ export default function TradingViewChart() {
                 ? 'rgba(14, 203, 129, 0.3)'
                 : 'rgba(246, 70, 93, 0.3)',
         });
-    }, [ws.price, timeframe]);
+    }, [livePrice, timeframe]);
 
 
     // ─── Render ───────────────────────────────────────
@@ -351,11 +357,11 @@ export default function TradingViewChart() {
             <div className="tv-chart-header">
                 <div className="tv-chart-symbol">
                     <span className="tv-chart-pair">BTC/USDT</span>
-                    {ws.price !== null && ws.price > 0 && (
+                    {livePrice !== null && livePrice > 0 && (
                         <span className="tv-chart-price mono" style={{
-                            color: (ws.change_pct ?? 0) >= 0 ? '#0ECB81' : '#F6465D'
+                            color: (changePct ?? 0) >= 0 ? '#0ECB81' : '#F6465D'
                         }}>
-                            ${ws.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                            ${livePrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                     )}
                 </div>
@@ -375,22 +381,22 @@ export default function TradingViewChart() {
 
                 {/* 24h stats */}
                 <div className="tv-chart-stats">
-                    {ws.high_24h !== null && (
+                    {high24h !== null && (
                         <span className="tv-stat">
                             <span className="tv-stat-label">24h H</span>
-                            <span className="tv-stat-value mono">${ws.high_24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                            <span className="tv-stat-value mono">${high24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                         </span>
                     )}
-                    {ws.low_24h !== null && (
+                    {low24h !== null && (
                         <span className="tv-stat">
                             <span className="tv-stat-label">24h L</span>
-                            <span className="tv-stat-value mono">${ws.low_24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
+                            <span className="tv-stat-value mono">${low24h.toLocaleString(undefined, { maximumFractionDigits: 2 })}</span>
                         </span>
                     )}
-                    {ws.volume_btc !== null && (
+                    {volumeBtc !== null && (
                         <span className="tv-stat">
                             <span className="tv-stat-label">Vol</span>
-                            <span className="tv-stat-value mono">{ws.volume_btc.toLocaleString(undefined, { maximumFractionDigits: 0 })} BTC</span>
+                            <span className="tv-stat-value mono">{volumeBtc.toLocaleString(undefined, { maximumFractionDigits: 0 })} BTC</span>
                         </span>
                     )}
                 </div>
@@ -431,7 +437,7 @@ export default function TradingViewChart() {
             {/* Error overlay */}
             {error && !isLoading && (
                 <div className="tv-chart-error">
-                    ⚠️ {error}
+                    <IconWarning size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> {error}
                     <button className="tv-retry-btn" onClick={() => loadData(timeframe)}>
                         Retry
                     </button>

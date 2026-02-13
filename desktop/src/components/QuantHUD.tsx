@@ -1,4 +1,5 @@
 import { useApi } from '../hooks/useApi';
+import { IconCrosshair, IconChart, IconBolt } from './Icons';
 
 type CycleData = { cycles: Array<{ label: string; strength: number }> };
 
@@ -23,7 +24,7 @@ function RegimeCard({ quant }: { quant: Record<string, unknown> }) {
     return (
         <div className="card">
             <div className="card-header">
-                <span className="card-title">🎯 Regime</span>
+                <span className="card-title"><IconCrosshair size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Regime</span>
             </div>
             <div className="regime-display" style={{ background: s.bg, borderColor: `${s.color}30` }}>
                 <div className="stat-value sm" style={{ color: s.color }}>{name}</div>
@@ -40,7 +41,7 @@ function CyclesCard() {
     return (
         <div className="card">
             <div className="card-header">
-                <span className="card-title">📊 FFT Cycles</span>
+                <span className="card-title"><IconChart size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> FFT Cycles</span>
             </div>
             {cycles.length > 0 ? (
                 <div className="flex-col gap-10">
@@ -112,7 +113,7 @@ function OrderFlowCard({ quant }: { quant: Record<string, unknown> }) {
     return (
         <div className="card">
             <div className="card-header">
-                <span className="card-title">📊 Order Flow</span>
+                <span className="card-title"><IconChart size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Order Flow</span>
             </div>
             <div className="text-center">
                 <div className="stat-value xs" style={{ color }}>{label}</div>
@@ -149,7 +150,7 @@ function JumpRiskCard({ quant }: { quant: Record<string, unknown> }) {
     return (
         <div className="card">
             <div className="card-header">
-                <span className="card-title">⚡ Jump Risk</span>
+                <span className="card-title"><IconBolt size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> Jump Risk</span>
             </div>
             <div className="regime-display" style={{ background: s.bg, borderColor: `${s.color}30` }}>
                 <div className="stat-value xs" style={{ color: s.color }}>{level}</div>

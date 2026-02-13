@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { IconMonitor, IconBrain, IconCrosshair, IconChart } from './Icons';
 
 interface HealthData {
     gpu_name: string;
@@ -52,7 +53,7 @@ export default function SystemHealth() {
             <div className="sh-grid">
                 {/* GPU */}
                 <div className="sh-card">
-                    <span className="sh-icon">🖥️</span>
+                    <span className="sh-icon"><IconMonitor size={20} /></span>
                     <div className="sh-info">
                         <span className="sh-label">GPU</span>
                         <span className="sh-value">{health.gpu_name}</span>
@@ -73,19 +74,19 @@ export default function SystemHealth() {
 
                 {/* Model */}
                 <div className="sh-card">
-                    <span className="sh-icon">🧠</span>
+                    <span className="sh-icon"><IconBrain size={20} /></span>
                     <div className="sh-info">
                         <span className="sh-label">Model</span>
                         <span className="sh-value">{health.model_version} • {health.feature_count} features</span>
                         <span className="sh-sub">
-                            {health.model_trained ? `✅ Trained ${formatAge(health.model_age_hours)}` : '⏳ Not trained'}
+                            {health.model_trained ? `Trained ${formatAge(health.model_age_hours)}` : 'Not trained'}
                         </span>
                     </div>
                 </div>
 
                 {/* Accuracy */}
                 <div className="sh-card">
-                    <span className="sh-icon">🎯</span>
+                    <span className="sh-icon"><IconCrosshair size={20} /></span>
                     <div className="sh-info">
                         <span className="sh-label">Accuracy</span>
                         <span className={`sh-value ${health.validation_accuracy > 52 ? 'positive' : 'neutral'}`}>
@@ -99,7 +100,7 @@ export default function SystemHealth() {
 
                 {/* Data */}
                 <div className="sh-card">
-                    <span className="sh-icon">💾</span>
+                    <span className="sh-icon"><IconChart size={20} /></span>
                     <div className="sh-info">
                         <span className="sh-label">Data</span>
                         <span className="sh-value">{health.data_size_mb ? `${health.data_size_mb} MB` : 'No data'}</span>

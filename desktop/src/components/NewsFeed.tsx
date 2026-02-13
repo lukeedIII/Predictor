@@ -1,4 +1,5 @@
 import { useApi } from '../hooks/useApi';
+import { IconNews, IconActivity } from './Icons';
 
 type NewsItem = {
     source?: string;
@@ -20,10 +21,10 @@ export default function NewsFeed() {
         return (
             <div className="card">
                 <div className="card-header">
-                    <span className="card-title">📰 News Intelligence</span>
+                    <span className="card-title"><IconNews size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> News Intelligence</span>
                 </div>
                 <div className="empty-state p-20">
-                    <div className="text-24 mb-8">📡</div>
+                    <div className="text-24 mb-8"><IconActivity size={24} style={{ color: 'var(--text-3)' }} /></div>
                     <div className="text-3">Fetching news feed...</div>
                 </div>
             </div>
@@ -38,7 +39,7 @@ export default function NewsFeed() {
     return (
         <div className="card">
             <div className="card-header">
-                <span className="card-title">📰 News Intelligence</span>
+                <span className="card-title"><IconNews size={14} style={{ marginRight: 5, verticalAlign: -2 }} /> News Intelligence</span>
                 <div className="news-stats">
                     <span>{items.length} items</span>
                     <span className="text-positive">{bullish} Bullish</span>
@@ -63,7 +64,7 @@ export default function NewsFeed() {
 
                     return (
                         <div key={i} className="news-item" style={{ borderLeftColor: borderColor }}>
-                            <div className="news-source">📡 {item.source || 'Unknown'}</div>
+                            <div className="news-source"><IconActivity size={12} style={{ marginRight: 4, verticalAlign: -2 }} /> {item.source || 'Unknown'}</div>
                             <div className="news-title">{(item.title || '').slice(0, 150)}</div>
                             <div className="news-sentiment" style={{ color: sentColor }}>{sentLabel}</div>
                         </div>

@@ -1,4 +1,4 @@
-import { useWebSocket } from '../hooks/useWebSocket';
+import { useLivePrice, useLiveChangePct, useLivePrediction, useLiveAccuracy, useLiveQuant } from '../stores/liveStore';
 import TradingViewChart from '../components/TradingViewChart';
 import PredictionCard from '../components/PredictionCard';
 import QuantHUD from '../components/QuantHUD';
@@ -7,13 +7,14 @@ import FeatureImportance from '../components/FeatureImportance';
 import SystemHealth from '../components/SystemHealth';
 
 export default function Dashboard() {
-    // High-frequency data from WebSocket (1s push)
-    const ws = useWebSocket();
+    // Granular selectors — only re-render on relevant slice changes
+    const prediction = useLivePrediction() || {};
+    const accuracy = useLiveAccuracy();
+    const currentPrice = useLivePrice() || 0;
+    const changePct = useLiveChangePct();
+    const quant = useLiveQuant() || {};
 
-    const prediction = ws.prediction || {};
-    const accuracy = ws.accuracy;
-    const currentPrice = ws.price || 0;
-    const changePctColor = (ws.change_pct ?? 0) >= 0 ? 'var(--positive)' : 'var(--negative)';
+    const changePctColor = (changePct ?? 0) >= 0 ? 'var(--positive)' : 'var(--negative)';
 
     return (
         <div className="animate-in">
@@ -29,8 +30,8 @@ export default function Dashboard() {
                             : '—'}
                     </div>
                     <div className="stat-sub" style={{ color: changePctColor }}>
-                        {ws.change_pct !== null
-                            ? `${ws.change_pct >= 0 ? '+' : ''}${ws.change_pct.toFixed(2)}% (24h)`
+                        {changePct !== null
+                            ? `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}% (24h)`
                             : 'BTC/USDT'}
                     </div>
                 </div>
@@ -57,7 +58,7 @@ export default function Dashboard() {
                     overflowY: 'auto', maxHeight: 'calc(100vh - 280px)',
                     paddingRight: 4,
                 }}>
-                    <QuantHUD quant={ws.quant || {}} prediction={prediction} />
+                    <QuantHUD quant={quant} prediction={prediction} />
                 </div>
             </div>
 
