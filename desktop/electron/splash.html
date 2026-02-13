@@ -228,50 +228,23 @@
     const fill = document.getElementById('progressFill');
     const text = document.getElementById('statusText');
 
-    // Listen for boot progress from main process
-    const { ipcRenderer } = require('electron');
-    ipcRenderer.on('boot-progress', (_e, data) => {
-      if (data.stage === 'error') {
-        errorState = true;
-        fill.style.width = '100%';
-        fill.classList.add('error');
-        document.querySelector('.progress-text').classList.add('error');
-        document.querySelector('.spinner').style.display = 'none';
-        text.innerHTML = '<span class="error-icon">⛔</span> ' + (data.message || 'System check failed');
-        return;
-      }
-      if (data.progress >= 0) {
-        fill.style.width = data.progress + '%';
-      }
-      text.textContent = data.message || 'Loading...';
-    });
-
-    // Fallback animation if no IPC
-    let fakeProgress = 0;
-    let errorState = false;
-    const steps = [
-      [8, 'Checking system requirements...'],
-      [15, 'Initializing engine...'],
-      [30, 'Connecting to Binance...'],
-      [50, 'Loading market data...'],
-      [65, 'Initializing AI predictor...'],
-      [80, 'Checking model status...'],
-      [90, 'Starting paper trader...'],
-    ];
-    let stepIdx = 0;
-
-    setInterval(() => {
-      if (stepIdx < steps.length) {
-        const [target, msg] = steps[stepIdx];
-        if (fakeProgress < target) {
-          fakeProgress += 1;
-          fill.style.width = fakeProgress + '%';
-        } else {
-          text.textContent = msg;
-          stepIdx++;
+    // Listen for boot progress from main process (via splashPreload.js bridge)
+    if (window.electronAPI && window.electronAPI.onBootProgress) {
+      window.electronAPI.onBootProgress((data) => {
+        if (data.stage === 'error') {
+          fill.style.width = '100%';
+          fill.classList.add('error');
+          document.querySelector('.progress-text').classList.add('error');
+          document.querySelector('.spinner').style.display = 'none';
+          text.innerHTML = '<span class="error-icon">⛔</span> ' + (data.message || 'System check failed');
+          return;
         }
-      }
-    }, 120);
+        if (data.progress >= 0) {
+          fill.style.width = data.progress + '%';
+        }
+        text.textContent = data.message || 'Loading...';
+      });
+    }
   </script>
 </body>
 

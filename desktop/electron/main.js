@@ -96,7 +96,14 @@ function stopPython() {
     pythonProcess = null;
 
     const forceKillTimer = setTimeout(() => {
-        try { proc.kill('SIGTERM'); } catch { /* already exited */ }
+        try {
+            if (process.platform === 'win32') {
+                // SIGTERM doesn't work on Windows — use taskkill for reliable termination
+                require('child_process').execSync(`taskkill /PID ${proc.pid} /T /F`, { stdio: 'ignore' });
+            } else {
+                proc.kill('SIGTERM');
+            }
+        } catch { /* already exited */ }
     }, 3000);
 
     proc.on('exit', () => clearTimeout(forceKillTimer));
@@ -157,8 +164,9 @@ function createSplash() {
         alwaysOnTop: true,
         skipTaskbar: true,
         webPreferences: {
-            nodeIntegration: true,
-            contextIsolation: false,
+            preload: path.join(__dirname, 'splashPreload.js'),
+            contextIsolation: true,
+            nodeIntegration: false,
         },
     });
 

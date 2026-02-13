@@ -458,13 +458,8 @@ def get_prediction():
         "alt_signals": alt,
         "accuracy": predictor.last_validation_accuracy,
     })
-    # NaN-safe JSON: Python's json.dumps allows NaN by default, but browsers reject it.
-    # Serialize then string-replace NaN/Infinity → null to guarantee valid JSON.
-    raw = json.dumps(data, allow_nan=True)
-    raw = raw.replace(': NaN', ': null').replace(':NaN', ':null')
-    raw = raw.replace(': Infinity', ': null').replace(':Infinity', ':null')
-    raw = raw.replace(': -Infinity', ': null').replace(':-Infinity', ':null')
-    return JSONResponse(content=json.loads(raw))
+    # _sanitize_for_json already converts NaN/Infinity → None recursively.
+    return JSONResponse(content=data)
 
 
 # ===== Phase 3: Feature Importance =====
@@ -1433,6 +1428,27 @@ def get_news():
     _news_cache = {"items": all_items, "ts": now}
     
     return {"items": all_items}
+
+
+# ============================================================
+#  GRACEFUL SHUTDOWN
+# ============================================================
+
+@app.post("/api/shutdown")
+async def shutdown():
+    """Graceful shutdown endpoint — called by Electron on app close.
+    Stops auto-trade/retrain threads, closes Binance WS, then exits."""
+    logging.info("Shutdown requested via /api/shutdown")
+    try:
+        _auto_trade_stop.set()
+        _retrain_stop.set()
+        if binance_ws:
+            binance_ws.stop()
+    except Exception as e:
+        logging.warning(f"Error during shutdown cleanup: {e}")
+    # Schedule hard exit after giving the response time to flush
+    asyncio.get_event_loop().call_later(0.5, lambda: os._exit(0))
+    return {"status": "shutting_down"}
 
 
 # ============================================================

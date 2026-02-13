@@ -21,10 +21,12 @@ export function useApi<T>(path: string, intervalMs = 5000): FetchState<T> & { re
     const backoffRef = useRef(intervalMs);
     const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+    const fetchLoopRef = useRef<() => void>(() => { });
+
     const scheduleNext = useCallback((delay: number) => {
         if (timerRef.current) clearTimeout(timerRef.current);
         timerRef.current = setTimeout(() => {
-            if (mountedRef.current) fetchLoop();
+            if (mountedRef.current) fetchLoopRef.current();
         }, delay);
     }, []);
 
@@ -48,6 +50,9 @@ export function useApi<T>(path: string, intervalMs = 5000): FetchState<T> & { re
             }
         }
     }, [path, intervalMs, scheduleNext]);
+
+    // Keep ref in sync — breaks the stale closure chain
+    fetchLoopRef.current = fetchLoop;
 
     useEffect(() => {
         mountedRef.current = true;
