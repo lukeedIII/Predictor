@@ -215,8 +215,8 @@ class WalkForwardBacktester:
                 train_data = data.iloc[max(0, pred_idx - self.train_window):pred_idx]
                 try:
                     train_fn(train_data)
-                except:
-                    pass
+                except Exception as e:
+                    logging.warning(f"Train function failed at prediction {n_preds}: {e}")
             
             # Available data at prediction time
             available_data = data.iloc[:pred_idx + 1].copy()

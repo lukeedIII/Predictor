@@ -151,7 +151,8 @@ class MathCore:
             
             return np.sqrt(max(variance, 1e-8))
             
-        except:
+        except Exception as e:
+            logging.debug(f"GARCH vol estimation fallback: {e}")
             return np.std(returns) if len(returns) > 1 else 0.01
 
     def extract_cycles(self, prices, top_n=3):

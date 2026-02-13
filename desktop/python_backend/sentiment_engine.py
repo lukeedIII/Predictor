@@ -22,8 +22,8 @@ class SentimentEngine:
             try:
                 torch.zeros(1).to("cuda")
                 device = 0
-            except:
-                logging.warning("RTX device incompatible. Falling back to CPU for Sentiment.")
+            except RuntimeError as e:
+                logging.warning(f"RTX device incompatible ({e}). Falling back to CPU for Sentiment.")
                 device = -1
 
         try:
@@ -114,7 +114,8 @@ class SentimentEngine:
         
         try:
             return self.twitter_scraper.get_elon_alert()
-        except:
+        except Exception as e:
+            logging.debug(f"Elon alert check failed: {e}")
             return None
 
     def fetch_fear_greed_index(self) -> dict:

@@ -422,9 +422,9 @@ class NexusPredictor:
         
         # ===== VOLUME PROFILE =====
         # VWAP distance (volume-weighted average price)
-        cum_vol = df['volume'].cumsum()
-        cum_pv = (df['close'] * df['volume']).cumsum()
-        vwap = cum_pv / (cum_vol + 1e-9)
+        roll_vol = df['volume'].rolling(20, min_periods=1).sum()
+        roll_pv = (df['close'] * df['volume']).rolling(20, min_periods=1).sum()
+        vwap = roll_pv / (roll_vol + 1e-9)
         df['vwap_dist'] = (df['close'] - vwap) / (df['close'] + 1e-9)
         
         # Volume momentum
@@ -536,9 +536,9 @@ class NexusPredictor:
         
         # ===== 3. VWAP MOMENTUM (rate of change of VWAP) =====
         # VWAP slope indicates institutional accumulation (rising) or distribution (falling)
-        cum_vol = np.cumsum(volume) + 1e-9
-        cum_pv = np.cumsum(close * volume)
-        vwap = cum_pv / cum_vol
+        roll_vol = pd.Series(volume).rolling(20, min_periods=1).sum() + 1e-9
+        roll_pv = pd.Series(close * volume).rolling(20, min_periods=1).sum()
+        vwap = (roll_pv / roll_vol).values
         vwap_series = pd.Series(vwap)
         vwap_ret_5 = vwap_series.pct_change(5).fillna(0).values
         df['vwap_momentum'] = np.clip(vwap_ret_5 * 100, -5, 5)  # scaled %, capped

@@ -8,6 +8,7 @@ Extracted to eliminate ~150 lines of duplicated code.
 import pandas as pd
 import numpy as np
 import os
+import logging
 from datetime import datetime
 
 import config
@@ -65,8 +66,8 @@ def run_predictor_backtest(data: pd.DataFrame, horizon_minutes: int = 60) -> dic
         try:
             predictor.is_trained = False
             predictor.train(df)
-        except:
-            pass
+        except Exception as e:
+            logging.warning(f"Nexus predictor train failed: {e}")
 
     try:
         metrics = bt.run_simple(

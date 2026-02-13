@@ -102,7 +102,8 @@ class WhaleMonitor:
         try:
             response = requests.get(f"{self.base_url}/mempool", timeout=5)
             return response.status_code == 200
-        except:
+        except Exception as e:
+            logging.debug(f"Whale API health check failed: {e}")
             return False
 
 if __name__ == "__main__":

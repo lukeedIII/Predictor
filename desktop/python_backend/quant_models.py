@@ -217,7 +217,8 @@ class GJRGarchVolatility:
             elif 'o[1]' in params.index:
                 return float(params['o[1]'])
             return 0.0
-        except:
+        except (KeyError, IndexError) as e:
+            logging.debug(f"GARCH asymmetry param access failed: {e}")
             return 0.0
     
     def get_conditional_volatility(self) -> np.ndarray:
@@ -227,7 +228,8 @@ class GJRGarchVolatility:
         
         try:
             return self.result.conditional_volatility.values / 100
-        except:
+        except (AttributeError, ValueError) as e:
+            logging.debug(f"Conditional volatility access failed: {e}")
             return np.array([])
 
 
@@ -599,7 +601,8 @@ class WaveletAnalysis:
             
             # Reconstruct
             return self.pywt.waverec(new_coeffs, self.wavelet)[:len(prices)]
-        except:
+        except Exception as e:
+            logging.debug(f"Wavelet denoise failed: {e}")
             return prices
     
     def get_trend_strength(self) -> float:
@@ -1064,7 +1067,8 @@ class RoughVolatility:
             # Clamp to valid range
             H = max(0.01, min(0.99, H))
             return H
-        except:
+        except (np.linalg.LinAlgError, ValueError) as e:
+            logging.debug(f"Rough vol Hurst polyfit failed: {e}")
             return 0.5
     
     def calibrate(self, returns: np.ndarray, window: int = 20) -> bool:
