@@ -275,6 +275,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 - **XGBoost early stopping** — stops building trees when eval-set logloss stalls for 30 rounds; typically saves 50-70% training time while preserving (or improving) generalization
 - **Regime-based trade gating** — 3-layer filter: (1) Hurst chaos filter (H ≈ 0.5 = random walk), (2) vol-regime bounds (skip extreme volatility > 3x and dead markets < 0.15x), (3) regime win-rate gate blocks trading when a regime's recent win rate drops below 35% over 5+ trades
 - **Dynamic class-imbalance correction** — `scale_pos_weight` set to neg/pos ratio at each training call; compensates for label skew caused by the +0.30% hurdle (UP is typically the minority class)
+- **Gap detection / quarantine** — detects time gaps > 5 min between consecutive candles, marks gap rows + 3-row buffer as quarantined; quarantined rows excluded from training while features still forward-fill for continuity
 
 ---
 
@@ -286,7 +287,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 5) ~~No **early stopping** for XGBoost~~ → ✅ **Implemented v6.2.0** (stops at best iteration via eval-set logloss, `early_stopping_rounds=30`)
 6) ~~No regime-specific models or regime-based trade gating~~ → ✅ **Implemented v6.2.0** (3-layer gating: Hurst + vol-regime bounds + win-rate gate)
 7) ~~No explicit class-imbalance handling~~ → ✅ **Implemented v6.2.0** (dynamic `scale_pos_weight` = neg/pos ratio per training call)
-8) Missing gap detection/quarantine (currently forward-fill)
+8) ~~Missing gap detection/quarantine~~ → ✅ **Implemented v6.2.0** (gaps > 5min detected, quarantine rows + 3-row buffer, excluded from training)
 
 ---
 

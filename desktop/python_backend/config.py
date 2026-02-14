@@ -130,6 +130,10 @@ REGIME_MIN_TRADES = 5           # need at least N regime trades before gating ki
 REGIME_VOL_MAX = 3.0            # skip if vol_regime > N (extreme volatility / whipsaw)
 REGIME_VOL_MIN = 0.15           # skip if vol_regime < N (dead market / no opportunity)
 
+# ── Gap Detection / Quarantine ───────────────────────
+GAP_THRESHOLD_MINUTES = 5       # time gap > N minutes between candles = data gap
+GAP_QUARANTINE_BUFFER = 3       # exclude N additional rows after gap resumes (warmup)
+
 # ── Paper Trading ─────────────────────────────────────
 PAPER_STARTING_BALANCE = 10000
 PAPER_TRADES_PATH = os.path.join(DATA_DIR, "paper_trades.csv")

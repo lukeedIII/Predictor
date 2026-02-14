@@ -429,6 +429,30 @@ class NexusPredictor:
         df.sort_values('timestamp', inplace=True)
         df.reset_index(drop=True, inplace=True)
         
+        # ── Gap Detection / Quarantine (Gap #8) ──
+        gap_thresh = getattr(config, 'GAP_THRESHOLD_MINUTES', 5)
+        gap_buffer = getattr(config, 'GAP_QUARANTINE_BUFFER', 3)
+        df['_quarantined'] = False
+        if len(df) > 1:
+            time_diffs = df['timestamp'].diff().dt.total_seconds() / 60  # in minutes
+            gap_mask = time_diffs > gap_thresh
+            n_gaps = int(gap_mask.sum())
+            if n_gaps > 0:
+                # Mark gap rows + buffer rows after each gap
+                gap_indices = df.index[gap_mask].tolist()
+                quarantine_set = set()
+                for gi in gap_indices:
+                    for offset in range(gap_buffer + 1):  # gap row + buffer
+                        if gi + offset < len(df):
+                            quarantine_set.add(gi + offset)
+                df.loc[list(quarantine_set), '_quarantined'] = True
+                n_quarantined = len(quarantine_set)
+                max_gap = time_diffs[gap_mask].max()
+                logging.info(
+                    f"[GAP-DETECT] {n_gaps} gaps found (>{gap_thresh}min), "
+                    f"{n_quarantined} rows quarantined, max gap: {max_gap:.0f}min"
+                )
+        
         raw_prices = df['close'].values
         
         # ===== RETURNS-BASED OHLCV (scale-invariant) =====
@@ -611,7 +635,11 @@ class NexusPredictor:
             except Exception:
                 pass
         
+        # Forward-fill features for continuity, but preserve _quarantined flag
+        quarantine_col = df['_quarantined'].copy() if '_quarantined' in df.columns else None
         df = df.ffill().fillna(0.0)
+        if quarantine_col is not None:
+            df['_quarantined'] = quarantine_col
         return df
 
     def _load_microstructure_data(self, n=None):
@@ -932,6 +960,14 @@ class NexusPredictor:
         
         # Create temporal split BEFORE creating targets
         train_df, test_df = self.create_temporal_split(df)
+        
+        # Exclude quarantined rows from training (Gap #8)
+        if '_quarantined' in train_df.columns:
+            n_before = len(train_df)
+            train_df = train_df[~train_df['_quarantined']].reset_index(drop=True)
+            n_dropped = n_before - len(train_df)
+            if n_dropped > 0:
+                logging.info(f"[QUARANTINE] Dropped {n_dropped:,} quarantined rows from training ({n_dropped/n_before*100:.1f}%)")
         
         # Create targets for training data only
         train_df = self.create_target_variable(train_df, for_training=True)
