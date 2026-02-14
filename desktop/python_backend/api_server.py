@@ -1921,7 +1921,7 @@ class AgentChatRequest(BaseModel):
 
 @app.post("/api/agent/chat")
 def agent_chat(req: AgentChatRequest):
-    """Chat with the Nexus Agent — streams response as SSE."""
+    """Chat with the Nexus Agent — streams response as SSE (multi-provider)."""
     from starlette.responses import StreamingResponse
     import nexus_memory
 
@@ -1941,7 +1941,7 @@ def agent_chat(req: AgentChatRequest):
             conv_history = nexus_memory.get_recent_messages(session_id=sid, limit=10)
             conv_history = [m for m in conv_history if m['id'] != user_msg_id]
 
-            # Build multi-layer message stack
+            # Build multi-layer message stack (for OpenAI)
             messages = nexus_agent.build_messages(
                 user_message=req.message,
                 state_json=state_json,
@@ -1949,7 +1949,17 @@ def agent_chat(req: AgentChatRequest):
                 knowledge_context=knowledge_context,
             )
 
-            # Get OpenAI key
+            # Flat prompt for Ollama / Gemini
+            full_prompt = (
+                nexus_agent.MASTER_SYSTEM_PROMPT + "\n\n"
+                + nexus_agent.DEVELOPER_PROMPT + "\n\n"
+                + nexus_agent.REF_MODEL_STACK
+                + f"\n\n[LIVE STATE]\n```json\n{state_json}\n```"
+            )
+            if knowledge_context:
+                full_prompt += f"\n\n{knowledge_context}"
+
+            # ── Gather available providers (same logic as nexus_agent.chat) ──
             openai_key = getattr(config, 'OPENAI_API_KEY', None) or os.environ.get('OPENAI_API_KEY', '')
             if not openai_key:
                 try:
@@ -1965,22 +1975,102 @@ def agent_chat(req: AgentChatRequest):
             if not openai_key:
                 openai_key = nexus_agent._OPENAI_API_KEY
 
-            if not openai_key:
-                yield f"data: {json.dumps({'content': '⚠️ No OpenAI API key configured.'})}\n\n"
+            gemini_key = os.environ.get('GEMINI_API_KEY', '')
+            if not gemini_key:
+                try:
+                    env_path = os.path.join(config.DATA_ROOT, ".env")
+                    if os.path.exists(env_path):
+                        with open(env_path, 'r', encoding='utf-8', errors='replace') as f:
+                            for line in f:
+                                line = line.strip()
+                                if line.startswith("GEMINI_API_KEY="):
+                                    gemini_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                except Exception:
+                    pass
+
+            ollama_model = nexus_agent._get_ollama_model()
+
+            # Build provider priority list
+            preferred = nexus_agent._get_provider_priority()
+            providers = []
+            if preferred == 'ollama':
+                if ollama_model: providers.append(('ollama', ollama_model))
+                if openai_key: providers.append(('openai', openai_key))
+                if gemini_key: providers.append(('gemini', gemini_key))
+            elif preferred == 'openai':
+                if openai_key: providers.append(('openai', openai_key))
+                if ollama_model: providers.append(('ollama', ollama_model))
+                if gemini_key: providers.append(('gemini', gemini_key))
+            elif preferred == 'gemini':
+                if gemini_key: providers.append(('gemini', gemini_key))
+                if ollama_model: providers.append(('ollama', ollama_model))
+                if openai_key: providers.append(('openai', openai_key))
+            else:
+                if ollama_model: providers.append(('ollama', ollama_model))
+                if openai_key: providers.append(('openai', openai_key))
+                if gemini_key: providers.append(('gemini', gemini_key))
+
+            if not providers:
+                yield f"data: {json.dumps({'content': '⚠️ No LLM available. Install Ollama, or add an OpenAI/Gemini API key in Settings.'})}\n\n"
                 yield "data: [DONE]\n\n"
                 return
 
-            # Stream from OpenAI using multi-layer message stack
-            full_reply = ""
-            for chunk in nexus_agent._call_openai_stream(messages, openai_key):
-                full_reply += chunk
-                yield f"data: {json.dumps({'content': chunk})}\n\n"
+            # ── Try providers in priority order ──
+            last_error = ""
+            for provider_name, credential in providers:
+                try:
+                    full_reply = ""
 
+                    if provider_name == 'openai':
+                        # Stream from OpenAI
+                        for chunk in nexus_agent._call_openai_stream(messages, credential):
+                            full_reply += chunk
+                            yield f"data: {json.dumps({'content': chunk})}\n\n"
+                        provider_label = "gpt-4.1-mini"
+
+                    elif provider_name == 'ollama':
+                        # Ollama (non-streaming, send as single chunk)
+                        full_reply = nexus_agent._call_ollama(
+                            full_prompt, req.message, credential,
+                            conversation_history=conv_history
+                        )
+                        # Stream word-by-word for smooth UX
+                        words = full_reply.split(' ')
+                        for i, word in enumerate(words):
+                            chunk = word + (' ' if i < len(words) - 1 else '')
+                            yield f"data: {json.dumps({'content': chunk})}\n\n"
+                        provider_label = f"ollama:{credential}"
+
+                    elif provider_name == 'gemini':
+                        # Gemini (non-streaming, send as single chunk)
+                        full_reply = nexus_agent._call_gemini(
+                            full_prompt, req.message, credential,
+                            conversation_history=conv_history
+                        )
+                        words = full_reply.split(' ')
+                        for i, word in enumerate(words):
+                            chunk = word + (' ' if i < len(words) - 1 else '')
+                            yield f"data: {json.dumps({'content': chunk})}\n\n"
+                        provider_label = f"gemini-2.0-flash"
+                    else:
+                        continue
+
+                    yield "data: [DONE]\n\n"
+
+                    # Save full reply to memory
+                    if full_reply:
+                        nexus_memory.save_message(sid, "agent", full_reply, provider=provider_label)
+
+                    return  # Success — exit generator
+
+                except Exception as e:
+                    last_error = str(e)[:200]
+                    logging.warning(f"[Dr. Nexus SSE] {provider_name} failed: {last_error}, trying next...")
+                    continue
+
+            # All providers failed
+            yield f"data: {json.dumps({'content': f'⚠️ All LLM providers failed. Last error: {last_error}'})}\n\n"
             yield "data: [DONE]\n\n"
-
-            # Save full reply to memory
-            if full_reply:
-                nexus_memory.save_message(sid, "agent", full_reply)
 
         except Exception as e:
             logging.error(f"Agent stream error: {e}")
