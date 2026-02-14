@@ -369,6 +369,18 @@ def _auto_retrain_loop():
                 entry['champion_accuracy'] = promotion.get('champion_accuracy')
                 entry['challenger_accuracy'] = promotion.get('challenger_accuracy')
             
+            # Append drift monitor report if available
+            drift_report = getattr(predictor, 'last_drift_report', None)
+            if drift_report is not None:
+                entry['drift_severity'] = drift_report.get('overall_severity')
+                feat_drift = drift_report.get('feature_drift', {})
+                entry['drift_feature_psi'] = feat_drift.get('mean_psi')
+                entry['drift_features_drifted'] = feat_drift.get('features_drifted')
+                cal_drift = drift_report.get('calibration_drift', {})
+                entry['drift_brier_score'] = cal_drift.get('brier_score')
+                _retrain_status['last_drift_severity'] = drift_report.get('overall_severity')
+                _retrain_status['last_drift_report'] = drift_report
+            
             history.append(entry)
             history = history[-100:]
             with open(retrain_history_path, 'w') as f:
@@ -377,9 +389,10 @@ def _auto_retrain_loop():
             promoted_str = ""
             if promotion is not None:
                 promoted_str = f" | {'PROMOTED' if promotion.get('promoted') else 'REJECTED'}: {promotion.get('reason', '')}"
+            drift_str = f" | Drift: {entry.get('drift_severity', 'N/A')}" if drift_report else ""
             delta_str = f" (Δ {delta:+.2f}%)" if delta is not None else ""
             acc_str = f"{acc:.1f}%{delta_str}" if acc is not None else "N/A"
-            logging.info(f"[AUTO-RETRAIN] {label} — complete. Accuracy: {acc_str} {trend}{promoted_str}")
+            logging.info(f"[AUTO-RETRAIN] {label} — complete. Accuracy: {acc_str} {trend}{promoted_str}{drift_str}")
             
         except Exception as e:
             _retrain_status['is_retraining'] = False

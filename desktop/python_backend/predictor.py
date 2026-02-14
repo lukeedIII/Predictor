@@ -218,6 +218,16 @@ class NexusPredictor:
         self.scaler = StandardScaler()
         self.scaler_fitted = False
         
+        # Drift Monitor — feature/prediction/calibration drift detection
+        try:
+            from drift_monitor import DriftMonitor
+            self.drift_monitor = DriftMonitor()
+        except Exception as e:
+            logging.warning(f"DriftMonitor init failed: {e}")
+            self.drift_monitor = None
+        self.last_drift_report = None
+        self._last_drift_check = None
+        
         # Initialize QuantEngine for institutional analysis
         self.quant_engine = QuantEngine() if QUANT_AVAILABLE else None
         self.quant_initialized = False
@@ -1133,6 +1143,14 @@ class NexusPredictor:
             # P1: Save ensemble state to disk so weights survive restarts
             self._save_ensemble_state()
             
+            # ── Drift Monitor: snapshot training distributions ──
+            if self.drift_monitor is not None:
+                try:
+                    y_probs = self.model.predict_proba(X_train)[:, 1]
+                    self.drift_monitor.snapshot_training_distributions(X_train, y_probs)
+                except Exception as e:
+                    logging.warning(f"[DRIFT-MONITOR] Snapshot failed: {e}")
+            
         except Exception as e:
             logging.error(f"Training error: {e}")
             import traceback
@@ -1551,11 +1569,34 @@ class NexusPredictor:
                 'direction': direction,
                 'price': current_price,
                 'confidence': confidence,
+                'xgb_prob': xgb_prob,
                 'validated': False,
                 'correct': False,
             })
             if len(self._prediction_history) > 200:
                 self._prediction_history = self._prediction_history[-200:]
+            
+            # ── Drift Monitor: periodic check ──
+            if self.drift_monitor is not None and self.drift_monitor.has_reference:
+                should_check = False
+                if self._last_drift_check is None:
+                    should_check = True
+                else:
+                    elapsed_min = (now - self._last_drift_check).total_seconds() / 60
+                    should_check = elapsed_min >= getattr(config, 'DRIFT_CHECK_INTERVAL_MIN', 30)
+                
+                if should_check:
+                    try:
+                        recent_probs = [p.get('xgb_prob', 0.5) for p in self._prediction_history[-100:]]
+                        drift_report = self.drift_monitor.get_drift_report(
+                            X_live=df[active_features].tail(200),
+                            recent_probs=recent_probs,
+                            prediction_history=self._prediction_history,
+                        )
+                        self.last_drift_report = drift_report
+                        self._last_drift_check = now
+                    except Exception as e:
+                        logging.warning(f"[DRIFT-MONITOR] Check failed: {e}")
             
             return {
                 "direction": direction,

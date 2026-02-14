@@ -27,6 +27,7 @@
 - **Models:** XGBoost (primary) + optional Transformer sequence model (earns weight only if it performs)
 - **Retraining:** every **6 hours**, from scratch, on the most recent **500,000** 1-minute candles (~1 year)
 - **Champion-Challenger gate:** newly trained models must beat the current production model (logloss + accuracy) before promotion
+- **Drift monitoring:** PSI-based feature drift, prediction distribution shift, and calibration quality (Brier + ECE) tracked every 30 min
 - **Everything local:** Electron + React + FastAPI (localhost) + Python quant/ML core
 - **Trading:** paper-only simulation (long/short, configurable leverage) with confidence gating + risk controls
 
@@ -259,12 +260,13 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 - Live prediction validation after 15 minutes
 - Transformer must earn inclusion before contributing
 - **Champion-Challenger deployment gate** — new models must match or beat production model on logloss + accuracy before promotion (with configurable grace period for cold start)
+- **Drift monitoring** — 3-channel detection: feature PSI, prediction distribution shift, and calibration drift (Brier score + ECE); runs every 30 min with `OK / WARNING / CRITICAL` severity levels
 
 ---
 
 ## ❌ Known Gaps (Ranked by Impact)
 1) ~~No **champion–challenger** deployment~~ → ✅ **Implemented v6.2.0**
-2) No **drift monitoring** (feature / prediction / calibration drift)
+2) ~~No **drift monitoring**~~ → ✅ **Implemented v6.2.0** (feature PSI + prediction drift + calibration Brier/ECE)
 3) No fee-adjusted **net-PnL accounting** inside paper fills
 4) No rolling **walk-forward evaluation** inside the live retrain pipeline
 5) No **early stopping** for XGBoost (always builds 500 trees)
@@ -276,7 +278,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 
 ## 🗺️ Roadmap (High-Impact Next Steps)
 - [x] Champion–Challenger + promotion rules (logloss + accuracy gate, configurable thresholds)
-- [ ] Drift monitoring: PSI + calibration drift + prediction drift
+- [x] Drift monitoring: PSI + calibration drift + prediction drift (3-channel `DriftMonitor`)
 - [ ] Fee/slippage-aware paper fills + net-PnL dashboards + turnover
 - [ ] Rolling walk-forward evaluation integrated into retraining loop
 - [ ] Early stopping + light hyperparameter sweeps

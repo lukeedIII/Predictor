@@ -111,6 +111,13 @@ CHALLENGER_MIN_LOGLOSS_IMPROVEMENT = 0.0   # challenger logloss must be <= champ
 CHALLENGER_MIN_ACCURACY_PCT = 49.0          # absolute floor: reject if below this regardless
 CHALLENGER_GRACE_RETRAINS = 2               # first N retrains always promote (cold-start)
 
+# ── Drift Monitoring ─────────────────────────────────
+DRIFT_PSI_WARNING = 0.10        # PSI threshold for WARNING severity
+DRIFT_PSI_CRITICAL = 0.25       # PSI threshold for CRITICAL severity
+DRIFT_BRIER_WARNING = 0.30      # Brier score threshold for WARNING
+DRIFT_BRIER_CRITICAL = 0.35     # Brier score threshold for CRITICAL
+DRIFT_CHECK_INTERVAL_MIN = 30   # minutes between drift checks during live prediction
+
 # ── Paper Trading ─────────────────────────────────────
 PAPER_STARTING_BALANCE = 10000
 PAPER_TRADES_PATH = os.path.join(DATA_DIR, "paper_trades.csv")
