@@ -274,6 +274,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 - **Rolling walk-forward evaluation** — K=5 expanding-window folds after each retrain; logs per-fold accuracy/logloss + aggregates (mean/std/min/max) in retrain history for regime-stability analysis
 - **XGBoost early stopping** — stops building trees when eval-set logloss stalls for 30 rounds; typically saves 50-70% training time while preserving (or improving) generalization
 - **Regime-based trade gating** — 3-layer filter: (1) Hurst chaos filter (H ≈ 0.5 = random walk), (2) vol-regime bounds (skip extreme volatility > 3x and dead markets < 0.15x), (3) regime win-rate gate blocks trading when a regime's recent win rate drops below 35% over 5+ trades
+- **Dynamic class-imbalance correction** — `scale_pos_weight` set to neg/pos ratio at each training call; compensates for label skew caused by the +0.30% hurdle (UP is typically the minority class)
 
 ---
 
@@ -284,7 +285,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 4) ~~No rolling **walk-forward evaluation**~~ → ✅ **Implemented v6.2.0** (K=5 expanding-window folds, logged in retrain history)
 5) ~~No **early stopping** for XGBoost~~ → ✅ **Implemented v6.2.0** (stops at best iteration via eval-set logloss, `early_stopping_rounds=30`)
 6) ~~No regime-specific models or regime-based trade gating~~ → ✅ **Implemented v6.2.0** (3-layer gating: Hurst + vol-regime bounds + win-rate gate)
-7) No explicit class-imbalance handling (label skew from +0.30% hurdle)
+7) ~~No explicit class-imbalance handling~~ → ✅ **Implemented v6.2.0** (dynamic `scale_pos_weight` = neg/pos ratio per training call)
 8) Missing gap detection/quarantine (currently forward-fill)
 
 ---

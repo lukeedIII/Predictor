@@ -989,6 +989,14 @@ class NexusPredictor:
             if can_evaluate:
                 challenger_model.set_params(early_stopping_rounds=es_rounds)
             
+            # Dynamic class-imbalance correction (Gap #7)
+            n_pos = int(y_train.sum())
+            n_neg = len(y_train) - n_pos
+            if n_pos > 0 and n_neg > 0:
+                spw = round(n_neg / n_pos, 2)
+                challenger_model.set_params(scale_pos_weight=spw)
+                logging.info(f"[CLASS-BALANCE] scale_pos_weight={spw:.2f} (pos={n_pos:,}, neg={n_neg:,}, ratio=1:{spw:.1f})")
+            
             challenger_model.fit(
                 X_train, y_train,
                 sample_weight=sample_weights,
@@ -1234,6 +1242,13 @@ class NexusPredictor:
             sample_weights = np.exp(decay_rate * np.arange(n))
             sample_weights /= sample_weights.mean()
 
+            # Dynamic class-imbalance correction (Gap #7)
+            n_pos = int(y_train.sum())
+            n_neg = len(y_train) - n_pos
+            if n_pos > 0 and n_neg > 0:
+                spw = round(n_neg / n_pos, 2)
+                self.model.set_params(scale_pos_weight=spw)
+
             # Early stopping: carve 15% of training tail for eval
             es_rounds = getattr(config, 'XGB_EARLY_STOPPING_ROUNDS', 30)
             es_split = int(len(X_train) * 0.85)
@@ -1423,6 +1438,12 @@ class NexusPredictor:
                 from sklearn.metrics import log_loss
                 
                 fold_model = copy.deepcopy(self.model)
+                
+                # Dynamic class-imbalance correction (Gap #7)
+                n_pos_f = int(y_tr.sum())
+                n_neg_f = len(y_tr) - n_pos_f
+                if n_pos_f > 0 and n_neg_f > 0:
+                    fold_model.set_params(scale_pos_weight=round(n_neg_f / n_pos_f, 2))
                 
                 # Same exponential sample weighting as main train
                 m = len(X_tr)
