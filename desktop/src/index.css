@@ -2065,34 +2065,27 @@ kbd {
 }
 
 /* ─── Dashboard Light Mode ────────────────────── */
+/* Override design tokens at the container scope — cascades to ALL cards */
+.dashboard-light {
+    --bg-0: #F0F4F8;
+    --bg-1: #FFFFFF;
+    --bg-2: #F1F5F9;
+    --bg-3: #E2E8F0;
+    --bg-4: #CBD5E1;
+
+    --text-0: #0F172A;
+    --text-1: #475569;
+    --text-2: #64748B;
+    --text-3: #94A3B8;
+
+    --border: rgba(0, 0, 0, 0.08);
+    --border-hover: rgba(0, 0, 0, 0.14);
+    --border-glow: rgba(59, 130, 246, 0.25);
+}
+
+/* Additional light mode specifics */
 .dashboard-light .grid-card-wrapper {
-    background: #F8FAFC;
-    border-color: #E2E8F0;
-}
-
-.dashboard-light .grid-drag-handle {
-    background: #F1F5F9;
-    border-bottom-color: #E2E8F0;
-}
-
-.dashboard-light .grid-drag-dots {
-    color: #94A3B8;
-}
-
-.dashboard-light .grid-drag-label {
-    color: #475569;
-}
-
-.dashboard-light .stat-label {
-    color: #64748B;
-}
-
-.dashboard-light .stat-value {
-    color: #0F172A;
-}
-
-.dashboard-light .stat-sub {
-    color: #475569;
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.06);
 }
 
 .dashboard-light .clock-other-btn {
@@ -2102,14 +2095,6 @@ kbd {
 
 .dashboard-light .clock-other-btn:hover {
     background: rgba(0, 0, 0, 0.08);
-}
-
-.dashboard-light .clock-time {
-    color: #475569;
-}
-
-.dashboard-light .weather-card {
-    background: rgba(241, 245, 249, 0.6);
 }
 
 .dashboard-light .react-grid-placeholder {

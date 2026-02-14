@@ -25,7 +25,7 @@ const ROW_HEIGHT = 30;
 const MINS: Record<string, { minW: number; minH: number }> = {
     price: { minW: 2, minH: 4 }, signal: { minW: 2, minH: 4 },
     accuracy: { minW: 2, minH: 4 }, volume: { minW: 2, minH: 4 },
-    weather: { minW: 2, minH: 4 }, clock: { minW: 2, minH: 5 },
+    weather: { minW: 2, minH: 4 }, clock: { minW: 2, minH: 4 },
     chart: { minW: 4, minH: 8 }, quant: { minW: 3, minH: 8 },
     news: { minW: 3, minH: 6 }, health: { minW: 3, minH: 6 },
     training: { minW: 3, minH: 6 },
