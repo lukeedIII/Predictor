@@ -121,6 +121,9 @@ DRIFT_CHECK_INTERVAL_MIN = 30   # minutes between drift checks during live predi
 # ── Walk-Forward Evaluation ──────────────────────────
 WALK_FORWARD_FOLDS = 5          # number of expanding-window folds for post-train evaluation
 
+# ── XGBoost Early Stopping ───────────────────────────
+XGB_EARLY_STOPPING_ROUNDS = 30  # stop if logloss doesn't improve for N rounds on eval set
+
 # ── Paper Trading ─────────────────────────────────────
 PAPER_STARTING_BALANCE = 10000
 PAPER_TRADES_PATH = os.path.join(DATA_DIR, "paper_trades.csv")

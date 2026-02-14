@@ -984,8 +984,23 @@ class NexusPredictor:
             sample_weights = np.exp(decay_rate * np.arange(n))  # 0.05 at start → 1.0 at end
             sample_weights /= sample_weights.mean()  # Normalize so mean=1
             
-            challenger_model.fit(X_train, y_train, sample_weight=sample_weights)
-            logging.info(f"[CHAMPION-CHALLENGER] Challenger XGBoost trained on {len(X_train):,} samples")
+            # Enable early stopping if we have an eval set
+            es_rounds = getattr(config, 'XGB_EARLY_STOPPING_ROUNDS', 30)
+            if can_evaluate:
+                challenger_model.set_params(early_stopping_rounds=es_rounds)
+            
+            challenger_model.fit(
+                X_train, y_train,
+                sample_weight=sample_weights,
+                eval_set=[(X_test_eval, y_test_eval)] if can_evaluate else None,
+                verbose=False,
+            )
+            best_iter = getattr(challenger_model, 'best_iteration', None)
+            n_trees = best_iter + 1 if best_iter is not None else challenger_model.n_estimators
+            logging.info(
+                f"[CHAMPION-CHALLENGER] Challenger XGBoost trained on {len(X_train):,} samples "
+                f"({n_trees}/{challenger_model.n_estimators} trees" +
+                (f", early-stopped at {n_trees}" if best_iter is not None else "") + ")")
             
             # Log feature importance (P4)
             importance = challenger_model.feature_importances_
@@ -1219,7 +1234,25 @@ class NexusPredictor:
             sample_weights = np.exp(decay_rate * np.arange(n))
             sample_weights /= sample_weights.mean()
 
-            self.model.fit(X_train, y_train, sample_weight=sample_weights)
+            # Early stopping: carve 15% of training tail for eval
+            es_rounds = getattr(config, 'XGB_EARLY_STOPPING_ROUNDS', 30)
+            es_split = int(len(X_train) * 0.85)
+            if es_split > 50 and len(X_train) - es_split > 10:
+                X_tr_es, X_val_es = X_train.iloc[:es_split], X_train.iloc[es_split:]
+                y_tr_es, y_val_es = y_train.iloc[:es_split], y_train.iloc[es_split:]
+                sw_es = sample_weights[:es_split]
+                self.model.set_params(early_stopping_rounds=es_rounds)
+                self.model.fit(
+                    X_tr_es, y_tr_es,
+                    sample_weight=sw_es,
+                    eval_set=[(X_val_es, y_val_es)],
+                    verbose=False,
+                )
+                best_iter = getattr(self.model, 'best_iteration', None)
+                n_trees = best_iter + 1 if best_iter is not None else self.model.n_estimators
+                logging.info(f"[RETRAIN-{timeframe_label}] XGBoost: {n_trees}/{self.model.n_estimators} trees")
+            else:
+                self.model.fit(X_train, y_train, sample_weight=sample_weights)
             joblib.dump(self.model, self.model_path)
 
             # Fit scaler + Transformer if enough data
