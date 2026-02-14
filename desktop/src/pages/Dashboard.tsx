@@ -13,26 +13,60 @@ import TradingViewChart from '../components/TradingViewChart';
 import SwissWeather from '../components/SwissWeather';
 import { IconRefresh } from '../components/Icons';
 
-// ── Layout Definitions ──────────────────────────────────────
-const STORAGE_KEY = 'nexus-dashboard-layout-v3';  // versioned — old layout auto-discarded
+// ── Constants ────────────────────────────────────────────────
+const STORAGE_KEY = 'nexus-dashboard-layout-v4';
+const PRESETS_KEY = 'nexus-dashboard-presets-v1';
+const ACTIVE_SLOT_KEY = 'nexus-dashboard-active-slot';
 const COLS = 12;
 const ROW_HEIGHT = 30;
 
-const DEFAULT_LAYOUT: LayoutItem[] = [
-    // Top metrics strip — compact (~5 rows = 150px)
-    { i: 'price', x: 0, y: 0, w: 2, h: 5, minW: 2, minH: 4 },
-    { i: 'signal', x: 2, y: 0, w: 2, h: 5, minW: 2, minH: 4 },
-    { i: 'accuracy', x: 4, y: 0, w: 3, h: 5, minW: 2, minH: 4 },
-    { i: 'volume', x: 7, y: 0, w: 2, h: 5, minW: 2, minH: 4 },
-    { i: 'weather', x: 9, y: 0, w: 3, h: 5, minW: 2, minH: 4 },
-    // Main content — large chart + quant panel (~16 rows = 480px)
-    { i: 'chart', x: 0, y: 5, w: 8, h: 16, minW: 4, minH: 8 },
-    { i: 'quant', x: 8, y: 5, w: 4, h: 16, minW: 3, minH: 8 },
-    // Bottom panels (~12 rows = 360px)
-    { i: 'news', x: 0, y: 21, w: 4, h: 12, minW: 3, minH: 6 },
-    { i: 'health', x: 4, y: 21, w: 4, h: 12, minW: 3, minH: 6 },
-    { i: 'training', x: 8, y: 21, w: 4, h: 12, minW: 3, minH: 6 },
-];
+// Min constraints applied to every layout
+const MINS: Record<string, { minW: number; minH: number }> = {
+    price: { minW: 2, minH: 4 }, signal: { minW: 2, minH: 4 },
+    accuracy: { minW: 2, minH: 4 }, volume: { minW: 2, minH: 4 },
+    weather: { minW: 2, minH: 4 }, chart: { minW: 4, minH: 8 },
+    quant: { minW: 3, minH: 8 }, news: { minW: 3, minH: 6 },
+    health: { minW: 3, minH: 6 }, training: { minW: 3, minH: 6 },
+};
+
+function applyMins(layout: LayoutItem[]): LayoutItem[] {
+    return layout.map(item => {
+        const m = MINS[item.i] || {};
+        return { ...item, minW: m.minW, minH: m.minH };
+    });
+}
+
+// ── Default Layout ───────────────────────────────────────────
+const DEFAULT_LAYOUT: LayoutItem[] = applyMins([
+    { i: 'price', x: 0, y: 0, w: 2, h: 5 },
+    { i: 'signal', x: 2, y: 0, w: 2, h: 5 },
+    { i: 'accuracy', x: 4, y: 0, w: 3, h: 5 },
+    { i: 'volume', x: 7, y: 0, w: 2, h: 5 },
+    { i: 'weather', x: 9, y: 0, w: 3, h: 5 },
+    { i: 'chart', x: 0, y: 5, w: 8, h: 16 },
+    { i: 'quant', x: 8, y: 5, w: 4, h: 16 },
+    { i: 'news', x: 0, y: 21, w: 4, h: 12 },
+    { i: 'health', x: 4, y: 21, w: 4, h: 12 },
+    { i: 'training', x: 8, y: 21, w: 4, h: 12 },
+]);
+
+// ── Preset 1: Trading Focus (hardcoded from user's screenshot) ──
+// Large chart dominates, compact metrics, quant panel, bottom panels smaller
+const PRESET_1: LayoutItem[] = applyMins([
+    { i: 'price', x: 0, y: 0, w: 2, h: 5 },
+    { i: 'signal', x: 2, y: 0, w: 2, h: 5 },
+    { i: 'accuracy', x: 4, y: 0, w: 3, h: 5 },
+    { i: 'volume', x: 7, y: 0, w: 2, h: 5 },
+    { i: 'weather', x: 9, y: 0, w: 3, h: 5 },
+    { i: 'chart', x: 0, y: 5, w: 8, h: 20 },
+    { i: 'quant', x: 8, y: 5, w: 4, h: 20 },
+    { i: 'news', x: 0, y: 25, w: 4, h: 10 },
+    { i: 'health', x: 4, y: 25, w: 4, h: 10 },
+    { i: 'training', x: 8, y: 25, w: 4, h: 10 },
+]);
+
+// ── Persistence ──────────────────────────────────────────────
+type Presets = { [slot: number]: LayoutItem[] | null };
 
 function loadLayout(): LayoutItem[] {
     try {
@@ -40,19 +74,46 @@ function loadLayout(): LayoutItem[] {
         if (saved) {
             const parsed = JSON.parse(saved);
             if (Array.isArray(parsed) && parsed.length === DEFAULT_LAYOUT.length) {
-                // Re-apply min constraints from defaults
-                return parsed.map((item: any) => {
-                    const def = DEFAULT_LAYOUT.find(d => d.i === item.i);
-                    return { ...item, minW: def?.minW, minH: def?.minH };
-                });
+                return applyMins(parsed);
             }
         }
     } catch { /* ignore */ }
-    return DEFAULT_LAYOUT;
+    return [...DEFAULT_LAYOUT];
 }
 
 function saveLayout(layout: readonly LayoutItem[]) {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(layout));
+}
+
+function loadPresets(): Presets {
+    try {
+        const saved = localStorage.getItem(PRESETS_KEY);
+        if (saved) {
+            const parsed = JSON.parse(saved);
+            return {
+                1: parsed['1'] ? applyMins(parsed['1']) : PRESET_1,
+                2: parsed['2'] ? applyMins(parsed['2']) : null,
+                3: parsed['3'] ? applyMins(parsed['3']) : null,
+            };
+        }
+    } catch { /* ignore */ }
+    return { 1: PRESET_1, 2: null, 3: null };
+}
+
+function savePresets(presets: Presets) {
+    localStorage.setItem(PRESETS_KEY, JSON.stringify(presets));
+}
+
+function loadActiveSlot(): number | null {
+    try {
+        const s = localStorage.getItem(ACTIVE_SLOT_KEY);
+        return s ? parseInt(s) : null;
+    } catch { return null; }
+}
+
+function saveActiveSlot(slot: number | null) {
+    if (slot === null) localStorage.removeItem(ACTIVE_SLOT_KEY);
+    else localStorage.setItem(ACTIVE_SLOT_KEY, String(slot));
 }
 
 // ── Dashboard Component ─────────────────────────────────────
@@ -60,6 +121,9 @@ export default function Dashboard() {
     const containerRef = useRef<HTMLDivElement>(null);
     const [width, setWidth] = useState(1200);
     const [layout, setLayout] = useState<LayoutItem[]>(loadLayout);
+    const [presets, setPresets] = useState<Presets>(loadPresets);
+    const [activeSlot, setActiveSlot] = useState<number | null>(loadActiveSlot);
+    const [saving, setSaving] = useState(false);
 
     // Measure container width
     useEffect(() => {
@@ -74,31 +138,95 @@ export default function Dashboard() {
     }, []);
 
     const handleLayoutChange = useCallback((newLayout: readonly LayoutItem[]) => {
-        setLayout([...newLayout]);
-        saveLayout(newLayout);
+        const arr = [...newLayout];
+        setLayout(arr);
+        saveLayout(arr);
     }, []);
 
     const resetLayout = useCallback(() => {
         setLayout([...DEFAULT_LAYOUT]);
         saveLayout(DEFAULT_LAYOUT);
+        setActiveSlot(null);
+        saveActiveSlot(null);
     }, []);
+
+    // Load a preset slot
+    const loadPreset = useCallback((slot: number) => {
+        const preset = presets[slot];
+        if (!preset) return;
+        setLayout([...preset]);
+        saveLayout(preset);
+        setActiveSlot(slot);
+        saveActiveSlot(slot);
+    }, [presets]);
+
+    // Save current layout into a slot
+    const saveToSlot = useCallback((slot: number) => {
+        const updated = { ...presets, [slot]: [...layout] };
+        setPresets(updated);
+        savePresets(updated);
+        setActiveSlot(slot);
+        saveActiveSlot(slot);
+        setSaving(false);
+    }, [presets, layout]);
+
+    const handleSlotClick = useCallback((slot: number) => {
+        if (saving) {
+            saveToSlot(slot);
+        } else {
+            loadPreset(slot);
+        }
+    }, [saving, saveToSlot, loadPreset]);
 
     return (
         <div ref={containerRef} className="dashboard-grid-container">
-            {/* Reset layout button */}
-            <div style={{
-                display: 'flex', justifyContent: 'flex-end', padding: '0 0 4px',
-                position: 'relative', zIndex: 10
-            }}>
+            {/* Toolbar: presets + reset */}
+            <div className="dashboard-toolbar">
+                {/* Preset slots */}
+                <div className="preset-group">
+                    {[1, 2, 3].map(slot => {
+                        const hasPreset = presets[slot] !== null;
+                        const isActive = activeSlot === slot && !saving;
+                        return (
+                            <button
+                                key={slot}
+                                className={`preset-btn ${isActive ? 'preset-active' : ''} ${saving ? 'preset-saving' : ''} ${!hasPreset && !saving ? 'preset-empty' : ''}`}
+                                onClick={() => handleSlotClick(slot)}
+                                title={saving
+                                    ? `Save current layout to slot ${slot}`
+                                    : hasPreset
+                                        ? `Load layout ${slot}`
+                                        : `Slot ${slot} — empty (use Save to store)`}
+                            >
+                                {slot}
+                            </button>
+                        );
+                    })}
+                    <button
+                        className={`preset-save-btn ${saving ? 'preset-save-active' : ''}`}
+                        onClick={() => setSaving(prev => !prev)}
+                        title={saving ? 'Cancel save' : 'Save current layout to a slot'}
+                    >
+                        {saving ? '✕' : '💾'}
+                    </button>
+                </div>
+
                 <button
                     className="btn btn-sm"
                     onClick={resetLayout}
                     title="Reset dashboard layout to default"
                     style={{ fontSize: 11, opacity: 0.6, gap: 4 }}
                 >
-                    <IconRefresh style={{ width: 10, height: 10 }} /> Reset Layout
+                    <IconRefresh style={{ width: 10, height: 10 }} /> Reset
                 </button>
             </div>
+
+            {/* Save mode hint */}
+            {saving && (
+                <div className="preset-hint">
+                    Click a slot number to save the current layout there
+                </div>
+            )}
 
             <ReactGridLayout
                 layout={layout}

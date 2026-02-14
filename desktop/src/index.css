@@ -1874,6 +1874,121 @@ kbd {
     min-height: 0;
 }
 
+/* Dashboard toolbar — presets + reset */
+.dashboard-toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0 6px;
+    position: relative;
+    z-index: 10;
+}
+
+.preset-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.preset-btn {
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    font-size: 11px;
+    font-weight: 700;
+    font-family: var(--font-mono);
+    border: 1px solid var(--border);
+    background: var(--bg-2);
+    color: var(--text-1);
+    cursor: pointer;
+    transition: all var(--duration) var(--ease);
+}
+
+.preset-btn:hover {
+    border-color: var(--accent);
+    background: var(--bg-3);
+    color: var(--text-0);
+}
+
+.preset-btn.preset-active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: #fff;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.3);
+}
+
+.preset-btn.preset-empty {
+    opacity: 0.35;
+    border-style: dashed;
+}
+
+.preset-btn.preset-empty:hover {
+    opacity: 0.6;
+}
+
+.preset-btn.preset-saving {
+    border-color: var(--warning);
+    animation: presetPulse 1s ease-in-out infinite;
+}
+
+.preset-btn.preset-saving:hover {
+    background: var(--warning);
+    color: #000;
+    border-color: var(--warning);
+}
+
+.preset-save-btn {
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: var(--radius-sm);
+    font-size: 12px;
+    border: 1px solid var(--border);
+    background: var(--bg-2);
+    color: var(--text-2);
+    cursor: pointer;
+    margin-left: 4px;
+    transition: all var(--duration) var(--ease);
+}
+
+.preset-save-btn:hover {
+    border-color: var(--border-hover);
+    color: var(--text-0);
+    background: var(--bg-3);
+}
+
+.preset-save-btn.preset-save-active {
+    background: var(--warning-dim);
+    border-color: var(--warning);
+    color: var(--warning);
+}
+
+.preset-hint {
+    font-size: 10px;
+    color: var(--warning);
+    text-align: center;
+    padding: 3px 0;
+    letter-spacing: 0.3px;
+    animation: fadeSlideIn 0.2s ease both;
+}
+
+@keyframes presetPulse {
+
+    0%,
+    100% {
+        border-color: var(--warning);
+    }
+
+    50% {
+        border-color: rgba(245, 158, 11, 0.3);
+    }
+}
+
 /* Card wrapper inside each grid cell */
 .grid-card-wrapper {
     display: flex;
