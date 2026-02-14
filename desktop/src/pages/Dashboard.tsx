@@ -121,6 +121,8 @@ function saveActiveSlot(slot: number | null) {
 }
 
 // ── Dashboard Component ─────────────────────────────────────
+const THEME_KEY = 'nexus-dashboard-theme';
+
 export default function Dashboard() {
     const containerRef = useRef<HTMLDivElement>(null);
     const [width, setWidth] = useState(1200);
@@ -128,6 +130,14 @@ export default function Dashboard() {
     const [presets, setPresets] = useState<Presets>(loadPresets);
     const [activeSlot, setActiveSlot] = useState<number | null>(loadActiveSlot);
     const [saving, setSaving] = useState(false);
+    const [lightMode, setLightMode] = useState(() => {
+        try { return localStorage.getItem(THEME_KEY) === 'light'; } catch { return false; }
+    });
+
+    // Persist theme
+    useEffect(() => {
+        localStorage.setItem(THEME_KEY, lightMode ? 'light' : 'dark');
+    }, [lightMode]);
 
     // Measure container width
     useEffect(() => {
@@ -183,10 +193,10 @@ export default function Dashboard() {
     }, [saving, saveToSlot, loadPreset]);
 
     return (
-        <div ref={containerRef} className="dashboard-grid-container">
-            {/* Toolbar: presets + reset */}
+        <div ref={containerRef} className={`dashboard-grid-container ${lightMode ? 'dashboard-light' : ''}`}>
+            {/* Toolbar: presets + theme + reset */}
             <div className="dashboard-toolbar">
-                {/* Preset slots */}
+                {/* Left: Preset slots */}
                 <div className="preset-group">
                     {[1, 2, 3].map(slot => {
                         const hasPreset = presets[slot] !== null;
@@ -212,6 +222,14 @@ export default function Dashboard() {
                         title={saving ? 'Cancel save' : 'Save current layout to a slot'}
                     >
                         {saving ? '✕' : '💾'}
+                    </button>
+                    <button
+                        className={`preset-save-btn ${lightMode ? 'preset-save-active' : ''}`}
+                        onClick={() => setLightMode(prev => !prev)}
+                        title={lightMode ? 'Switch to dark mode' : 'Switch to light mode'}
+                        style={{ fontSize: 13 }}
+                    >
+                        {lightMode ? '🌙' : '☀️'}
                     </button>
                 </div>
 

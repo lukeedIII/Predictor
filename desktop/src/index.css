@@ -1990,49 +1990,47 @@ kbd {
 }
 
 /* ─── World Clock ─────────────────────────────── */
-.world-clock-grid {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-}
-
-.clock-row {
+.clock-others {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    padding: 1px 0;
+    gap: 6px;
+    margin-top: 4px;
+    overflow-x: auto;
+    scrollbar-width: none;
 }
 
-.clock-city {
+.clock-others::-webkit-scrollbar {
+    display: none;
+}
+
+.clock-other-btn {
+    all: unset;
+    cursor: pointer;
     display: flex;
     align-items: center;
-    gap: 4px;
-    min-width: 0;
-}
-
-.clock-flag {
-    font-size: 11px;
+    gap: 3px;
+    padding: 2px 5px;
+    border-radius: var(--radius-sm);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.06);
+    transition: all var(--duration) var(--ease);
+    white-space: nowrap;
     flex-shrink: 0;
 }
 
-.clock-name {
-    font-size: 10px;
-    color: var(--text-2);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
+.clock-other-btn:hover {
+    background: rgba(255, 255, 255, 0.08);
+    border-color: var(--accent);
 }
 
-.clock-right {
-    display: flex;
-    align-items: center;
-    gap: 5px;
+.clock-flag {
+    font-size: 10px;
     flex-shrink: 0;
 }
 
 .clock-time {
-    font-size: 10px;
-    color: var(--text-1);
+    font-size: 9px;
+    color: var(--text-2);
     letter-spacing: 0.3px;
 }
 
@@ -2040,6 +2038,7 @@ kbd {
     width: 5px;
     height: 5px;
     border-radius: 50%;
+    display: inline-block;
     flex-shrink: 0;
 }
 
@@ -2063,6 +2062,58 @@ kbd {
     50% {
         opacity: 0.5;
     }
+}
+
+/* ─── Dashboard Light Mode ────────────────────── */
+.dashboard-light .grid-card-wrapper {
+    background: #F8FAFC;
+    border-color: #E2E8F0;
+}
+
+.dashboard-light .grid-drag-handle {
+    background: #F1F5F9;
+    border-bottom-color: #E2E8F0;
+}
+
+.dashboard-light .grid-drag-dots {
+    color: #94A3B8;
+}
+
+.dashboard-light .grid-drag-label {
+    color: #475569;
+}
+
+.dashboard-light .stat-label {
+    color: #64748B;
+}
+
+.dashboard-light .stat-value {
+    color: #0F172A;
+}
+
+.dashboard-light .stat-sub {
+    color: #475569;
+}
+
+.dashboard-light .clock-other-btn {
+    background: rgba(0, 0, 0, 0.04);
+    border-color: rgba(0, 0, 0, 0.08);
+}
+
+.dashboard-light .clock-other-btn:hover {
+    background: rgba(0, 0, 0, 0.08);
+}
+
+.dashboard-light .clock-time {
+    color: #475569;
+}
+
+.dashboard-light .weather-card {
+    background: rgba(241, 245, 249, 0.6);
+}
+
+.dashboard-light .react-grid-placeholder {
+    background: rgba(59, 130, 246, 0.15) !important;
 }
 
 /* Card wrapper inside each grid cell */
