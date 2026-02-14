@@ -176,7 +176,7 @@ Training mechanics:
 ### Transformer (Optional)
 - encoder: d_model=1024, 16 heads, 12 layers, FFN=4096, dropout=0.15
 - seq length: 30 timesteps
-- training: 30 epochs, AdamW, pos_weight=1.5
+- training: 30 epochs, AdamW, BCEWithLogitsLoss (AMP-safe)
 - GPU: CUDA if available
 
 Ensembling:
@@ -191,14 +191,22 @@ Ensembling:
 Current implementation (config-driven):
 - **Mode:** paper only (no real exchange execution)
 - **Direction:** long/short with configurable leverage (default 10x)
-- **Entry gate:** confidence > `PAPER_MIN_CONFIDENCE` (default 30%)
+- **Multi-position:** up to 3 concurrent positions (`MAX_CONCURRENT = 3`)
+- **Entry gate:** adaptive confidence threshold (starts at `PAPER_MIN_CONFIDENCE = 30%`, self-adjusts based on recent performance)
+- **Position sizing:** half-Kelly criterion on available balance
 - **Execution:** simulated market fills at current price
+- **Fee deduction:** Binance taker (0.04%) + slippage (0.01%) charged at both open and close
 - **Exits:**
-  - closes when prediction flips direction
+  - TP/SL based on ATR-scaled volatility bands
+  - trailing stop-loss (ratchets in profit direction)
+  - prediction flip (opposing signal)
   - max hold time: `PAPER_MAX_HOLD_SEC` (default 7200 sec / 2 hours)
-
-Known gap:
-- The label bakes in a +0.30% hurdle, but paper fills do **not** currently deduct fees/slippage explicitly.
+  - liquidation if price reaches margin threshold
+- **Risk controls:**
+  - circuit breaker: halts trading if drawdown exceeds `PAPER_MAX_DRAWDOWN` (default 20%)
+  - cooldown: minimum `PAPER_COOLDOWN_SEC` (default 60s) between trades
+- **Feedback loop:** trade outcomes (PnL, regime, confidence, hold time) logged for adaptive threshold tuning
+- **Net-PnL accounting:** trade records include `gross_pnl_usd`, `pnl_usd` (net), `entry_fee`, `exit_fee`, `total_fee`; stats expose `total_fees`, `net_sharpe_ratio`
 
 ---
 
@@ -214,7 +222,7 @@ A walk-forward backtest on ~3.15M candles reported:
 ### Live system evaluation (current)
 - single temporal split (80/20) for calibration
 - accuracy validation logged after the 15m horizon passes
-- does not yet compute fee-adjusted net PnL dashboards
+- fee-adjusted net-PnL tracked per trade (gross/net/fee breakdown in CSV)
 
 ---
 
