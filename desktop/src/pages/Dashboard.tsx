@@ -14,24 +14,24 @@ import SwissWeather from '../components/SwissWeather';
 import { IconRefresh } from '../components/Icons';
 
 // ── Layout Definitions ──────────────────────────────────────
-const STORAGE_KEY = 'nexus-dashboard-layout-v2';  // versioned — old layout auto-discarded
+const STORAGE_KEY = 'nexus-dashboard-layout-v3';  // versioned — old layout auto-discarded
 const COLS = 12;
 const ROW_HEIGHT = 30;
 
 const DEFAULT_LAYOUT: LayoutItem[] = [
-    // Top metrics strip (~7 rows = 210px + margins)
-    { i: 'price', x: 0, y: 0, w: 2, h: 7, minW: 2, minH: 4 },
-    { i: 'signal', x: 2, y: 0, w: 2, h: 7, minW: 2, minH: 4 },
-    { i: 'accuracy', x: 4, y: 0, w: 3, h: 7, minW: 2, minH: 4 },
-    { i: 'volume', x: 7, y: 0, w: 2, h: 7, minW: 2, minH: 4 },
-    { i: 'weather', x: 9, y: 0, w: 3, h: 7, minW: 2, minH: 4 },
-    // Main content (~18 rows = 540px + margins)
-    { i: 'chart', x: 0, y: 7, w: 8, h: 18, minW: 4, minH: 8 },
-    { i: 'quant', x: 8, y: 7, w: 4, h: 18, minW: 3, minH: 8 },
-    // Bottom panels (~14 rows = 420px + margins)
-    { i: 'news', x: 0, y: 25, w: 4, h: 14, minW: 3, minH: 6 },
-    { i: 'health', x: 4, y: 25, w: 4, h: 14, minW: 3, minH: 6 },
-    { i: 'training', x: 8, y: 25, w: 4, h: 14, minW: 3, minH: 6 },
+    // Top metrics strip — compact (~5 rows = 150px)
+    { i: 'price', x: 0, y: 0, w: 2, h: 5, minW: 2, minH: 4 },
+    { i: 'signal', x: 2, y: 0, w: 2, h: 5, minW: 2, minH: 4 },
+    { i: 'accuracy', x: 4, y: 0, w: 3, h: 5, minW: 2, minH: 4 },
+    { i: 'volume', x: 7, y: 0, w: 2, h: 5, minW: 2, minH: 4 },
+    { i: 'weather', x: 9, y: 0, w: 3, h: 5, minW: 2, minH: 4 },
+    // Main content — large chart + quant panel (~16 rows = 480px)
+    { i: 'chart', x: 0, y: 5, w: 8, h: 16, minW: 4, minH: 8 },
+    { i: 'quant', x: 8, y: 5, w: 4, h: 16, minW: 3, minH: 8 },
+    // Bottom panels (~12 rows = 360px)
+    { i: 'news', x: 0, y: 21, w: 4, h: 12, minW: 3, minH: 6 },
+    { i: 'health', x: 4, y: 21, w: 4, h: 12, minW: 3, minH: 6 },
+    { i: 'training', x: 8, y: 21, w: 4, h: 12, minW: 3, minH: 6 },
 ];
 
 function loadLayout(): LayoutItem[] {
