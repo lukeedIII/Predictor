@@ -56,8 +56,17 @@ class DataCollector:
             df.to_csv(self.csv_path, index=False)
             logging.info(f"Created new file: {self.csv_path}")
         else:
-            existing_df = pd.read_csv(self.csv_path)
-            existing_df['timestamp'] = pd.to_datetime(existing_df['timestamp'])
+            try:
+                existing_df = pd.read_csv(self.csv_path)
+                if existing_df.empty or 'timestamp' not in existing_df.columns:
+                    raise ValueError("CSV is empty or missing columns")
+                existing_df['timestamp'] = pd.to_datetime(existing_df['timestamp'])
+            except (pd.errors.EmptyDataError, ValueError, Exception) as e:
+                logging.warning(f"CSV corrupt/empty ({e}), overwriting with fresh data.")
+                df.to_csv(self.csv_path, index=False)
+                parquet_path = self.csv_path.replace('.csv', '.parquet')
+                df.to_parquet(parquet_path, index=False)
+                return
             
             # Combine and remove duplicates
             combined = pd.concat([existing_df, df]).drop_duplicates(subset=['timestamp'], keep='last')
@@ -110,8 +119,12 @@ class DataCollector:
     def get_latest_price(self):
         """Returns the last closed price from CSV."""
         if os.path.exists(self.csv_path):
-            df = pd.read_csv(self.csv_path)
-            return df['close'].iloc[-1]
+            try:
+                df = pd.read_csv(self.csv_path)
+                if not df.empty and 'close' in df.columns:
+                    return df['close'].iloc[-1]
+            except (pd.errors.EmptyDataError, Exception):
+                pass
         return 0.0
 
     def run(self):
