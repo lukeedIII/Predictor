@@ -85,8 +85,19 @@ class HiddenMarkovRegime:
                 random_state=42
             )
             self.model.fit(observations)
+            
+            # Sort states by mean return (col 0) to ensure semantic stability (P0-3 audit fix)
+            # Highest mean return → BULL, middle → SIDEWAYS, lowest → BEAR
+            state_means = self.model.means_[:, 0]  # first obs dimension = log returns
+            sorted_indices = np.argsort(state_means)[::-1]  # descending
+            labels = ["BULL", "SIDEWAYS", "BEAR"]
+            self.state_names = {int(sorted_indices[i]): labels[i] for i in range(min(len(sorted_indices), len(labels)))}
+            
             self.is_fitted = True
-            logging.info(f"HMM fitted with {self.n_states} states on {len(observations)} observations")
+            logging.info(
+                f"HMM fitted with {self.n_states} states on {len(observations)} obs — "
+                f"state order: {self.state_names}"
+            )
             return True
         except Exception as e:
             logging.error(f"HMM fitting error: {e}")
@@ -1337,12 +1348,16 @@ class RecurrenceQuantification:
             embedded[:, i] = x[i * self.delay:i * self.delay + n]
         return embedded
     
-    def compute_recurrence(self, prices: np.ndarray) -> bool:
+    def compute_recurrence(self, prices: np.ndarray, max_points: int = 200) -> bool:
         """Compute recurrence matrix and quantification metrics."""
         if len(prices) < 50:
             return False
         
         try:
+            # Guardrail: cap input to avoid O(n²) blowup (P1-3 audit fix)
+            if len(prices) > max_points:
+                prices = prices[-max_points:]
+            
             # Normalize
             prices_norm = (prices - np.mean(prices)) / (np.std(prices) + 1e-10)
             
@@ -1353,11 +1368,9 @@ class RecurrenceQuantification:
             
             n = len(embedded)
             
-            # Distance matrix (use Euclidean distance)
-            dist_matrix = np.zeros((n, n))
-            for i in range(n):
-                for j in range(n):
-                    dist_matrix[i, j] = np.linalg.norm(embedded[i] - embedded[j])
+            # Vectorized distance matrix via scipy (replaces O(n²) Python loops)
+            from scipy.spatial.distance import cdist
+            dist_matrix = cdist(embedded, embedded, metric='euclidean')
             
             # Recurrence matrix (1 if distance < threshold)
             self.recurrence_matrix = (dist_matrix < self.threshold * np.max(dist_matrix)).astype(int)
@@ -1578,7 +1591,7 @@ class TopologicalDataAnalysis:
             embedded[:, i] = x[i * self.delay:i * self.delay + n]
         return embedded
     
-    def compute_persistent_homology(self, prices: np.ndarray, max_dimension: int = 1) -> bool:
+    def compute_persistent_homology(self, prices: np.ndarray, max_dimension: int = 1, max_points: int = 200) -> bool:
         """
         Compute persistent homology (simplified Vietoris-Rips).
         
@@ -1588,6 +1601,10 @@ class TopologicalDataAnalysis:
             return False
         
         try:
+            # Guardrail: cap input to avoid O(n²) blowup (P1-3 audit fix)
+            if len(prices) > max_points:
+                prices = prices[-max_points:]
+            
             # Normalize and embed
             prices_norm = (prices - np.mean(prices)) / (np.std(prices) + 1e-10)
             point_cloud = self._time_delay_embedding(prices_norm)
@@ -1595,16 +1612,10 @@ class TopologicalDataAnalysis:
             if len(point_cloud) < 10:
                 return False
             
-            # Simplified: count connected components at different scales
+            # Vectorized distance matrix via scipy (replaces O(n²) Python loops)
             n = len(point_cloud)
-            
-            # Distance matrix
-            distances = np.zeros((n, n))
-            for i in range(n):
-                for j in range(i+1, n):
-                    d = np.linalg.norm(point_cloud[i] - point_cloud[j])
-                    distances[i, j] = d
-                    distances[j, i] = d
+            from scipy.spatial.distance import cdist
+            distances = cdist(point_cloud, point_cloud, metric='euclidean')
             
             max_dist = np.max(distances)
             thresholds = np.linspace(0, max_dist * 0.5, 20)

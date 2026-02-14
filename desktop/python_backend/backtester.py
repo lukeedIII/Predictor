@@ -330,13 +330,15 @@ class WalkForwardBacktester:
         net_returns = position_returns - costs
         return net_returns
     
-    def _compute_sharpe(self, returns: np.ndarray, periods_per_year: int = 525600) -> float:
-        """Compute annualized Sharpe ratio (assuming 1-min returns)."""
+    def _compute_sharpe(self, returns: np.ndarray, periods_per_year: int = None) -> float:
+        """Compute annualized Sharpe ratio, deriving periods from step_size."""
         if len(returns) < 2 or np.std(returns) == 0:
             return 0.0
         
-        # For hourly predictions, adjust periods
-        periods_per_year = 8760  # hours in year
+        # Derive periods_per_year from step_size (in minutes) if not specified
+        if periods_per_year is None:
+            minutes_per_year = 525600  # 365.25 * 24 * 60
+            periods_per_year = minutes_per_year // max(1, self.step_size)
         
         mean_ret = np.mean(returns)
         std_ret = np.std(returns)

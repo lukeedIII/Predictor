@@ -1,32 +1,32 @@
 # === Core ML ===
-torch
-xgboost
-scikit-learn
-joblib
+torch>=2.5.0
+xgboost>=3.0.0,<4.0.0
+scikit-learn>=1.5.0,<2.0.0
+joblib>=1.4.0
 
 # === Data ===
-ccxt
-pandas
-numpy
-pyarrow
+ccxt>=4.0.0
+pandas>=2.2.0,<3.0.0
+numpy>=2.0.0,<3.0.0
+pyarrow>=17.0.0
 
 # === Web API ===
-uvicorn
-fastapi
+uvicorn>=0.27.0,<1.0.0
+fastapi>=0.115.0,<1.0.0
 
 # === NLP / Sentiment ===
-transformers
-feedparser
-beautifulsoup4
-requests
+transformers>=4.45.0
+feedparser>=6.0.0
+beautifulsoup4>=4.12.0
+requests>=2.31.0
 
 # === Math / Quant ===
-scipy
-filterpy
-hmmlearn
+scipy>=1.13.0,<2.0.0
+filterpy>=1.4.5
+hmmlearn>=0.3.0,<1.0.0
 
 # === System ===
-python-dotenv
-GPUtil
-plyer
-platformdirs
+python-dotenv>=1.0.0
+GPUtil>=1.4.0
+plyer>=2.1.0
+platformdirs>=4.0.0

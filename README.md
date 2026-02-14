@@ -276,6 +276,9 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 - **Regime-based trade gating** — 3-layer filter: (1) Hurst chaos filter (H ≈ 0.5 = random walk), (2) vol-regime bounds (skip extreme volatility > 3x and dead markets < 0.15x), (3) regime win-rate gate blocks trading when a regime's recent win rate drops below 35% over 5+ trades
 - **Dynamic class-imbalance correction** — `scale_pos_weight` set to neg/pos ratio at each training call; compensates for label skew caused by the +0.30% hurdle (UP is typically the minority class)
 - **Gap detection / quarantine** — detects time gaps > 5 min between consecutive candles, marks gap rows + 3-row buffer as quarantined; quarantined rows excluded from training while features still forward-fill for continuity
+- **Pinned dependency versions** — all packages in `requirements.txt` use compatible-range constraints (`>=min,<next-major`) for reproducibility
+- **Semantic HMM state ordering** — after fit, HMM states are sorted by mean return (highest → BULL, lowest → BEAR); eliminates label instability across refits
+- **RQA/TDA computational guardrails** — both capped at 200-point windows and use `scipy.spatial.distance.cdist` (vectorized) instead of O(n²) Python loops
 
 ---
 
