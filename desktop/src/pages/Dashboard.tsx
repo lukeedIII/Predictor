@@ -1,5 +1,5 @@
 import { useRef, useState, useEffect, useCallback } from 'react';
-import ReactGridLayout, { type LayoutItem } from 'react-grid-layout';
+import ReactGridLayout, { type LayoutItem, verticalCompactor } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
 
@@ -14,24 +14,24 @@ import SwissWeather from '../components/SwissWeather';
 import { IconRefresh } from '../components/Icons';
 
 // ── Layout Definitions ──────────────────────────────────────
-const STORAGE_KEY = 'nexus-dashboard-layout';
+const STORAGE_KEY = 'nexus-dashboard-layout-v2';  // versioned — old layout auto-discarded
 const COLS = 12;
-const ROW_HEIGHT = 110;
+const ROW_HEIGHT = 30;
 
 const DEFAULT_LAYOUT: LayoutItem[] = [
-    // Top metrics strip
-    { i: 'price', x: 0, y: 0, w: 2, h: 2, minW: 2, minH: 2 },
-    { i: 'signal', x: 2, y: 0, w: 2, h: 2, minW: 2, minH: 2 },
-    { i: 'accuracy', x: 4, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
-    { i: 'volume', x: 7, y: 0, w: 2, h: 2, minW: 2, minH: 2 },
-    { i: 'weather', x: 9, y: 0, w: 3, h: 2, minW: 2, minH: 2 },
-    // Main content
-    { i: 'chart', x: 0, y: 2, w: 8, h: 5, minW: 4, minH: 3 },
-    { i: 'quant', x: 8, y: 2, w: 4, h: 5, minW: 3, minH: 3 },
-    // Bottom panels
-    { i: 'news', x: 0, y: 7, w: 4, h: 4, minW: 3, minH: 2 },
-    { i: 'health', x: 4, y: 7, w: 4, h: 4, minW: 3, minH: 2 },
-    { i: 'training', x: 8, y: 7, w: 4, h: 4, minW: 3, minH: 2 },
+    // Top metrics strip (~7 rows = 210px + margins)
+    { i: 'price', x: 0, y: 0, w: 2, h: 7, minW: 2, minH: 4 },
+    { i: 'signal', x: 2, y: 0, w: 2, h: 7, minW: 2, minH: 4 },
+    { i: 'accuracy', x: 4, y: 0, w: 3, h: 7, minW: 2, minH: 4 },
+    { i: 'volume', x: 7, y: 0, w: 2, h: 7, minW: 2, minH: 4 },
+    { i: 'weather', x: 9, y: 0, w: 3, h: 7, minW: 2, minH: 4 },
+    // Main content (~18 rows = 540px + margins)
+    { i: 'chart', x: 0, y: 7, w: 8, h: 18, minW: 4, minH: 8 },
+    { i: 'quant', x: 8, y: 7, w: 4, h: 18, minW: 3, minH: 8 },
+    // Bottom panels (~14 rows = 420px + margins)
+    { i: 'news', x: 0, y: 25, w: 4, h: 14, minW: 3, minH: 6 },
+    { i: 'health', x: 4, y: 25, w: 4, h: 14, minW: 3, minH: 6 },
+    { i: 'training', x: 8, y: 25, w: 4, h: 14, minW: 3, minH: 6 },
 ];
 
 function loadLayout(): LayoutItem[] {
@@ -102,17 +102,23 @@ export default function Dashboard() {
 
             <ReactGridLayout
                 layout={layout}
-                cols={COLS}
-                rowHeight={ROW_HEIGHT}
                 width={width}
                 onLayoutChange={handleLayoutChange}
-                draggableHandle=".grid-drag-handle"
-                compactType="vertical"
-                margin={[10, 10] as [number, number]}
-                containerPadding={[0, 0] as [number, number]}
-                useCSSTransforms={true}
-                isResizable={true}
-                isDraggable={true}
+                gridConfig={{
+                    cols: COLS,
+                    rowHeight: ROW_HEIGHT,
+                    margin: [10, 10] as [number, number],
+                    containerPadding: [0, 0] as [number, number],
+                }}
+                dragConfig={{
+                    enabled: true,
+                    handle: '.grid-drag-handle',
+                }}
+                resizeConfig={{
+                    enabled: true,
+                }}
+                compactor={verticalCompactor}
+                autoSize={true}
             >
                 <div key="price">
                     <GridCard title="Price">
