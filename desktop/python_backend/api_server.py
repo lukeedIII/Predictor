@@ -617,6 +617,7 @@ async def _ws_push_loop():
                             d = pos.to_dict()
                             if live_price > 0:
                                 d["unrealized_pnl"] = round(pos.unrealized_pnl(live_price), 2)
+                                d["unrealized_pnl_pct"] = round(pos.unrealized_pnl_pct(live_price), 2)
                             pos_list.append(d)
                         payload["positions"] = _sanitize_for_json(pos_list)
                     else:

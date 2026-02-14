@@ -667,9 +667,14 @@ class PaperTrader:
                 tpy_net = 8760 / avg_h_net
                 net_sharpe = np.mean(net_returns) / np.std(net_returns) * np.sqrt(tpy_net)
         
+        # Margin locked in open positions
+        margin_in_use = sum(pos.margin for pos in self.positions)
+        
         return {
             'balance': self.balance,
             'starting_balance': self.starting_balance,
+            'available_balance': self.balance - margin_in_use,
+            'margin_in_use': margin_in_use,
             'total_pnl': self.total_pnl,
             'total_gross_pnl': self.total_gross_pnl,
             'total_fees': self.total_fees,
@@ -687,6 +692,7 @@ class PaperTrader:
             'circuit_breaker': self.circuit_breaker_active,
             'position_open': len(self.positions) > 0,
             'positions_count': len(self.positions),
+            'max_concurrent': self.MAX_CONCURRENT,
             'leverage': self.leverage
         }
     
