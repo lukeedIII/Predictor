@@ -124,10 +124,10 @@ def main():
         print("⚠️  WARNING: Insufficient data for proper backtesting!")
         print("   Need at least 1440 rows (24h) for reliable results.\n")
 
-    baseline_results = run_baseline_parallel(data, horizon_minutes=60)
+    baseline_results = run_baseline_parallel(data, horizon_minutes=config.PREDICTION_HORIZON_MINUTES)
 
     print("\n" + "-" * 70)
-    predictor_result = run_predictor_backtest(data, horizon_minutes=60)
+    predictor_result = run_predictor_backtest(data, horizon_minutes=config.PREDICTION_HORIZON_MINUTES)
 
     print_comparison_table(baseline_results, predictor_result)
     save_results(baseline_results, predictor_result)

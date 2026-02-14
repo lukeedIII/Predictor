@@ -27,14 +27,16 @@ def check_system():
         "warnings": [],
     }
 
-    # ── GPU Check ──────────────────────────────────────
+    # ── GPU Check (soft gate — XGBoost runs on CPU) ──────
     try:
         import torch
 
         if not torch.cuda.is_available():
-            result["errors"].append(
-                "No NVIDIA GPU detected. This application requires an NVIDIA GPU with CUDA support."
+            result["warnings"].append(
+                "No NVIDIA GPU detected. XGBoost predictions will run on CPU (fine). "
+                "GPU is only needed for the optional Transformer/LSTM modules."
             )
+            result["gpu_ok"] = True  # soft — XGBoost doesn't need GPU
         else:
             props = torch.cuda.get_device_properties(0)
             result["gpu_name"] = torch.cuda.get_device_name(0)
@@ -42,24 +44,24 @@ def check_system():
             result["gpu_compute"] = float(f"{props.major}.{props.minor}")
             result["cuda_version"] = torch.version.cuda or "N/A"
 
-            # RTX 3060 has compute capability 8.6
-            # RTX 2000 series has 7.5 — reject those
             if props.major < 8:
-                result["errors"].append(
-                    f"GPU {result['gpu_name']} (compute {result['gpu_compute']}) is below minimum. "
-                    f"RTX 3060 or newer required (compute 8.6+)."
+                result["warnings"].append(
+                    f"GPU {result['gpu_name']} (compute {result['gpu_compute']}) is below recommended. "
+                    f"RTX 3060+ recommended for Transformer/LSTM acceleration."
                 )
             elif result["vram_gb"] < 5.5:
-                result["errors"].append(
+                result["warnings"].append(
                     f"GPU {result['gpu_name']} has only {result['vram_gb']} GB VRAM. "
-                    f"Minimum 6 GB required."
+                    f"6 GB+ recommended for Transformer/LSTM modules."
                 )
-            else:
-                result["gpu_ok"] = True
+
+            result["gpu_ok"] = True
     except ImportError:
-        result["errors"].append("PyTorch not installed. Cannot check GPU.")
+        result["warnings"].append("PyTorch not installed. GPU acceleration unavailable.")
+        result["gpu_ok"] = True  # soft — core engine runs without GPU
     except Exception as e:
-        result["errors"].append(f"GPU check failed: {str(e)}")
+        result["warnings"].append(f"GPU check failed: {str(e)}")
+        result["gpu_ok"] = True  # soft
 
     # ── Disk Space Check ───────────────────────────────
     try:

@@ -7,6 +7,7 @@ import config
 import logging
 import joblib
 import pickle
+import threading
 import torch
 import torch.nn as nn
 from datetime import datetime, timedelta
@@ -237,6 +238,9 @@ class NexusPredictor:
         self.alt_data = FreeDataAggregator() if ALT_DATA_AVAILABLE else None
         self.last_alt_signals = {}
         
+        # Concurrency: protect model object during retrain vs inference
+        self._model_lock = threading.RLock()
+        
         self.initialize_models()
     
     @property
@@ -308,7 +312,7 @@ class NexusPredictor:
                 gamma=0.1,           # v6: new — minimum loss reduction for split (prunes noise)
                 reg_alpha=0.1,       # L1 regularization
                 reg_lambda=1.5,      # v6: 1.0→1.5 (stronger L2 to offset deeper trees)
-                n_jobs=8
+                n_jobs=config.XGBOOST_N_JOBS
             )
             logging.info("XGBoost model initialized (untrained)")
         
@@ -1135,9 +1139,10 @@ class NexusPredictor:
             
             # ── PROMOTE or DISCARD ──
             if should_promote:
-                # Swap challenger into production
-                self.model = challenger_model
-                joblib.dump(self.model, self.model_path)
+                # Swap challenger into production (thread-safe)
+                with self._model_lock:
+                    self.model = challenger_model
+                    joblib.dump(self.model, self.model_path)
                 logging.info("[CHAMPION-CHALLENGER] Challenger model saved to disk as new champion")
             else:
                 # Discard challenger, keep current model
@@ -1608,11 +1613,12 @@ class NexusPredictor:
             current_price = float(df['close'].iloc[-1])
             hurst_val = float(df['hurst'].iloc[-1])
             
-            # ===== STAGE 4: XGBoost prediction =====
-            if self.calibrated_model is not None:
-                xgb_prob = float(self.calibrated_model.predict_proba(latest)[0][1])
-            else:
-                xgb_prob = float(self.model.predict_proba(latest)[0][1])
+            # ===== STAGE 4: XGBoost prediction (thread-safe read) =====
+            with self._model_lock:
+                if self.calibrated_model is not None:
+                    xgb_prob = float(self.calibrated_model.predict_proba(latest)[0][1])
+                else:
+                    xgb_prob = float(self.model.predict_proba(latest)[0][1])
             logging.debug(f"PREDICT [stage=xgb] prob={xgb_prob:.4f}")
             
             # ===== STAGE 5: Transformer prediction (only if it has earned weight) =====

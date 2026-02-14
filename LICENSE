@@ -19,23 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-ADDITIONAL TERMS:
-
-This software contains proprietary trading algorithms, machine learning models,
-and quantitative analysis logic developed by the copyright holder. While the
-MIT License permits broad usage, the following is explicitly noted:
-
-1. The trained ML model weights, feature engineering logic, and trading
-   strategies contained herein represent significant intellectual property.
-
-2. Commercial use of the prediction engine, paper trading logic, or quant
-   analysis components in competing products requires explicit written
-   permission from the copyright holder.
-
-3. If you use substantial portions of this codebase, attribution to
-   "Nexus Shadow-Quant by G-luc" is required.
-
-For commercial licensing inquiries, contact the copyright holder via GitHub.

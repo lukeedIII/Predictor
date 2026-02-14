@@ -67,10 +67,10 @@ def main():
         print("   Need at least 1440 rows (24h) for reliable results.")
         print("   Current data will give preliminary results only.\n")
 
-    baseline_results = run_baseline_comparison(data, horizon_minutes=60)
+    baseline_results = run_baseline_comparison(data, horizon_minutes=config.PREDICTION_HORIZON_MINUTES)
 
     print("\n" + "-" * 70)
-    predictor_result = run_predictor_backtest(data, horizon_minutes=60)
+    predictor_result = run_predictor_backtest(data, horizon_minutes=config.PREDICTION_HORIZON_MINUTES)
 
     print_comparison_table(baseline_results, predictor_result)
     save_results(baseline_results, predictor_result)

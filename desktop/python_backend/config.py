@@ -78,10 +78,16 @@ else:
 
 # ── System Settings ───────────────────────────────────
 DEFAULT_DEVICE = "cuda"
-VERSION = "v6.2.0 Beta Stable"
+VERSION = "v6.2.1 Beta Stable"
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1m"
 IS_INSTALLED = _is_installed()
+
+# ── Prediction ────────────────────────────────────────
+PREDICTION_HORIZON_MINUTES = 15  # must match predictor.prediction_horizon
+
+# ── XGBoost ───────────────────────────────────────────
+XGBOOST_N_JOBS = min(8, max(1, (os.cpu_count() or 4) - 1))  # leave 1 core for UI
 
 # ── Base Model (ships with app for instant-on predictions) ──
 BASE_MODEL_DIR = os.path.join(DATA_ROOT, "models", "base")
