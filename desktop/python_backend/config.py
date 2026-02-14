@@ -78,7 +78,7 @@ else:
 
 # ── System Settings ───────────────────────────────────
 DEFAULT_DEVICE = "cuda"
-VERSION = "v6.1.2 Beta Stable"
+VERSION = "v6.2.0 Beta Stable"
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1m"
 IS_INSTALLED = _is_installed()
@@ -104,6 +104,12 @@ UPDATE_INTERVAL_SEC = 60
 NEWS_INTERVAL_MIN = 30
 HARDWARE_LOG_MIN = 10
 RETRAIN_INTERVAL_HOURS = 6
+
+# ── Champion-Challenger ───────────────────────────────
+# New models must beat the current model before being promoted to production.
+CHALLENGER_MIN_LOGLOSS_IMPROVEMENT = 0.0   # challenger logloss must be <= champion's (0 = at least equal)
+CHALLENGER_MIN_ACCURACY_PCT = 49.0          # absolute floor: reject if below this regardless
+CHALLENGER_GRACE_RETRAINS = 2               # first N retrains always promote (cold-start)
 
 # ── Paper Trading ─────────────────────────────────────
 PAPER_STARTING_BALANCE = 10000

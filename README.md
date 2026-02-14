@@ -8,7 +8,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-6.1.2-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
+[![Version](https://img.shields.io/badge/version-6.2.0-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 [![Electron](https://img.shields.io/badge/Electron-40-47848F?style=flat-square&logo=electron&logoColor=white)](https://electronjs.org)
@@ -26,6 +26,7 @@
 - **Predictor goal (code-verified):** probability that BTC will be **up at least +0.30% within 15 minutes**
 - **Models:** XGBoost (primary) + optional Transformer sequence model (earns weight only if it performs)
 - **Retraining:** every **6 hours**, from scratch, on the most recent **500,000** 1-minute candles (~1 year)
+- **Champion-Challenger gate:** newly trained models must beat the current production model (logloss + accuracy) before promotion
 - **Everything local:** Electron + React + FastAPI (localhost) + Python quant/ML core
 - **Trading:** paper-only simulation (long/short, configurable leverage) with confidence gating + risk controls
 
@@ -257,11 +258,12 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 - Probability calibration (Platt scaling)
 - Live prediction validation after 15 minutes
 - Transformer must earn inclusion before contributing
+- **Champion-Challenger deployment gate** — new models must match or beat production model on logloss + accuracy before promotion (with configurable grace period for cold start)
 
 ---
 
 ## ❌ Known Gaps (Ranked by Impact)
-1) No **champion–challenger** deployment (every retrain replaces current model)
+1) ~~No **champion–challenger** deployment~~ → ✅ **Implemented v6.2.0**
 2) No **drift monitoring** (feature / prediction / calibration drift)
 3) No fee-adjusted **net-PnL accounting** inside paper fills
 4) No rolling **walk-forward evaluation** inside the live retrain pipeline
@@ -273,7 +275,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 ---
 
 ## 🗺️ Roadmap (High-Impact Next Steps)
-- [ ] Champion–Challenger + promotion rules (logloss + net-PnL Sharpe, not just accuracy)
+- [x] Champion–Challenger + promotion rules (logloss + accuracy gate, configurable thresholds)
 - [ ] Drift monitoring: PSI + calibration drift + prediction drift
 - [ ] Fee/slippage-aware paper fills + net-PnL dashboards + turnover
 - [ ] Rolling walk-forward evaluation integrated into retraining loop
@@ -297,6 +299,6 @@ Nexus Shadow-Quant is an educational and research tool. It is not financial advi
 
 <div align="center">
 
-**v6.1.2 Beta Stable** · Built locally with ⚡ by **G-luc**
+**v6.2.0 Beta Stable** · Built locally with ⚡ by **G-luc**
 
 </div>

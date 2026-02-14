@@ -120,7 +120,7 @@ def train_base_model(skip_download: bool = False, days: int = 180, dry_run: bool
     
     # === STEP 3: Train ===
     logger.info("🧠 Training base model...")
-    is_trained, progress = predictor.train()
+    is_trained, progress, _promotion = predictor.train()
     
     if not is_trained:
         logger.error(f"❌ Training failed at {progress:.0f}%")

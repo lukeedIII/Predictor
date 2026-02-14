@@ -150,7 +150,7 @@ def _init_engines():
         boot_status = {"stage": "training", "progress": 70, "message": "Checking model status..."}
         if not predictor.is_trained:
             boot_status["message"] = "Training AI model (first run)..."
-            predictor.train()
+            predictor.train()  # 3-tuple return ignored during boot
         
         boot_status = {"stage": "trader", "progress": 85, "message": "Starting paper trader..."}
         trader = PaperTrader()
@@ -284,9 +284,19 @@ def _auto_retrain_loop():
                     except Exception as e:
                         logging.warning(f"[AUTO-RETRAIN] Pre-train data refresh failed: {e}")
                 result = predictor.train()
+                # Unpack promotion info from champion-challenger gate
+                promotion = result[2] if isinstance(result, tuple) and len(result) >= 3 else None
             
             now = datetime.now().isoformat()
             acc = predictor.last_validation_accuracy if hasattr(predictor, 'last_validation_accuracy') else None
+            
+            # Add promotion metadata to retrain status
+            promotion_info = {}
+            if promotion is not None:
+                promotion_info = {
+                    'last_promotion': promotion.get('promoted', None),
+                    'last_promotion_reason': promotion.get('reason', None),
+                }
             
             _retrain_status.update({
                 'last_retrain': now,
@@ -294,6 +304,7 @@ def _auto_retrain_loop():
                 'retrain_count': _retrain_status['retrain_count'] + 1,
                 'is_retraining': False,
                 'last_error': None,
+                **promotion_info,
             })
             
             # Append to history log (with delta tracking)
@@ -349,14 +360,26 @@ def _auto_retrain_loop():
                 'data_source': data_source,
                 'feature_count': len(getattr(predictor, 'features', [])),
             }
+            # Append champion-challenger metrics if available
+            if promotion is not None:
+                entry['promoted'] = promotion.get('promoted')
+                entry['promotion_reason'] = promotion.get('reason')
+                entry['champion_logloss'] = promotion.get('champion_logloss')
+                entry['challenger_logloss'] = promotion.get('challenger_logloss')
+                entry['champion_accuracy'] = promotion.get('champion_accuracy')
+                entry['challenger_accuracy'] = promotion.get('challenger_accuracy')
+            
             history.append(entry)
             history = history[-100:]
             with open(retrain_history_path, 'w') as f:
                 _json.dump(history, f, indent=2)
             
+            promoted_str = ""
+            if promotion is not None:
+                promoted_str = f" | {'PROMOTED' if promotion.get('promoted') else 'REJECTED'}: {promotion.get('reason', '')}"
             delta_str = f" (Δ {delta:+.2f}%)" if delta is not None else ""
             acc_str = f"{acc:.1f}%{delta_str}" if acc is not None else "N/A"
-            logging.info(f"[AUTO-RETRAIN] {label} — complete. Accuracy: {acc_str} {trend}")
+            logging.info(f"[AUTO-RETRAIN] {label} — complete. Accuracy: {acc_str} {trend}{promoted_str}")
             
         except Exception as e:
             _retrain_status['is_retraining'] = False

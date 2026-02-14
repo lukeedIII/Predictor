@@ -252,7 +252,7 @@ def run_first_setup(days: int = 1095):
         # The train() method handles everything: feature engineering, XGBoost, and LSTM
         emit(3, total_phases, "training_xgb", 40, "Training models (XGBoost + LSTM)...")
         
-        is_trained, progress = predictor.train()
+        is_trained, progress, _promotion = predictor.train()
         
         if is_trained:
             emit(3, total_phases, "xgb_complete", 100,

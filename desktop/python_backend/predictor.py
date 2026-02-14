@@ -892,25 +892,33 @@ class NexusPredictor:
 
     def train(self):
         """
-        Train with PROPER temporal validation.
+        Train with PROPER temporal validation + CHAMPION-CHALLENGER promotion gate.
+        
         P0/P1/P2 FIXES APPLIED:
         - XGBoost with regularization
         - LSTM with 30-step sliding windows + StandardScaler
         - LSTM earns ensemble weight via validation
         - 15-min prediction horizon with 0.3% threshold
-        Returns: (is_trained: bool, progress: float)
+        
+        Champion-Challenger:
+        - Trains a NEW "challenger" model without overwriting the current "champion"
+        - Evaluates both on the test set (logloss + accuracy)
+        - Only promotes the challenger if it is at least as good
+        - Grace period: first N retrains always promote (cold-start)
+        
+        Returns: (is_trained: bool, progress: float, promotion: dict | None)
         """
         df_raw = self._load_market_data()
         if df_raw is None:
-            return False, 0.0
+            return False, 0.0, None
         
         if len(df_raw) < self.min_train_samples + self.prediction_horizon:
             progress = (len(df_raw) / (self.min_train_samples + self.prediction_horizon)) * 100
-            return False, min(progress, 95)
+            return False, min(progress, 95), None
         
         df = self.load_and_engineer_features()
         if df is None or len(df) < self.min_train_samples:
-            return False, 95
+            return False, 95, None
         
         # Create temporal split BEFORE creating targets
         train_df, test_df = self.create_temporal_split(df)
@@ -920,29 +928,57 @@ class NexusPredictor:
         
         if len(train_df) < 20:
             logging.warning("Not enough training samples after target creation.")
-            return False, 95
+            return False, 95, None
         
         if train_df['target'].nunique() < 2:
             logging.warning("Not enough target variance. Market too stable.")
-            return False, 95
+            return False, 95, None
         
         X_train = train_df[self.features]
         y_train = train_df['target']
         
         try:
-            # ===== STEP 1: Train XGBoost =====
+            # ── Prepare test data for champion-challenger evaluation ──
+            test_for_eval = self.create_target_variable(test_df.copy(), for_training=True)
+            can_evaluate = len(test_for_eval) >= 10 and test_for_eval['target'].nunique() >= 2
+            
+            # ── Measure CHAMPION performance (current model) BEFORE training ──
+            champion_logloss = None
+            champion_accuracy = None
+            has_champion = hasattr(self.model, 'classes_') and can_evaluate
+            
+            if has_champion:
+                try:
+                    from sklearn.metrics import log_loss
+                    X_test_eval = test_for_eval[self.features]
+                    y_test_eval = test_for_eval['target']
+                    champ_probs = self.model.predict_proba(X_test_eval)[:, 1]
+                    champion_logloss = log_loss(y_test_eval, champ_probs)
+                    champion_accuracy = ((champ_probs > 0.5).astype(int) == y_test_eval.values).mean() * 100
+                    logging.info(
+                        f"[CHAMPION-CHALLENGER] Champion metrics — "
+                        f"logloss: {champion_logloss:.4f}, acc: {champion_accuracy:.1f}%"
+                    )
+                except Exception as e:
+                    logging.warning(f"[CHAMPION-CHALLENGER] Could not evaluate champion: {e}")
+                    has_champion = False
+            
+            # ===== STEP 1: Train CHALLENGER XGBoost =====
+            # Train into a FRESH clone so we don't corrupt the champion yet
+            import copy
+            challenger_model = copy.deepcopy(self.model)
+            
             # Exponential sample weighting: recent data counts ~10x more than oldest
-            # This makes the model adapt to regime changes in hours, not days
             n = len(X_train)
             decay_rate = 3.0 / n  # e^(-3) ≈ 0.05 at oldest sample → 20x recency bias
             sample_weights = np.exp(decay_rate * np.arange(n))  # 0.05 at start → 1.0 at end
             sample_weights /= sample_weights.mean()  # Normalize so mean=1
             
-            self.model.fit(X_train, y_train, sample_weight=sample_weights)
-            logging.info(f"XGBoost trained on {len(X_train):,} samples (exp-weighted, 20x recency)")
+            challenger_model.fit(X_train, y_train, sample_weight=sample_weights)
+            logging.info(f"[CHAMPION-CHALLENGER] Challenger XGBoost trained on {len(X_train):,} samples")
             
             # Log feature importance (P4)
-            importance = self.model.feature_importances_
+            importance = challenger_model.feature_importances_
             feat_imp = sorted(zip(self.features, importance), key=lambda x: x[1], reverse=True)
             top5 = ', '.join([f"{f}={v:.3f}" for f, v in feat_imp[:5]])
             zero_feats = [f for f, v in feat_imp if v < 0.001]
@@ -950,12 +986,100 @@ class NexusPredictor:
             if zero_feats:
                 logging.warning(f"Zero-importance features: {zero_feats}")
             
-            # Calibrate confidence (Platt scaling)
+            # ── Measure CHALLENGER performance ──
+            challenger_logloss = None
+            challenger_accuracy = None
+            
+            if can_evaluate:
+                try:
+                    from sklearn.metrics import log_loss
+                    X_test_eval = test_for_eval[self.features]
+                    y_test_eval = test_for_eval['target']
+                    chall_probs = challenger_model.predict_proba(X_test_eval)[:, 1]
+                    challenger_logloss = log_loss(y_test_eval, chall_probs)
+                    challenger_accuracy = ((chall_probs > 0.5).astype(int) == y_test_eval.values).mean() * 100
+                    logging.info(
+                        f"[CHAMPION-CHALLENGER] Challenger metrics — "
+                        f"logloss: {challenger_logloss:.4f}, acc: {challenger_accuracy:.1f}%"
+                    )
+                except Exception as e:
+                    logging.warning(f"[CHAMPION-CHALLENGER] Could not evaluate challenger: {e}")
+            
+            # ── PROMOTION DECISION ──
+            retrain_count = getattr(self, '_retrain_count', 0)
+            self._retrain_count = retrain_count + 1
+            
+            promotion = {
+                'promoted': False,
+                'reason': 'pending',
+                'champion_logloss': champion_logloss,
+                'challenger_logloss': challenger_logloss,
+                'champion_accuracy': champion_accuracy,
+                'challenger_accuracy': challenger_accuracy,
+                'retrain_number': self._retrain_count,
+            }
+            
+            should_promote = False
+            
+            if retrain_count < config.CHALLENGER_GRACE_RETRAINS:
+                # Grace period: always promote during cold-start
+                should_promote = True
+                promotion['reason'] = f'grace_period (retrain #{self._retrain_count}/{config.CHALLENGER_GRACE_RETRAINS})'
+                logging.info(f"[CHAMPION-CHALLENGER] Grace period — auto-promoting (retrain #{self._retrain_count})")
+            
+            elif not has_champion or champion_logloss is None or challenger_logloss is None:
+                # No champion to compare against — promote by default
+                should_promote = True
+                promotion['reason'] = 'no_champion_baseline'
+                logging.info("[CHAMPION-CHALLENGER] No champion baseline available — promoting")
+            
+            elif challenger_accuracy is not None and challenger_accuracy < config.CHALLENGER_MIN_ACCURACY_PCT:
+                # Absolute accuracy floor — reject catastrophic models
+                should_promote = False
+                promotion['reason'] = f'accuracy_floor ({challenger_accuracy:.1f}% < {config.CHALLENGER_MIN_ACCURACY_PCT}%)'
+                logging.warning(
+                    f"[CHAMPION-CHALLENGER] REJECTED — challenger accuracy {challenger_accuracy:.1f}% "
+                    f"below floor {config.CHALLENGER_MIN_ACCURACY_PCT}%"
+                )
+            
+            elif challenger_logloss <= champion_logloss + config.CHALLENGER_MIN_LOGLOSS_IMPROVEMENT:
+                # Challenger is at least as good (lower logloss = better)
+                should_promote = True
+                delta = champion_logloss - challenger_logloss
+                promotion['reason'] = f'challenger_wins (logloss Δ={delta:+.4f})'
+                logging.info(
+                    f"[CHAMPION-CHALLENGER] PROMOTED — challenger logloss {challenger_logloss:.4f} "
+                    f"beats champion {champion_logloss:.4f} (Δ={delta:+.4f})"
+                )
+            
+            else:
+                # Challenger is worse — keep the champion
+                should_promote = False
+                delta = champion_logloss - challenger_logloss
+                promotion['reason'] = f'champion_retained (logloss Δ={delta:+.4f})'
+                logging.warning(
+                    f"[CHAMPION-CHALLENGER] REJECTED — challenger logloss {challenger_logloss:.4f} "
+                    f"worse than champion {champion_logloss:.4f} (Δ={delta:+.4f})"
+                )
+            
+            promotion['promoted'] = should_promote
+            
+            # ── PROMOTE or DISCARD ──
+            if should_promote:
+                # Swap challenger into production
+                self.model = challenger_model
+                joblib.dump(self.model, self.model_path)
+                logging.info("[CHAMPION-CHALLENGER] Challenger model saved to disk as new champion")
+            else:
+                # Discard challenger, keep current model
+                del challenger_model
+                logging.info("[CHAMPION-CHALLENGER] Challenger discarded — champion model unchanged")
+            
+            # Calibrate confidence (Platt scaling) — always on the active model
             try:
-                test_for_cal = self.create_target_variable(test_df.copy(), for_training=True)
-                if len(test_for_cal) >= 10 and test_for_cal['target'].nunique() >= 2:
-                    X_cal = test_for_cal[self.features]
-                    y_cal = test_for_cal['target']
+                if can_evaluate:
+                    X_cal = test_for_eval[self.features]
+                    y_cal = test_for_eval['target']
                     try:
                         self.calibrated_model = CalibratedClassifierCV(
                             estimator=self.model, method='sigmoid', cv='prefit'
@@ -970,8 +1094,6 @@ class NexusPredictor:
             except Exception as e:
                 logging.warning(f"Calibration failed: {e}")
                 self.calibrated_model = None
-            
-            joblib.dump(self.model, self.model_path)
             
             # ===== STEP 2: Fit Scaler + Train LSTM with sliding windows =====
             # Fit scaler on training data
@@ -1004,7 +1126,8 @@ class NexusPredictor:
             logging.info(
                 f"Training complete. XGB Acc: {self.last_validation_accuracy:.1f}% | "
                 f"LSTM Acc: {self.lstm_validation_acc:.1f}% | "
-                f"Ensemble: XGB={self.xgb_weight:.1f} LSTM={self.lstm_weight:.1f}"
+                f"Ensemble: XGB={self.xgb_weight:.1f} LSTM={self.lstm_weight:.1f} | "
+                f"Promoted: {promotion['promoted']} ({promotion['reason']})"
             )
             
             # P1: Save ensemble state to disk so weights survive restarts
@@ -1014,9 +1137,9 @@ class NexusPredictor:
             logging.error(f"Training error: {e}")
             import traceback
             traceback.print_exc()
-            return False, 95
+            return False, 95, None
         
-        return True, 100
+        return True, 100, promotion
 
     def train_on_candles(self, candle_df, timeframe_label='1s'):
         """Train on arbitrary-timeframe OHLCV candles (e.g. 1s from WebSocket).

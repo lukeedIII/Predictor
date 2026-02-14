@@ -78,10 +78,13 @@ def run_nexus():
             # 5. Training (only every hour to prevent overfitting/instability)
             if datetime.now() - last_train > timedelta(hours=1):
                 logging.info("Starting scheduled model training...")
-                is_trained, progress = predictor.train()
+                is_trained, progress, promotion = predictor.train()
                 last_train = datetime.now()
                 if is_trained:
-                    logging.info("Model training complete.")
+                    promo_str = ""
+                    if promotion:
+                        promo_str = f" | {'PROMOTED' if promotion.get('promoted') else 'REJECTED'}: {promotion.get('reason', '')}"
+                    logging.info(f"Model training complete.{promo_str}")
                 else:
                     logging.info(f"Training progress: {progress:.1f}%")
             else:
