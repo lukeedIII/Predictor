@@ -1,0 +1,184 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 280" fill="none">
+  <defs>
+    <!-- Background gradient -->
+    <linearGradient id="bg" x1="0" y1="0" x2="900" y2="280" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#0a0a1a"/>
+      <stop offset="50%" stop-color="#0d1117"/>
+      <stop offset="100%" stop-color="#070b14"/>
+    </linearGradient>
+    <!-- Accent gradient (electric cyan → violet) -->
+    <linearGradient id="accent" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0%" stop-color="#00e5ff"/>
+      <stop offset="50%" stop-color="#7c4dff"/>
+      <stop offset="100%" stop-color="#e040fb"/>
+    </linearGradient>
+    <!-- Glow filter -->
+    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur stdDeviation="6" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <!-- Subtle text glow -->
+    <filter id="textGlow" x="-10%" y="-10%" width="120%" height="120%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
+    </filter>
+    <!-- Grid pattern -->
+    <pattern id="grid" x="0" y="0" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M 40 0 L 0 0 0 40" fill="none" stroke="#1a1a3a" stroke-width="0.5" opacity="0.4"/>
+    </pattern>
+    <!-- Candlestick gradient green -->
+    <linearGradient id="candleGreen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#00e676"/>
+      <stop offset="100%" stop-color="#00c853"/>
+    </linearGradient>
+    <!-- Candlestick gradient red -->
+    <linearGradient id="candleRed" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ff1744"/>
+      <stop offset="100%" stop-color="#d50000"/>
+    </linearGradient>
+    <!-- Prediction line gradient -->
+    <linearGradient id="predLine" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0%" stop-color="#7c4dff" stop-opacity="0.2"/>
+      <stop offset="40%" stop-color="#00e5ff"/>
+      <stop offset="100%" stop-color="#e040fb"/>
+    </linearGradient>
+    <!-- Lightning bolt gradient -->
+    <linearGradient id="bolt" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#00e5ff"/>
+      <stop offset="100%" stop-color="#7c4dff"/>
+    </linearGradient>
+    <!-- Border glow -->
+    <linearGradient id="borderGrad" x1="0" y1="0" x2="900" y2="0" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#00e5ff" stop-opacity="0"/>
+      <stop offset="20%" stop-color="#00e5ff" stop-opacity="0.6"/>
+      <stop offset="50%" stop-color="#7c4dff" stop-opacity="0.8"/>
+      <stop offset="80%" stop-color="#e040fb" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#e040fb" stop-opacity="0"/>
+    </linearGradient>
+    <!-- Neural net node glow -->
+    <radialGradient id="nodeGlow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#00e5ff" stop-opacity="0.6"/>
+      <stop offset="100%" stop-color="#00e5ff" stop-opacity="0"/>
+    </radialGradient>
+  </defs>
+
+  <!-- Background fill -->
+  <rect width="900" height="280" rx="16" fill="url(#bg)"/>
+  
+  <!-- Grid overlay -->
+  <rect width="900" height="280" rx="16" fill="url(#grid)" opacity="0.3"/>
+  
+  <!-- Top border glow line -->
+  <rect x="0" y="0" width="900" height="2" rx="1" fill="url(#borderGrad)"/>
+  <!-- Bottom border glow line -->
+  <rect x="0" y="278" width="900" height="2" rx="1" fill="url(#borderGrad)"/>
+
+  <!-- === LEFT SIDE: Candlestick Chart Pattern === -->
+  <g transform="translate(50, 60)" opacity="0.55">
+    <!-- Green candles -->
+    <line x1="20" y1="40" x2="20" y2="130" stroke="url(#candleGreen)" stroke-width="1.5"/>
+    <rect x="14" y="60" width="12" height="50" rx="1.5" fill="url(#candleGreen)" opacity="0.9"/>
+    
+    <line x1="50" y1="55" x2="50" y2="140" stroke="url(#candleGreen)" stroke-width="1.5"/>
+    <rect x="44" y="70" width="12" height="45" rx="1.5" fill="url(#candleGreen)" opacity="0.9"/>
+    
+    <line x1="110" y1="20" x2="110" y2="120" stroke="url(#candleGreen)" stroke-width="1.5"/>
+    <rect x="104" y="35" width="12" height="60" rx="1.5" fill="url(#candleGreen)" opacity="0.9"/>
+    
+    <line x1="170" y1="10" x2="170" y2="100" stroke="url(#candleGreen)" stroke-width="1.5"/>
+    <rect x="164" y="25" width="12" height="50" rx="1.5" fill="url(#candleGreen)" opacity="0.9"/>
+
+    <!-- Red candles -->
+    <line x1="80" y1="50" x2="80" y2="155" stroke="url(#candleRed)" stroke-width="1.5"/>
+    <rect x="74" y="65" width="12" height="55" rx="1.5" fill="url(#candleRed)" opacity="0.9"/>
+
+    <line x1="140" y1="30" x2="140" y2="130" stroke="url(#candleRed)" stroke-width="1.5"/>
+    <rect x="134" y="50" width="12" height="50" rx="1.5" fill="url(#candleRed)" opacity="0.9"/>
+    
+    <!-- Prediction overlay curve -->
+    <path d="M 10,100 Q 40,85 70,95 T 130,50 T 180,30" stroke="url(#predLine)" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+    <!-- Prediction dots -->
+    <circle cx="70" cy="95" r="3" fill="#00e5ff" opacity="0.8"/>
+    <circle cx="130" cy="50" r="3" fill="#7c4dff" opacity="0.8"/>
+    <circle cx="180" cy="30" r="3.5" fill="#e040fb" opacity="0.9"/>
+  </g>
+
+  <!-- === RIGHT SIDE: Neural Network Nodes === -->
+  <g transform="translate(680, 55)" opacity="0.45">
+    <!-- Layer 1 (input) -->
+    <circle cx="0" cy="20" r="4" fill="#00e5ff" opacity="0.7"/>
+    <circle cx="0" cy="55" r="4" fill="#00e5ff" opacity="0.7"/>
+    <circle cx="0" cy="90" r="4" fill="#00e5ff" opacity="0.7"/>
+    <circle cx="0" cy="125" r="4" fill="#00e5ff" opacity="0.7"/>
+    <circle cx="0" cy="160" r="4" fill="#00e5ff" opacity="0.5"/>
+
+    <!-- Layer 2 (hidden) -->
+    <circle cx="65" cy="40" r="5" fill="#7c4dff" opacity="0.8"/>
+    <circle cx="65" cy="90" r="5" fill="#7c4dff" opacity="0.8"/>
+    <circle cx="65" cy="140" r="5" fill="#7c4dff" opacity="0.8"/>
+
+    <!-- Layer 3 (hidden) -->
+    <circle cx="130" cy="55" r="5" fill="#b388ff" opacity="0.7"/>
+    <circle cx="130" cy="115" r="5" fill="#b388ff" opacity="0.7"/>
+
+    <!-- Layer 4 (output) -->
+    <circle cx="185" cy="85" r="6" fill="#e040fb" opacity="0.9"/>
+
+    <!-- Connections: L1 → L2 -->
+    <line x1="4" y1="20" x2="60" y2="40" stroke="#00e5ff" stroke-width="0.6" opacity="0.35"/>
+    <line x1="4" y1="20" x2="60" y2="90" stroke="#00e5ff" stroke-width="0.6" opacity="0.2"/>
+    <line x1="4" y1="55" x2="60" y2="40" stroke="#00e5ff" stroke-width="0.6" opacity="0.3"/>
+    <line x1="4" y1="55" x2="60" y2="90" stroke="#00e5ff" stroke-width="0.6" opacity="0.35"/>
+    <line x1="4" y1="90" x2="60" y2="90" stroke="#00e5ff" stroke-width="0.6" opacity="0.4"/>
+    <line x1="4" y1="90" x2="60" y2="140" stroke="#00e5ff" stroke-width="0.6" opacity="0.25"/>
+    <line x1="4" y1="125" x2="60" y2="90" stroke="#00e5ff" stroke-width="0.6" opacity="0.2"/>
+    <line x1="4" y1="125" x2="60" y2="140" stroke="#00e5ff" stroke-width="0.6" opacity="0.35"/>
+    <line x1="4" y1="160" x2="60" y2="140" stroke="#00e5ff" stroke-width="0.6" opacity="0.3"/>
+
+    <!-- Connections: L2 → L3 -->
+    <line x1="70" y1="40" x2="125" y2="55" stroke="#7c4dff" stroke-width="0.7" opacity="0.4"/>
+    <line x1="70" y1="40" x2="125" y2="115" stroke="#7c4dff" stroke-width="0.7" opacity="0.2"/>
+    <line x1="70" y1="90" x2="125" y2="55" stroke="#7c4dff" stroke-width="0.7" opacity="0.35"/>
+    <line x1="70" y1="90" x2="125" y2="115" stroke="#7c4dff" stroke-width="0.7" opacity="0.35"/>
+    <line x1="70" y1="140" x2="125" y2="115" stroke="#7c4dff" stroke-width="0.7" opacity="0.4"/>
+    <line x1="70" y1="140" x2="125" y2="55" stroke="#7c4dff" stroke-width="0.7" opacity="0.15"/>
+
+    <!-- Connections: L3 → L4 -->
+    <line x1="135" y1="55" x2="179" y2="85" stroke="#b388ff" stroke-width="0.8" opacity="0.5"/>
+    <line x1="135" y1="115" x2="179" y2="85" stroke="#b388ff" stroke-width="0.8" opacity="0.5"/>
+
+    <!-- Output glow -->
+    <circle cx="185" cy="85" r="14" fill="url(#nodeGlow)"/>
+  </g>
+
+  <!-- === CENTER: Lightning Bolt Icon === -->
+  <g transform="translate(390, 55)" filter="url(#glow)">
+    <polygon points="30,0 10,45 25,45 15,80 50,30 33,30 45,0" fill="url(#bolt)" opacity="0.9"/>
+  </g>
+
+  <!-- === CENTER: Main Title === -->
+  <text x="450" y="170" text-anchor="middle" font-family="'Segoe UI', 'Inter', system-ui, sans-serif" font-weight="800" font-size="46" letter-spacing="3" filter="url(#textGlow)">
+    <tspan fill="url(#accent)">NEXUS SHADOW-QUANT</tspan>
+  </text>
+
+  <!-- Subtitle -->
+  <text x="450" y="205" text-anchor="middle" font-family="'Segoe UI', 'Inter', system-ui, sans-serif" font-weight="400" font-size="15" letter-spacing="5" fill="#8892b0" opacity="0.85">
+    GPU-ACCELERATED BITCOIN INTELLIGENCE
+  </text>
+
+  <!-- Version tag pill -->
+  <rect x="375" y="222" width="150" height="24" rx="12" fill="#1a1a3a" stroke="#7c4dff" stroke-width="0.8" opacity="0.7"/>
+  <text x="450" y="239" text-anchor="middle" font-family="'JetBrains Mono', 'Consolas', monospace" font-weight="600" font-size="11" letter-spacing="2" fill="#b388ff">
+    v6.1.2 · DESKTOP
+  </text>
+
+  <!-- Decorative corner accents -->
+  <!-- Top-left -->
+  <path d="M 16,8 L 16,28 M 8,16 L 28,16" stroke="#00e5ff" stroke-width="1" opacity="0.3"/>
+  <!-- Top-right -->
+  <path d="M 884,8 L 884,28 M 872,16 L 892,16" stroke="#e040fb" stroke-width="1" opacity="0.3"/>
+  <!-- Bottom-left -->
+  <path d="M 16,252 L 16,272 M 8,264 L 28,264" stroke="#00e5ff" stroke-width="1" opacity="0.3"/>
+  <!-- Bottom-right -->
+  <path d="M 884,252 L 884,272 M 872,264 L 892,264" stroke="#e040fb" stroke-width="1" opacity="0.3"/>
+</svg>

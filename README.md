@@ -1,81 +1,83 @@
 <div align="center">
 
-# ⚡ Nexus Shadow-Quant
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/logo-banner.svg">
+  <source media="(prefers-color-scheme: light)" srcset="assets/logo-banner.svg">
+  <img alt="Nexus Shadow-Quant" src="assets/logo-banner.svg" width="100%">
+</picture>
 
-### Institutional-Grade Bitcoin Intelligence & Autonomous Trading Platform
+<br/>
 
-[![Version](https://img.shields.io/badge/version-6.0.1-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
+[![Version](https://img.shields.io/badge/version-6.1.2-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
-[![React](https://img.shields.io/badge/React-18-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
+[![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 [![Electron](https://img.shields.io/badge/Electron-40-47848F?style=flat-square&logo=electron&logoColor=white)](https://electronjs.org)
 [![CUDA](https://img.shields.io/badge/CUDA-GPU%20Accelerated-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
 [![License](https://img.shields.io/badge/license-Private-red?style=flat-square)]()
 
----
-
-*A desktop application that combines machine learning, quantitative finance, and real-time market data to analyze Bitcoin price movements — built for research, education, and paper trading.*
+**Nexus Shadow-Quant** is a self-contained desktop application that ingests live BTC market data, computes institutional-style quant diagnostics, produces calibrated ML probabilities, and runs a fully local **autonomous paper trader** — all on your machine.
 
 </div>
 
 ---
 
-## 🧬 What Is This?
+## 🔥 TL;DR
 
-Nexus Shadow-Quant is a **self-contained desktop app** that watches Bitcoin in real-time, runs ML predictions every 60 seconds, and lets you paper trade based on those signals — all locally on your machine.
-
-It's not a cloud service. It's not a SaaS product. It's a genuine research tool that sits on your desktop, trains its own models on your GPU, and gives you institutional-grade analytics that would normally require a Bloomberg terminal and a quant team.
-
-**The core idea:** Take 6+ years of BTC minute-level data (3.15M candles), engineer 35 scale-invariant features, train an XGBoost + LSTM ensemble, and use that to predict 15-minute price direction — then wrap the whole thing in a beautiful Electron app with real-time charts, risk management, and an AI assistant.
+- **Predictor goal (code-verified):** probability that BTC will be **up at least +0.30% within 15 minutes**
+- **Models:** XGBoost (primary) + optional Transformer sequence model (earns weight only if it performs)
+- **Retraining:** every **6 hours**, from scratch, on the most recent **500,000** 1-minute candles (~1 year)
+- **Everything local:** Electron + React + FastAPI (localhost) + Python quant/ML core
+- **Trading:** paper-only simulation (long/short, configurable leverage) with confidence gating + risk controls
 
 ---
 
-## ✨ Key Features
+## 🧬 What This Actually Predicts (Important)
 
-### 🧠 ML Prediction Engine
-- **XGBoost + LSTM Ensemble** — Two complementary models voting together. XGBoost handles tabular features brilliantly; the LSTM captures sequential patterns that gradient boosting misses.
-- **35 Engineered Features** — Every single feature is scale-invariant (returns, ratios, z-scores — never raw prices). This means the model trained on $20K BTC works just as well at $100K.
-- **Automatic Retraining** — The engine retrains periodically on fresh data. You don't have to touch it.
-- **GPU Accelerated** — If you have an NVIDIA GPU (RTX 3060+), training and inference use CUDA automatically. Falls back gracefully to CPU.
+This is **not** a naive "next candle UP/DOWN" model.
 
-### 📊 Real-Time Dashboard
-- **Live Candlestick Chart** — Professional trading chart (lightweight-charts) with real-time price updates via Binance WebSocket.
-- **Quant HUD** — At a glance: market regime (trending/mean-reverting/volatile/chaotic), FFT cycle analysis, Hurst exponent, order flow pressure, and jump risk.
-- **Prediction Cards** — Current direction call, confidence level, target prices, and accuracy tracking.
-- **Feature Importance** — See which of the 35 features are driving the current prediction.
+✅ **Label definition (predictor.py):**
+- **Horizon:** 15 minutes (close-to-close)
+- **Target = 1 (UP):** `close[t+15] > close[t] × 1.003`  → **+0.30% move**
+- **Target = 0 (DOWN / NO-EDGE):** anything else (including small up moves < +0.30%)
 
-### 💰 Paper Trading Engine
-- **Fully Autonomous** — Set it and forget it. The bot opens and closes positions based on prediction signals.
-- **Institutional Risk Management:**
-  - Kelly Criterion position sizing (half-Kelly, capped at 25%)
-  - Trailing stop-loss (activates at +0.3%, locks 50% of gains)
-  - Circuit breaker at 20% drawdown
-  - Signal confirmation (2 consecutive same-direction predictions required)
-  - 1.5:1 reward-to-risk ratio on every position
-  - Max 3 concurrent positions with margin allocation
-  - 1-hour maximum hold time
-- **Full Trade History** — Every trade logged with entry/exit prices, PnL, hold time, regime at entry, and close reason.
+The +0.30% hurdle is intentionally baked into the label as a "**must-be-worth-trading**" filter (approx. fees + slippage). In plain terms:
 
-### 🤖 Dr. Nexus — AI Quant Analyst
-- **GPT-4o Powered Chat** — Ask questions about your portfolio, the current market regime, why a prediction was made, or general quant finance topics.
-- **Live State Injection** — Every message includes a real-time JSON snapshot of the entire platform state (price, predictions, positions, quant metrics). The AI sees what you see.
-- **Persistent Memory** — Dr. Nexus remembers key insights across conversations and learns from trading outcomes.
+> The model estimates the probability that BTC will be **up at least +0.30% within 15 minutes**.
 
-### 📈 Quant Analysis Suite
-| Module | What It Does |
-|---|---|
-| **Regime Detection** | Hidden Markov Model classifying market into 4 states — adapts trading behavior to current conditions |
-| **FFT Cycles** | Fourier decomposition identifying dominant short/mid/long market cycles |
-| **Hurst Exponent** | Measures market persistence — trending (H>0.5), random (H≈0.5), or mean-reverting (H<0.5) |
-| **Order Flow** | Synthetic microstructure analysis modeling buy/sell pressure imbalances |
-| **Hawkes Process** | Self-exciting point process for volatility clustering and jump risk estimation |
-| **Wasserstein Drift** | Optimal transport metric measuring distribution shift in recent vs. historical returns |
+The UI surfaces this as **UP/DOWN + confidence %** (probability output).
 
-### 🌍 Cross-Asset Intelligence
-- **ETH/USDT** — Ethereum often leads Bitcoin by 1-5 minutes. The model watches for this.
-- **ETH/BTC** — Ratio movements signal BTC dominance shifts.
-- **PAXG/USDT** — Gold proxy for macro fear/flight-to-safety detection.
-- **Fear & Greed Index** — Crowd sentiment as a contrarian indicator.
-- **Google Trends** — "Bitcoin" search volume as a retail interest gauge.
+---
+
+## ⚙️ How the System Works (End-to-End Pipeline)
+
+Below is the exact runtime loop as implemented (high-level), including what runs every minute vs what runs on the 6-hour retrain cycle.
+
+### 1) Live Data Ingestion (every ~60s)
+- BTC/USDT 1m candles via Binance (REST + WebSocket)
+- WebSocket adds **live microstructure signals** (spread bps, trades/sec, buy/sell ratio)
+
+### 2) Feature Engineering (same codepath for train & predict)
+- **42 scale-invariant features**: returns/ratios/z-scores — never raw price levels
+- Identical `_engineer_features()` pipeline is used for:
+  - training data matrix
+  - live inference vector
+
+### 3) Prediction (every 60s)
+- **XGBoost** outputs `P(target=1)`
+- **Calibration:** Platt scaling (sigmoid) via `CalibratedClassifierCV`
+- **Transformer (optional):**
+  - sequence length: 30 timesteps
+  - starts with weight = 0
+  - only contributes if validation accuracy > 52%
+  - ensemble weight increases as performance improves
+
+### 4) Quant Overlay (context & UI)
+A QuantEngine runs diagnostics (some are UI-only), e.g. HMM/GARCH/entropy/TDA panels, plus drift/vol/jump proxies.
+
+### 5) Paper Trader (simulation)
+- Confidence gate (default `PAPER_MIN_CONFIDENCE = 30`)
+- Simulated market fills
+- Auto exits: prediction flip OR max hold OR risk rules
 
 ---
 
@@ -86,215 +88,215 @@ It's not a cloud service. It's not a SaaS product. It's a genuine research tool 
 │                      Electron Shell                          │
 │  ┌────────────────────────────────────────────────────────┐  │
 │  │              React Frontend (TypeScript + Vite)         │  │
-│  │                                                         │  │
-│  │   Dashboard  │  Paper Trading  │  Dr. Nexus  │ Settings │  │
-│  │   (Charts)   │  (Autonomous)   │  (AI Chat)  │ (Config) │  │
+│  │  Dashboard  │  Paper Trading  │  Dr. Nexus  │ Settings  │  │
 │  └──────────────────────┬─────────────────────────────────┘  │
 │                         │                                     │
-│              REST API + WebSocket (port 8420)                 │
+│               REST + WebSocket (localhost:8420)               │
 │                         │                                     │
 │  ┌──────────────────────┴─────────────────────────────────┐  │
 │  │            Python Backend (FastAPI + Uvicorn)           │  │
-│  │                                                         │  │
-│  │   NexusPredictor    PaperTrader      DataCollector      │  │
-│  │   (XGBoost+LSTM)    (Risk Engine)    (Binance WS)       │  │
-│  │                                                         │  │
-│  │   QuantModels       NexusAgent       SentimentEngine    │  │
-│  │   (HMM, FFT, etc)  (GPT-4o Chat)   (Alt Data)          │  │
+│  │  DataCollector → FeatureEngine → Predictor              │  │
+│  │        │                 │            │                 │  │
+│  │        └──────── QuantEngine (UI) ─────┘                 │  │
+│  │              PaperTrader (simulation)                    │  │
 │  └────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
 ```
 
-The frontend talks to the backend over localhost. The backend handles all data collection, ML inference, and trading logic. Everything runs locally — no cloud dependencies except Binance for price data and OpenAI for the AI chat (optional).
+Everything runs locally. External calls:
+- Binance public market data endpoints (REST + WebSocket)
+- OpenAI API only if Dr. Nexus is enabled (optional)
 
 ---
 
-## 📂 Project Structure
+## 🧩 Feature Set (42 Total — Scale-Invariant)
 
-```
-Predictor/
-├── .env.example                 # API key template — copy to .env
-├── .gitignore
-├── README.md                    # You are here
-├── FEATURE_ROADMAP.md           # Planned features and priorities
-├── PROJECT_INSTRUCTIONS.json    # Full project blueprint (for AI agents)
-├── requirements.txt             # Python dependencies
-│
-├── build_scripts/               # PowerShell scripts for building installers
-│
-├── desktop/                     # ★ THE APPLICATION
-│   ├── electron/                # Electron main process, preload, splash screen
-│   │   ├── main.js              # Window management, Python process spawning
-│   │   ├── preload.js           # IPC bridge
-│   │   └── splash.html          # Animated loading screen
-│   │
-│   ├── src/                     # React frontend (TypeScript)
-│   │   ├── pages/               # Dashboard, PaperTrading, NexusAgent, Settings
-│   │   ├── components/          # TradingViewChart, QuantHUD, PredictionCard, etc.
-│   │   ├── hooks/               # useWebSocket, useApi, useSound
-│   │   └── index.css            # Global design system
-│   │
-│   ├── python_backend/          # ★ ALL PYTHON SOURCE CODE
-│   │   ├── api_server.py        # FastAPI REST API (30+ endpoints)
-│   │   ├── predictor.py         # XGBoost + LSTM ensemble predictor
-│   │   ├── paper_trader.py      # Autonomous paper trading engine
-│   │   ├── quant_models.py      # HMM regime detection, FFT, Hawkes, etc.
-│   │   ├── math_core.py         # Hurst exponent, statistical utilities
-│   │   ├── nexus_agent.py       # Dr. Nexus AI chat (GPT-4o integration)
-│   │   ├── data_collector.py    # Binance API data ingestion
-│   │   ├── binance_ws.py        # WebSocket price feed
-│   │   ├── alt_data.py          # Fear & Greed, Google Trends
-│   │   ├── config.py            # Centralized configuration
-│   │   └── ...                  # Additional modules
-│   │
-│   ├── package.json             # Node dependencies + build scripts
-│   └── vite.config.ts           # Vite bundler configuration
-│
-└── OLD-Stuff/                   # Archived files (do not use)
-```
+All features are designed to be price-level agnostic: **returns/ratios/z-scores** rather than raw prices.
+
+### Feature families
+- **Returns & momentum:** 1/5/15m, 1h, 4h returns; RSI (Kalman-smoothed), volume momentum
+- **Candle geometry:** high-low range ratio, close-open ratio
+- **Trend context:** SMA distance ratios + multi-timeframe trend flags (5m / 15m / 1h)
+- **Volatility & risk:** rolling realized vol; GJR-GARCH asymmetry proxy; vol regime ratio
+- **Cycles & fractals:** FFT dominant periods; rolling Hurst
+- **Microstructure proxies:** tick volatility, "whale" ratio, buy/sell ratio
+- **Drift & jumps:** Wasserstein drift; Hawkes-like self-exciting intensity
+- **Cross-asset:** ETH returns/vol, ETH/BTC trend, PAXG returns
+- **Live-only WS inputs:** trades/sec, WS buy/sell ratio, spread (bps)
+
+✅ Train and live inference share the same feature engineering path.
 
 ---
 
-## 🚀 Getting Started
+## 🧠 Quant Models: "Used by Predictor" vs "UI-Only"
 
-### Prerequisites
-- **Node.js** 18+ and **npm**
-- **Python** 3.12 (3.11+ should work)
-- **NVIDIA GPU** with CUDA (optional but recommended for training speed)
-- A **Binance account** is NOT required — the app uses public market data endpoints
+### Included in the predictor feature vector (vectorized)
+- Regime id + confidence (Hurst-based)
+- GJR-GARCH volatility (vectorized)
+- Hawkes intensity proxy (vectorized)
+- Wasserstein drift (vectorized)
 
-### Development Mode
+✅ These are computed row-by-row using past-only information (no lookahead).
 
+### UI-only diagnostics (not fed into the ML predictor)
+- HMM regime panels
+- GARCH VaR panels
+- entropy / RQA / TDA / EMD style diagnostics
+- additional overlays for interpretation
+
+⚠️ UI-only models may fit on "whatever history is available" and can look optimistic visually. This does **not** change model accuracy because they are not part of the feature vector.
+
+---
+
+## 🧠 ML Models
+
+### XGBoost (Primary)
+Hardcoded parameters (current):
+- objective: `binary:logistic`
+- eval_metric: `logloss`
+- n_estimators: 500
+- max_depth: 6
+- learning_rate: 0.03
+- subsample: 0.8
+- colsample_bytree: 0.7
+- min_child_weight: 5
+- gamma: 0.1
+- reg_alpha: 0.1 (L1)
+- reg_lambda: 1.5 (L2)
+- tree_method: `hist`
+
+Training mechanics:
+- window: last **500,000** 1m candles
+- temporal split: 80% train / 20% test
+- sample weights: exponential recency bias (oldest ~5% weight → newest 100%)
+- calibration: Platt scaling via `CalibratedClassifierCV`
+
+### Transformer (Optional)
+- encoder: d_model=1024, 16 heads, 12 layers, FFN=4096, dropout=0.15
+- seq length: 30 timesteps
+- training: 30 epochs, AdamW, pos_weight=1.5
+- GPU: CUDA if available
+
+Ensembling:
+- starts at weight 0
+- only participates if validation accuracy > 52%
+- weight increases with performance (capped)
+
+---
+
+## 💰 Paper Trading Engine (Simulation)
+
+Current implementation (config-driven):
+- **Mode:** paper only (no real exchange execution)
+- **Direction:** long/short with configurable leverage (default 10x)
+- **Entry gate:** confidence > `PAPER_MIN_CONFIDENCE` (default 30%)
+- **Execution:** simulated market fills at current price
+- **Exits:**
+  - closes when prediction flips direction
+  - max hold time: `PAPER_MAX_HOLD_SEC` (default 7200 sec / 2 hours)
+
+Known gap:
+- The label bakes in a +0.30% hurdle, but paper fills do **not** currently deduct fees/slippage explicitly.
+
+---
+
+## 📈 Evaluation Status (Real vs Missing)
+
+### Offline audit backtest (separate script)
+A walk-forward backtest on ~3.15M candles reported:
+- Accuracy: **50.71%**
+- Sharpe: **0.88**
+
+> Note: "Sharpe" is only meaningful when tied to a defined strategy + cost model. Treat this as "promising but modest edge" until fully replicated inside the live system with net-PnL accounting.
+
+### Live system evaluation (current)
+- single temporal split (80/20) for calibration
+- accuracy validation logged after the 15m horizon passes
+- does not yet compute fee-adjusted net PnL dashboards
+
+---
+
+## 🧪 Reproducibility
+
+### Development mode
 ```powershell
-# 1. Clone the repo
 git clone https://github.com/lukeedIII/Predictor.git
 cd Predictor
 
-# 2. Install Node dependencies
 cd desktop
 npm install
 
-# 3. Install Python dependencies
 pip install -r requirements.txt
 
-# 4. Set up your environment
 copy ..\.env.example python_backend\.env
-# Edit .env with your API keys (OpenAI key is optional — only needed for Dr. Nexus chat)
+# OpenAI key is optional (Dr. Nexus disabled if missing)
 
-# 5. Run in dev mode
 npm run dev
 ```
 
-This will:
-1. Start the Vite dev server (frontend hot-reload)
-2. Launch Electron
-3. Spawn the Python backend on port 8420
-4. Open the app with DevTools available
+### Backtest / audit scripts
+This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reproduce headline metrics:
 
-### Building the Installer
+1) Ensure you have historical BTC/USDT 1m candles available in the expected data location used by the backtest script.
+2) Run the backtest script from the python backend context.
+3) Compare reported:
+   - accuracy
+   - Sharpe (confirm definition)
+   - regime breakdown (if supported)
 
-```powershell
-cd desktop
-
-# Build the frontend
-npm run build
-
-# Package with Electron Builder
-npx electron-builder --win dir
-
-# The output will be in desktop/release/win-unpacked/
-```
+> If you want, add a `BACKTEST.md` with exact dataset path expectations and command examples for your machine.
 
 ---
 
-## 🧪 How the Prediction Works
-
-1. **Data Collection** — Every 60 seconds, the app fetches the latest BTC/USDT candle from Binance, plus ETH, PAXG, and ETH/BTC data.
-
-2. **Feature Engineering** — 35 features are computed from raw OHLCV data. Every feature is a return, ratio, or z-score — never a raw price. This makes the model price-level agnostic.
-
-3. **Ensemble Prediction** — XGBoost produces a probability; the LSTM (if trained and validated above 52% accuracy) produces another. These are weighted-averaged into a final UP/DOWN call with a confidence score.
-
-4. **Quant Overlay** — The regime detector, Hurst exponent, and cycle analysis provide context. A prediction in a trending regime with high Hurst is more reliable than one in a chaotic regime.
-
-5. **Signal Validation** — The paper trader requires 2 consecutive same-direction predictions before opening a position. This filters out noise.
-
-### Statistical Validation
-
-The prediction engine has been audited on **3.15M candles** spanning 6+ years:
-
-| Metric | Value |
-|---|---|
-| **Accuracy** | 50.71% |
-| **Sharpe Ratio** | 0.88 (positive — the only model variant to achieve this) |
-| **Feature Count** | 35 (all scale-invariant) |
-| **Prediction Horizon** | 15 minutes |
-| **Training Data** | 2018–2024 BTC/USDT 1-minute candles |
-
-> **50.71% might not sound impressive**, but in financial markets, a consistent edge above 50% with a positive Sharpe ratio is what institutional traders spend millions trying to achieve. Combined with proper risk management (Kelly sizing, trailing stops), even a small edge compounds over thousands of trades.
+## ✅ What's Done Right (Code-Verified)
+- Scale-invariant features (returns/ratios; avoids raw price leakage)
+- Same feature computation path for training and live inference
+- Label includes +0.30% hurdle (fees/slippage awareness)
+- Temporal split (no shuffle)
+- Exponential recency weighting for adaptation
+- Probability calibration (Platt scaling)
+- Live prediction validation after 15 minutes
+- Transformer must earn inclusion before contributing
 
 ---
 
-## 🔧 Configuration
+## ❌ Known Gaps (Ranked by Impact)
+1) No **champion–challenger** deployment (every retrain replaces current model)
+2) No **drift monitoring** (feature / prediction / calibration drift)
+3) No fee-adjusted **net-PnL accounting** inside paper fills
+4) No rolling **walk-forward evaluation** inside the live retrain pipeline
+5) No **early stopping** for XGBoost (always builds 500 trees)
+6) No regime-specific models or regime-based trade gating
+7) No explicit class-imbalance handling (label skew from +0.30% hurdle)
+8) Missing gap detection/quarantine (currently forward-fill)
 
-All settings are managed through `config.py` and the `.env` file:
+---
 
-| Key | Required | Description |
-|---|---|---|
-| `OPENAI_API_KEY` | Optional | Powers Dr. Nexus AI chat. Without it, the chat feature is disabled but everything else works. |
-| `BINANCE_API_KEY` | No | Public endpoints are used by default. Only needed for authenticated endpoints. |
-
-The app auto-detects whether it's running in development mode or as an installed application, and adjusts all paths accordingly.
+## 🗺️ Roadmap (High-Impact Next Steps)
+- [ ] Champion–Challenger + promotion rules (logloss + net-PnL Sharpe, not just accuracy)
+- [ ] Drift monitoring: PSI + calibration drift + prediction drift
+- [ ] Fee/slippage-aware paper fills + net-PnL dashboards + turnover
+- [ ] Rolling walk-forward evaluation integrated into retraining loop
+- [ ] Early stopping + light hyperparameter sweeps
+- [ ] Regime gating or regime-specific models (router via HMM/Hurst/vol regime)
+- [ ] Time-of-day / day-of-week features (optional)
 
 ---
 
 ## 🛡️ Security Notes
-
-- **No API keys are stored in the codebase.** All secrets are loaded from environment variables or `.env` files.
-- **All trading is paper-only.** The app never places real orders on any exchange.
-- **All data stays local.** Your predictions, trades, and chat history are stored on your machine. Nothing is sent to external servers except Binance price queries and OpenAI chat requests (when you use Dr. Nexus).
-
----
-
-## 📋 Tech Stack
-
-| Layer | Technology | Why |
-|---|---|---|
-| **Desktop Shell** | Electron 40 | Cross-platform, frameless window, system tray |
-| **Frontend** | React 18 + TypeScript | Type-safe, component-based UI |
-| **Bundler** | Vite 7 | Fast HMR, optimized production builds |
-| **Charts** | lightweight-charts | Performant financial charting (TradingView engine) |
-| **Backend** | FastAPI + Uvicorn | Async Python, automatic OpenAPI docs |
-| **ML** | XGBoost + PyTorch | Gradient boosting + deep learning ensemble |
-| **GPU** | CUDA (PyTorch) | GPU-accelerated training and inference |
-| **Data** | Pandas, NumPy, SciPy | Feature engineering and statistical analysis |
-| **Market Data** | Binance REST + WebSocket | Real-time and historical BTC/USDT data |
-| **AI Chat** | OpenAI GPT-4o | Context-aware quant analyst assistant |
-
----
-
-## 📌 Roadmap
-
-See [FEATURE_ROADMAP.md](FEATURE_ROADMAP.md) for the full prioritized list. Highlights:
-
-- [ ] Live Binance order book depth visualization
-- [ ] Multi-timeframe prediction (5m, 15m, 1h, 4h)
-- [ ] Backtest visualization with equity curves
-- [ ] Portfolio analytics and performance attribution
-- [ ] Support for additional trading pairs (ETH, SOL, etc.)
+- No secrets committed (loaded via `.env`)
+- Paper trading only (no real orders)
+- Everything local except Binance market data + optional OpenAI chat calls
 
 ---
 
 ## ⚠️ Disclaimer
-
-Nexus Shadow-Quant is an **educational and research tool**. It is not financial advice. All predictions are generated by statistical models and machine learning algorithms — they do not guarantee future performance or profits. Cryptocurrency markets are highly volatile and speculative.
-
-**You are fully responsible for any trading decisions you make.** This software performs paper trading only and does not interact with real exchange accounts.
+Nexus Shadow-Quant is an educational and research tool. It is not financial advice. Cryptocurrency markets are volatile. You are responsible for any decisions you make.
 
 ---
 
 <div align="center">
 
-**v6.0.1 Beta Stable** · Built with ⚡ by **G-luc**
+**v6.1.2 Beta Stable** · Built locally with ⚡ by **G-luc**
 
 </div>
