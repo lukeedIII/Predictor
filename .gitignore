@@ -49,6 +49,17 @@ desktop/temp_wheels/
 *.dll
 desktop/torch_test_*.txt
 
+# Installer output / distribution
+NexusSQ-*/
+Beta Tester/
+*.zip
+*.7z
+*.pdf
+START.bat
+INSTALL.bat
+desktop/src_old/
+build_scripts/
+
 # SQLite
 *.db
 

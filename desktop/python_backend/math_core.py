@@ -108,12 +108,24 @@ class MathCore:
 
     def kalman_smooth(self, prices):
         """Apply Kalman filter for noise reduction."""
-        if len(prices) < 2:
+        if len(prices) < 5:
             return prices
         
         try:
+            # Sanitize input — filterpy's C extensions segfault on NaN/Inf
+            prices_arr = np.asarray(prices, dtype=np.float64).ravel()
+            finite_mask = np.isfinite(prices_arr)
+            if not np.all(finite_mask):
+                # Fill non-finite values with forward-fill then backfill
+                for i in range(len(prices_arr)):
+                    if not finite_mask[i]:
+                        prices_arr[i] = prices_arr[i - 1] if i > 0 else 0.0
+            
+            if len(prices_arr) < 2 or not np.all(np.isfinite(prices_arr)):
+                return prices
+            
             kf = KalmanFilter(dim_x=2, dim_z=1)
-            kf.x = np.array([[prices[0]], [0.]])
+            kf.x = np.array([[float(prices_arr[0])], [0.]])
             kf.F = np.array([[1., 1.], [0., 1.]])  # State transition
             kf.H = np.array([[1., 0.]])  # Measurement function
             kf.P *= 10.  # Initial uncertainty
@@ -121,10 +133,16 @@ class MathCore:
             kf.Q = 0.001  # Process noise
             
             smoothed = []
-            for z in prices:
+            for z in prices_arr:
                 kf.predict()
-                kf.update(z)
-                smoothed.append(float(kf.x[0]))
+                kf.update(float(z))
+                # Safely extract scalar from state vector
+                val = kf.x[0]
+                if hasattr(val, 'item'):
+                    val = val.item()
+                elif hasattr(val, '__float__'):
+                    val = float(val)
+                smoothed.append(val)
             
             return np.array(smoothed)
         except Exception as e:

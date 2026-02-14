@@ -1,163 +1,240 @@
-import { useState, useRef, useEffect } from 'react';
-import { apiPost, API_BASE } from '../hooks/useApi';
-import ReactMarkdown from 'react-markdown';
-import remarkGfm from 'remark-gfm';
+import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
+import { IconSend, IconPlus, IconTrash, IconChatBubble, IconChevronLeft, IconTrend, IconTrendDown } from '../components/Icons';
+import { useLivePrice, useLiveChangePct, useLivePrediction, useLivePositions } from '../stores/liveStore';
 
-/* ─── Types ──────────────────────────────────────── */
-type Message = {
-    id: number;
-    role: 'user' | 'agent';
-    content: string;
-    provider?: string;
-    timestamp: Date;
+const API = 'http://127.0.0.1:8420';
+
+/* ── Types ─────────────────────────────────────────── */
+type Message = { role: 'user' | 'agent'; content: string };
+type Session = {
+    session_id: string;
+    title: string;
+    message_count: number;
+    started_at: string;
+    last_message_at: string;
 };
 
-/* ─── Safe Markdown Renderer ─────────────────────── */
-function NexusMarkdown({ content }: { content: string }) {
+/* ── Helpers ───────────────────────────────────────── */
+function relativeTime(iso: string): string {
+    if (!iso) return '';
+    const d = new Date(iso + 'Z');
+    const diff = (Date.now() - d.getTime()) / 1000;
+    if (diff < 60) return 'just now';
+    if (diff < 3600) return `${Math.floor(diff / 60)}m ago`;
+    if (diff < 86400) return `${Math.floor(diff / 3600)}h ago`;
+    return `${Math.floor(diff / 86400)}d ago`;
+}
+
+/* ── Market Ticker Component ──────────────────────── */
+function MarketTicker() {
+    const price = useLivePrice();
+    const changePct = useLiveChangePct();
+    const prediction = useLivePrediction();
+    const positions = useLivePositions();
+
+    const pctStr = changePct != null ? `${changePct >= 0 ? '+' : ''}${changePct.toFixed(2)}%` : '--';
+    const pctClass = (changePct ?? 0) >= 0 ? 'up' : 'down';
+    const predDir = (prediction as any)?.direction ?? null;
+    const predConf = (prediction as any)?.confidence ?? null;
+    const openPos = positions?.length ?? 0;
+
     return (
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>
-            {content}
-        </ReactMarkdown>
+        <div className="market-ticker">
+            <div className="ticker-item">
+                <span className="ticker-label">BTC/USDT</span>
+                <span className="ticker-value" style={{ fontVariantNumeric: 'tabular-nums' }}>
+                    ${price != null ? price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : '—'}
+                </span>
+            </div>
+            <div className="ticker-divider" />
+            <div className="ticker-item">
+                <span className="ticker-label">24h</span>
+                <span className={`ticker-value ${pctClass}`}>{pctStr}</span>
+            </div>
+            <div className="ticker-divider" />
+            <div className="ticker-item">
+                <span className="ticker-label">Signal</span>
+                {predDir ? (
+                    <span className={`ticker-value ${predDir === 'LONG' ? 'up' : 'down'}`} style={{ display: 'flex', alignItems: 'center', gap: 3 }}>
+                        {predDir === 'LONG' ? <IconTrend size={13} /> : <IconTrendDown size={13} />}
+                        {predDir} {predConf != null ? `${Number(predConf).toFixed(2)}%` : ''}
+                    </span>
+                ) : <span className="ticker-value muted">—</span>}
+            </div>
+            <div className="ticker-divider" />
+            <div className="ticker-item">
+                <span className="ticker-label">Positions</span>
+                <span className={`ticker-value ${openPos > 0 ? 'up' : 'muted'}`}>{openPos}</span>
+            </div>
+        </div>
     );
 }
 
-/* ─── Page ───────────────────────────────────────── */
+/* ── Main Component ───────────────────────────────── */
 export default function NexusAgent() {
-    const [messages, setMessages] = useState<Message[]>([
-        {
-            id: 0,
-            role: 'agent',
-            content: "## Welcome! I'm Dr. Nexus 🧬\n\nYour AI-powered quant analyst with **real-time access** to the entire platform state.\n\n### What I can analyze:\n- **Market State** — BTC price, AI predictions, confidence scores\n- **Your Positions** — open trades, PnL, risk exposure, TP/SL levels\n- **Portfolio Stats** — win rate, Sharpe ratio, drawdown, Kelly criterion\n- **Algorithm Internals** — XGBoost ensemble, Hurst regime, FFT cycles, order flow\n\n> Ask me anything about the current market conditions, your positions, or the algorithm's decision-making.\n\n---\n*Powered by GPT-4o · Live state injected with every message · **Persistent Memory Active***",
-            provider: 'gpt-4o',
-            timestamp: new Date(),
-        },
-    ]);
+    const [messages, setMessages] = useState<Message[]>([]);
     const [input, setInput] = useState('');
-    const [loading, setLoading] = useState(false);
+    const [streaming, setStreaming] = useState(false);
     const [sessionId, setSessionId] = useState<string | null>(null);
-    const [memoryStats, setMemoryStats] = useState<{ total_messages: number; total_knowledge: number } | null>(null);
+    const [sessions, setSessions] = useState<Session[]>([]);
+    const [sidebarOpen, setSidebarOpen] = useState(true);
     const messagesEndRef = useRef<HTMLDivElement>(null);
-    const inputRef = useRef<HTMLInputElement>(null);
-    const idRef = useRef(1);
+    const inputRef = useRef<HTMLTextAreaElement>(null);
 
-    // Load chat history from backend on mount
-    useEffect(() => {
-        const loadHistory = async () => {
-            try {
-                const resp = await fetch(`${API_BASE}/api/agent/history?limit=30`);
-                if (resp.ok) {
-                    const data = await resp.json();
-                    if (data.messages && data.messages.length > 0) {
-                        const loaded: Message[] = data.messages.map((m: Record<string, unknown>, i: number) => ({
-                            id: i + 1,
-                            role: m.role as 'user' | 'agent',
-                            content: m.content as string,
-                            provider: (m.provider as string) || undefined,
-                            timestamp: new Date(m.created_at as string),
-                        }));
-                        idRef.current = loaded.length + 1;
-                        setMessages(prev => [...prev, ...loaded]);
-                    }
-                }
-            } catch {
-                // Backend not ready yet, skip
-            }
+    const scrollToBottom = useCallback(() => {
+        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, []);
+    useEffect(scrollToBottom, [messages, scrollToBottom]);
 
-            // Load memory stats
-            try {
-                const resp = await fetch(`${API_BASE}/api/agent/memory-stats`);
-                if (resp.ok) {
-                    setMemoryStats(await resp.json());
-                }
-            } catch {
-                // Skip
+    /* ── Load sessions list ─────────────────────── */
+    const loadSessions = useCallback(async () => {
+        try {
+            const res = await fetch(`${API}/api/agent/sessions`);
+            if (!res.ok) return;
+            const data = await res.json();
+            setSessions(data.sessions ?? []);
+            if (!sessionId && data.current_session_id) {
+                setSessionId(data.current_session_id);
             }
-        };
-        loadHistory();
+        } catch { /* backend not ready */ }
+    }, [sessionId]);
+
+    /* ── Load messages for a given session ───────── */
+    const loadHistory = useCallback(async (sid: string | null) => {
+        try {
+            const url = sid
+                ? `${API}/api/agent/history?session_id=${sid}&limit=50`
+                : `${API}/api/agent/history?limit=50`;
+            const res = await fetch(url);
+            if (!res.ok) return;
+            const data = await res.json();
+            if (data.messages && data.messages.length > 0) {
+                const history: Message[] = data.messages.map((m: any) => ({
+                    role: m.role === 'user' ? 'user' as const : 'agent' as const,
+                    content: m.content ?? m.text ?? '',
+                }));
+                setMessages(history);
+            } else {
+                setMessages([]);
+            }
+        } catch { /* backend not ready */ }
     }, []);
 
+    /* ── Initial mount ──────────────────────────── */
     useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages]);
+        (async () => {
+            // Fetch sessions and current session
+            const res = await fetch(`${API}/api/agent/sessions`).catch(() => null);
+            if (!res || !res.ok) return;
+            const data = await res.json();
+            setSessions(data.sessions ?? []);
+            const sid = data.current_session_id;
+            if (sid) {
+                setSessionId(sid);
+                loadHistory(sid);
+            }
+        })();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
 
-    const quickPrompts = [
-        { emoji: '📊', text: 'Full market analysis' },
-        { emoji: '💼', text: 'Position risk report' },
-        { emoji: '🧬', text: 'How is the algorithm performing?' },
-        { emoji: '⚠️', text: 'What risks should I watch?' },
-        { emoji: '🎯', text: 'Should I open a trade now?' },
-        { emoji: '📈', text: 'Explain the current regime' },
-    ];
+    /* ── New Chat ────────────────────────────────── */
+    const startNewChat = useCallback(async () => {
+        try {
+            const res = await fetch(`${API}/api/agent/new-session`, { method: 'POST' });
+            if (!res.ok) return;
+            const data = await res.json();
+            setSessionId(data.session_id);
+            setMessages([]);
+            inputRef.current?.focus();
+            loadSessions();
+        } catch { /* */ }
+    }, [loadSessions]);
 
-    const sendMessage = async (text?: string) => {
-        const msg = (text || input).trim();
-        if (!msg || loading) return;
+    /* ── Switch Session ──────────────────────────── */
+    const switchSession = useCallback(async (sid: string) => {
+        setSessionId(sid);
+        await loadHistory(sid);
+    }, [loadHistory]);
 
-        const userMsg: Message = {
-            id: idRef.current++,
-            role: 'user',
-            content: msg,
-            timestamp: new Date(),
-        };
-        setMessages(prev => [...prev, userMsg]);
+    /* ── Delete Session ──────────────────────────── */
+    const deleteSession = useCallback(async (sid: string, e: React.MouseEvent) => {
+        e.stopPropagation();
+        try {
+            await fetch(`${API}/api/agent/sessions/${sid}`, { method: 'DELETE' });
+            setSessions(prev => prev.filter(s => s.session_id !== sid));
+            if (sessionId === sid) {
+                // Deleted active session — start new one
+                startNewChat();
+            }
+        } catch { /* */ }
+    }, [sessionId, startNewChat]);
+
+    /* ── Send Message ────────────────────────────── */
+    const sendMessage = useCallback(async (e?: FormEvent) => {
+        e?.preventDefault();
+        const text = input.trim();
+        if (!text || streaming) return;
+
         setInput('');
-        setLoading(true);
+        setMessages(prev => [...prev, { role: 'user', content: text }]);
+        setStreaming(true);
 
         try {
-            const resp = await apiPost('/api/agent/chat', {
-                message: msg,
-                session_id: sessionId,
+            const res = await fetch(`${API}/api/agent/chat`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ message: text, session_id: sessionId }),
             });
-            const data = resp as { reply: string; provider: string; session_id: string };
 
-            // Track session_id from backend
-            if (data.session_id && !sessionId) {
-                setSessionId(data.session_id);
+            if (!res.ok) throw new Error(`HTTP ${res.status}`);
+
+            const contentType = res.headers.get('content-type') ?? '';
+            if (contentType.includes('text/event-stream') || contentType.includes('text/plain')) {
+                const reader = res.body?.getReader();
+                const decoder = new TextDecoder();
+                let agentText = '';
+                setMessages(prev => [...prev, { role: 'agent', content: '' }]);
+
+                if (reader) {
+                    while (true) {
+                        const { done, value } = await reader.read();
+                        if (done) break;
+                        const chunk = decoder.decode(value, { stream: true });
+                        const lines = chunk.split('\n');
+                        for (const line of lines) {
+                            if (line.startsWith('data: ')) {
+                                const data = line.slice(6);
+                                if (data === '[DONE]') continue;
+                                try {
+                                    const parsed = JSON.parse(data);
+                                    agentText += parsed.content ?? parsed.text ?? '';
+                                } catch {
+                                    agentText += data;
+                                }
+                            }
+                        }
+                        setMessages(prev => {
+                            const copy = [...prev];
+                            copy[copy.length - 1] = { role: 'agent', content: agentText };
+                            return copy;
+                        });
+                    }
+                }
+            } else {
+                const data = await res.json();
+                const reply = data.reply ?? data.response ?? data.message ?? 'No response';
+                setMessages(prev => [...prev, { role: 'agent', content: reply }]);
             }
 
-            const agentMsg: Message = {
-                id: idRef.current++,
-                role: 'agent',
-                content: data.reply || 'No response received.',
-                provider: data.provider,
-                timestamp: new Date(),
-            };
-            setMessages(prev => [...prev, agentMsg]);
-
-            // Refresh memory stats
-            try {
-                const statsResp = await fetch(`${API_BASE}/api/agent/memory-stats`);
-                if (statsResp.ok) setMemoryStats(await statsResp.json());
-            } catch { /* ignore */ }
-        } catch (err) {
-            const errorMsg: Message = {
-                id: idRef.current++,
-                role: 'agent',
-                content: '⚠️ Failed to reach the AI. Check your connection and try again.',
-                timestamp: new Date(),
-            };
-            setMessages(prev => [...prev, errorMsg]);
+            // Refresh sessions list (title may have changed)
+            loadSessions();
+        } catch (err: any) {
+            setMessages(prev => [...prev, { role: 'agent', content: `Error: ${err.message}` }]);
+        } finally {
+            setStreaming(false);
+            inputRef.current?.focus();
         }
-
-        setLoading(false);
-        inputRef.current?.focus();
-    };
-
-    const startNewSession = async () => {
-        try {
-            const resp = await apiPost('/api/agent/new-session', {});
-            const data = resp as { session_id: string };
-            setSessionId(data.session_id);
-            setMessages([{
-                id: 0,
-                role: 'agent',
-                content: "## New Session Started 🧬\n\nI still remember everything from our previous conversations! My **knowledge bank** carries over.\n\nHow can I help you?",
-                provider: 'gpt-4o',
-                timestamp: new Date(),
-            }]);
-            idRef.current = 1;
-        } catch { /* ignore */ }
-    };
+    }, [input, streaming, sessionId, loadSessions]);
 
     const handleKeyDown = (e: React.KeyboardEvent) => {
         if (e.key === 'Enter' && !e.shiftKey) {
@@ -166,112 +243,124 @@ export default function NexusAgent() {
         }
     };
 
-    const canSend = !loading && input.trim().length > 0;
+    /* ── Markdown-ish rendering ──────────────────── */
+    const renderContent = (content: string) => {
+        const parts = content.split(/(`[^`]+`)/g);
+        return parts.map((part, i) => {
+            if (part.startsWith('`') && part.endsWith('`')) {
+                return <code key={i}>{part.slice(1, -1)}</code>;
+            }
+            const boldParts = part.split(/(\*\*[^*]+\*\*)/g);
+            return boldParts.map((bp, j) => {
+                if (bp.startsWith('**') && bp.endsWith('**')) {
+                    return <strong key={`${i}-${j}`}>{bp.slice(2, -2)}</strong>;
+                }
+                return <span key={`${i}-${j}`}>{bp}</span>;
+            });
+        });
+    };
+
+    const quickActions = [
+        'What is the current market regime?',
+        'Explain the latest prediction',
+        'Show quant analysis summary',
+        'What are the risk levels?',
+    ];
 
     return (
-        <div className="animate-in chat-layout">
-            {/* Header */}
-            <div className="chat-header">
-                <div>
-                    <div className="page-title">🧬 Dr. Nexus</div>
-                    <div className="page-subtitle">
-                        AI Quant Analyst · GPT-4o · Persistent Memory
-                    </div>
-                </div>
-                <div className="chat-actions">
-                    {memoryStats && (memoryStats.total_messages > 0 || memoryStats.total_knowledge > 0) && (
-                        <div className="chat-memory-badge">
-                            🧠 {memoryStats.total_knowledge} insights · {memoryStats.total_messages} msgs
-                        </div>
-                    )}
-                    <button className="chat-new-btn" onClick={startNewSession}>
-                        + New Chat
+        <div className="nexus-chat-layout">
+            {/* ── Sidebar ──────────────────────────── */}
+            <div className={`chat-sidebar ${sidebarOpen ? 'open' : 'collapsed'}`}>
+                <div className="sidebar-header">
+                    <button className="btn btn-primary sidebar-new-chat" onClick={startNewChat} title="New Chat">
+                        <IconPlus size={15} />
+                        {sidebarOpen && <span>New Chat</span>}
                     </button>
-                    <div className="chat-live-badge">
-                        <div className="chat-live-dot" />
-                        Live
-                    </div>
-                </div>
-            </div>
-
-            {/* Quick Prompts */}
-            <div className="chat-quick-prompts">
-                {quickPrompts.map((prompt, i) => (
-                    <button
-                        key={i}
-                        className="chat-quick-btn"
-                        onClick={() => sendMessage(`${prompt.emoji} ${prompt.text}`)}
-                        disabled={loading}
-                    >
-                        {prompt.emoji} {prompt.text}
+                    <button className="btn btn-ghost sidebar-toggle" onClick={() => setSidebarOpen(p => !p)} title={sidebarOpen ? 'Collapse' : 'Expand'}>
+                        <IconChevronLeft size={16} style={{ transform: sidebarOpen ? undefined : 'rotate(180deg)', transition: 'transform .2s' }} />
                     </button>
-                ))}
-            </div>
-
-            {/* Messages */}
-            <div className="chat-messages">
-                {messages.map(msg => (
-                    <div key={msg.id} className={`chat-msg-row ${msg.role}`}>
-                        {/* Agent avatar */}
-                        {msg.role === 'agent' && (
-                            <div className="chat-avatar">🧬</div>
+                </div>
+                {sidebarOpen && (
+                    <div className="sidebar-sessions">
+                        {sessions.length === 0 && (
+                            <div className="sidebar-empty">No conversations yet</div>
                         )}
-
-                        <div className={`chat-bubble ${msg.role}`}>
-                            {msg.role === 'agent' ? (
-                                <div className="dr-nexus-response">
-                                    <NexusMarkdown content={msg.content} />
+                        {sessions.map(s => (
+                            <div
+                                key={s.session_id}
+                                className={`session-item ${s.session_id === sessionId ? 'active' : ''}`}
+                                onClick={() => switchSession(s.session_id)}
+                            >
+                                <IconChatBubble size={14} style={{ flexShrink: 0, opacity: 0.5 }} />
+                                <div className="session-info">
+                                    <div className="session-title">{s.title}</div>
+                                    <div className="session-meta">{s.message_count} msgs · {relativeTime(s.last_message_at)}</div>
                                 </div>
-                            ) : (
-                                <div className="font-500">{msg.content}</div>
-                            )}
-                            <div className={`chat-meta ${msg.role}`}>
-                                <span>{msg.timestamp.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                                {msg.provider && (
-                                    <span className="chat-provider-badge">{msg.provider}</span>
-                                )}
+                                <button
+                                    className="session-delete"
+                                    onClick={(e) => deleteSession(s.session_id, e)}
+                                    title="Delete"
+                                >
+                                    <IconTrash size={13} />
+                                </button>
                             </div>
-                        </div>
-                    </div>
-                ))}
-
-                {/* Typing indicator */}
-                {loading && (
-                    <div className="chat-typing">
-                        <div className="chat-avatar">🧬</div>
-                        <div className="chat-typing-bubble">
-                            <div className="typing-dot" style={{ animationDelay: '0s' }} />
-                            <div className="typing-dot" style={{ animationDelay: '0.15s' }} />
-                            <div className="typing-dot" style={{ animationDelay: '0.3s' }} />
-                            <span className="chat-typing-text">
-                                Dr. Nexus is analyzing...
-                            </span>
-                        </div>
+                        ))}
                     </div>
                 )}
-
-                <div ref={messagesEndRef} />
             </div>
 
-            {/* Input Bar */}
-            <div className="chat-input-bar">
-                <input
-                    ref={inputRef}
-                    type="text"
-                    className="chat-input"
-                    value={input}
-                    onChange={e => setInput(e.target.value)}
-                    onKeyDown={handleKeyDown}
-                    placeholder="Ask Dr. Nexus about BTC, your positions, or the algorithm..."
-                    disabled={loading}
-                />
-                <button
-                    className={`chat-send-btn ${canSend ? 'active' : 'inactive'}`}
-                    onClick={() => sendMessage()}
-                    disabled={!canSend}
-                >
-                    {loading ? '⏳' : 'Send'}
-                </button>
+            {/* ── Main Chat Area ───────────────────── */}
+            <div className="chat-main">
+                {/* Market Ticker */}
+                <MarketTicker />
+
+                {/* Messages */}
+                <div className="chat-messages">
+                    {messages.length === 0 && (
+                        <div className="empty-state" style={{ flex: 1 }}>
+                            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-1)', marginBottom: 4 }}>Dr. Nexus</div>
+                            <div style={{ fontSize: 12, maxWidth: 300 }}>
+                                Ask me anything about market conditions, predictions, or trading strategies.
+                            </div>
+                            <div className="flex gap-8" style={{ marginTop: 16, flexWrap: 'wrap', justifyContent: 'center' }}>
+                                {quickActions.map(q => (
+                                    <button key={q} className="btn btn-sm" onClick={() => { setInput(q); inputRef.current?.focus(); }}>
+                                        {q}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+                    )}
+                    {messages.map((msg, i) => (
+                        <div key={i} className={`chat-bubble ${msg.role} animate-in`}>
+                            {msg.role === 'agent' ? (
+                                <div style={{ whiteSpace: 'pre-wrap' }}>{renderContent(msg.content)}</div>
+                            ) : msg.content}
+                        </div>
+                    ))}
+                    {streaming && messages.length > 0 && messages[messages.length - 1].content === '' && (
+                        <div className="chat-bubble agent">
+                            <div className="typing-dots"><span /><span /><span /></div>
+                        </div>
+                    )}
+                    <div ref={messagesEndRef} />
+                </div>
+
+                {/* Input */}
+                <div className="chat-input-row">
+                    <textarea
+                        ref={inputRef}
+                        className="chat-input"
+                        placeholder="Ask Dr. Nexus…"
+                        value={input}
+                        onChange={e => setInput(e.target.value)}
+                        onKeyDown={handleKeyDown}
+                        rows={1}
+                    />
+                    <button className="btn btn-primary" onClick={() => sendMessage()} disabled={streaming || !input.trim()}>
+                        <IconSend style={{ width: 16, height: 16 }} />
+                    </button>
+                </div>
             </div>
         </div>
     );

@@ -34,38 +34,126 @@ except ImportError:
     logging.warning("Alternative data not available.")
 
 
-# ========== LSTM SEQUENCE LENGTH ==========
-LSTM_SEQ_LEN = 30  # 30 timesteps per sample — the LSTM needs sequences to learn temporal patterns
+# ========== DEEP MODEL SEQUENCE LENGTH ==========
+DEEP_SEQ_LEN = 30  # 30 timesteps per sample — Transformer processes temporal windows
 
 
-class NexusLSTM(nn.Module):
-    """Production-grade LSTM for temporal sequence prediction.
-    Sized for RTX 3060+ (≈50MB VRAM). Processes windows of timesteps."""
-    def __init__(self, input_size=35, hidden_size=512, num_layers=3):
-        super(NexusLSTM, self).__init__()
-        self.lstm = nn.LSTM(
-            input_size, hidden_size, num_layers,
-            batch_first=True, dropout=0.3
+class NexusTransformer(nn.Module):
+    """Production-grade Transformer Encoder for temporal sequence classification.
+    ~90M params (~360 MB) — sized for RTX 5080 (16 GB VRAM, uses ~1.5 GB).
+    
+    Architecture:
+      Input projection → Positional Embedding → 12x TransformerEncoder layers
+      → [CLS] token pooling → Classification head → Sigmoid
+    """
+    def __init__(self, input_size=42, d_model=1024, nhead=16, num_layers=12,
+                 dim_feedforward=4096, dropout=0.15):
+        super(NexusTransformer, self).__init__()
+        self.d_model = d_model
+        self.seq_len = DEEP_SEQ_LEN
+        
+        # Project raw features into d_model dimensional space
+        self.input_proj = nn.Sequential(
+            nn.Linear(input_size, d_model),
+            nn.LayerNorm(d_model),
+            nn.GELU(),
+            nn.Dropout(dropout),
         )
-        self.layer_norm = nn.LayerNorm(hidden_size)
+        
+        # Learnable positional embeddings (seq_len + 1 for [CLS] token)
+        self.cls_token = nn.Parameter(torch.randn(1, 1, d_model) * 0.02)
+        self.pos_embedding = nn.Parameter(torch.randn(1, DEEP_SEQ_LEN + 1, d_model) * 0.02)
+        self.pos_dropout = nn.Dropout(dropout)
+        
+        # Transformer encoder (Pre-LayerNorm for stable deep training)
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=d_model,
+            nhead=nhead,
+            dim_feedforward=dim_feedforward,
+            dropout=dropout,
+            activation='gelu',
+            batch_first=True,
+            norm_first=True,  # Pre-LN — critical for 12-layer stability
+        )
+        self.encoder = nn.TransformerEncoder(
+            encoder_layer,
+            num_layers=num_layers,
+            norm=nn.LayerNorm(d_model),
+            enable_nested_tensor=False,
+        )
+        
+        # Classification head
         self.head = nn.Sequential(
-            nn.Linear(hidden_size, 128),
-            nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.LayerNorm(d_model),
+            nn.Linear(d_model, 512),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(512, 128),
+            nn.GELU(),
+            nn.Dropout(dropout * 0.5),
             nn.Linear(128, 1),
         )
         self.sigmoid = nn.Sigmoid()
+        
+        # Initialize weights (Xavier uniform for projections)
+        self._init_weights()
     
-    def forward(self, x):
-        # x shape: (batch, seq_len, features) — seq_len=30, NOT 1
-        out, _ = self.lstm(x)
-        out = self.layer_norm(out[:, -1, :])  # Normalize final hidden state
-        return self.sigmoid(self.head(out))
+    def _init_weights(self):
+        for m in self.modules():
+            if isinstance(m, nn.Linear):
+                nn.init.xavier_uniform_(m.weight)
+                if m.bias is not None:
+                    nn.init.zeros_(m.bias)
+    
+    def forward(self, x, return_logits=False):
+        # x shape: (batch, seq_len, features)
+        B = x.shape[0]
+        
+        # Project features → d_model
+        x = self.input_proj(x)  # (B, seq_len, d_model)
+        
+        # Prepend [CLS] token
+        cls = self.cls_token.expand(B, -1, -1)  # (B, 1, d_model)
+        x = torch.cat([cls, x], dim=1)  # (B, seq_len+1, d_model)
+        
+        # Add positional embeddings
+        x = x + self.pos_embedding[:, :x.shape[1], :]
+        x = self.pos_dropout(x)
+        
+        # Transformer Encoder
+        x = self.encoder(x)  # (B, seq_len+1, d_model)
+        
+        # [CLS] token output = sequence-level representation
+        cls_out = x[:, 0, :]  # (B, d_model)
+        
+        logits = self.head(cls_out)
+        if return_logits:
+            return logits  # Raw logits for BCEWithLogitsLoss (AMP-safe)
+        return self.sigmoid(logits)
+    
+    @property
+    def num_parameters(self):
+        return sum(p.numel() for p in self.parameters())
+    
+    @property
+    def size_mb(self):
+        return sum(p.numel() * p.element_size() for p in self.parameters()) / (1024 * 1024)
+
+
+# ========== Backward compatibility alias ==========
+# Keep NexusLSTM as a minimal stub so old references don't crash during migration
+class NexusLSTM(NexusTransformer):
+    """DEPRECATED — redirects to NexusTransformer for backward compatibility."""
+    def __init__(self, input_size=42, **kwargs):
+        super().__init__(input_size=input_size)
 
 class NexusPredictor:
     def __init__(self):
         self.model_path = os.path.join(config.MODEL_DIR, "predictor_v3.joblib")
-        self.lstm_path = os.path.join(config.MODEL_DIR, "nexus_lstm_v3.pth")
+        self.deep_model_path = os.path.join(config.MODEL_DIR, "nexus_transformer_v1.pth")
+        self.pretrained_path = os.path.join(config.MODEL_DIR, "nexus_transformer_pretrained.pth")
+        # Legacy alias for backward compat with code that references lstm_path
+        self.lstm_path = self.deep_model_path
         self.scaler_path = os.path.join(config.MODEL_DIR, "feature_scaler_v3.pkl")
         self.ensemble_state_path = os.path.join(config.MODEL_DIR, "ensemble_state_v3.pkl")
         self.math = MathCore()
@@ -100,6 +188,8 @@ class NexusPredictor:
             # Phase 3: Microstructure features (from 1m candle proxies)
             'trade_intensity', 'buy_sell_ratio', 'vwap_momentum',
             'tick_volatility', 'large_trade_ratio',
+            # Phase 4: Real WebSocket microstructure (from live tick data)
+            'ws_trades_per_sec', 'ws_buy_sell_ratio', 'ws_spread_bps',
         ]
         # Real-time-only features (used as confidence boost, NOT in training)
         self.alt_data_features = [
@@ -110,15 +200,18 @@ class NexusPredictor:
         self.prediction_horizon = 15  # P2: 15 min instead of 60 — more actionable
         self.is_statistically_verified = False
         self.last_validation_accuracy = 0.0
+        self._training_accuracy = 0.0  # accuracy from model training (test-set)
+        self._live_accuracy = 0.0  # accuracy from live prediction outcomes
+        self._live_accuracy_samples = 0  # how many predictions have been validated
         
         # Live prediction validation — track and score predictions
-        self._prediction_history = []  # [{time, direction, price, validated, correct}]
+        self._prediction_history = []  # [{time, direction, price, confidence, validated, correct}]
         self._validation_window = 15  # minutes before checking outcome
         self.calibrated_model = None
         
-        # P0: Ensemble weights — LSTM starts at 0 until it earns weight via validation
+        # P0: Ensemble weights — Transformer starts at 0 until it earns weight via validation
         self.xgb_weight = 1.0
-        self.lstm_weight = 0.0  # Earns weight when LSTM validation > 52%
+        self.lstm_weight = 0.0  # Earns weight when Transformer validation > 52% (kept name for API compat)
         self.lstm_validation_acc = 0.0
         
         # P1: Feature scaler for LSTM normalization
@@ -209,19 +302,26 @@ class NexusPredictor:
             )
             logging.info("XGBoost model initialized (untrained)")
         
-        # === LSTM: user model > base model > fresh ===
-        self.lstm_device = self.device
-        self.lstm = NexusLSTM(input_size=len(self.features)).to(self.lstm_device)
+        # === Transformer: user model > base model > pretrained > fresh ===
+        self.lstm_device = self.device  # kept name for API compat
+        self.lstm = NexusTransformer(input_size=len(self.features)).to(self.lstm_device)
         lstm_loaded = False
-        for lstm_file, label in [(self.lstm_path, "user"), (base_lstm, "base")]:
-            if os.path.exists(lstm_file) and not lstm_loaded:
+        load_candidates = [
+            (self.deep_model_path, "user"),
+            (base_lstm, "base"),
+            (self.pretrained_path, "pretrained"),
+        ]
+        for model_file, label in load_candidates:
+            if os.path.exists(model_file) and not lstm_loaded:
                 try:
-                    self.lstm.load_state_dict(torch.load(lstm_file, map_location=self.lstm_device))
-                    logging.info(f"LSTM model loaded from {label}: {lstm_file}")
+                    self.lstm.load_state_dict(torch.load(model_file, map_location=self.lstm_device))
+                    logging.info(f"🧠 Transformer loaded from {label}: {model_file} ({self.lstm.size_mb:.0f} MB, {self.lstm.num_parameters/1e6:.1f}M params)")
                     lstm_loaded = True
+                    if label == "pretrained":
+                        logging.info("   ↳ Using pretrained weights — will fine-tune on live data")
                 except RuntimeError as e:
-                    logging.warning(f"LSTM load failed ({label}, shape mismatch? will retrain): {e}")
-                    self.lstm = NexusLSTM(input_size=len(self.features)).to(self.lstm_device)
+                    logging.warning(f"Transformer load failed ({label}, shape mismatch? will retrain): {e}")
+                    self.lstm = NexusTransformer(input_size=len(self.features)).to(self.lstm_device)
                     self.lstm_weight = 0.0
         
         # === Scaler: user > base ===
@@ -247,6 +347,14 @@ class NexusPredictor:
             self._load_ensemble_state()
             self.ensemble_state_path = orig_path
             logging.info("📦 Base ensemble state loaded")
+        
+        # If Transformer failed to load (shape mismatch after feature list change), ensure weight stays 0
+        if not lstm_loaded and self.lstm_weight > 0:
+            logging.warning("Transformer weight reset to 0 — model not loaded (needs retrain with new features)")
+        elif not lstm_loaded:
+            logging.info(f"🆕 Fresh Transformer initialized ({self.lstm.size_mb:.0f} MB, {self.lstm.num_parameters/1e6:.1f}M params)")
+            self.lstm_weight = 0.0
+            self.xgb_weight = 1.0
 
     def _load_market_data(self):
         """Load market data for TRAINING. Uses last 500K rows (~1 year of 1m data).
@@ -496,10 +604,57 @@ class NexusPredictor:
         df = df.ffill().fillna(0.0)
         return df
 
+    def _load_microstructure_data(self, n=None):
+        """Load WebSocket microstructure snapshots and prepare for merge with OHLCV.
+        Returns DataFrame with timestamp index and ws_* columns, or None."""
+        if not os.path.exists(config.MICROSTRUCTURE_DATA_PATH):
+            return None
+        try:
+            micro = pd.read_parquet(config.MICROSTRUCTURE_DATA_PATH)
+            if micro.empty:
+                return None
+            micro['timestamp'] = pd.to_datetime(micro['timestamp'], utc=True).dt.tz_localize(None)
+            micro = micro.drop_duplicates(subset=['timestamp'], keep='last')
+            if n is not None:
+                micro = micro.tail(n)
+            # Only keep the columns we need for features
+            keep_cols = ['timestamp', 'ws_trades_per_sec', 'ws_buy_sell_ratio', 'ws_spread_bps']
+            available = [c for c in keep_cols if c in micro.columns]
+            return micro[available] if 'timestamp' in available else None
+        except Exception as e:
+            logging.warning(f"Microstructure load failed: {e}")
+            return None
+
     def load_and_engineer_features(self):
-        """Load ALL market data and engineer features. Used for TRAINING only."""
+        """Load ALL market data, engineer features, and merge microstructure. Used for TRAINING only."""
         df = self._load_market_data()
-        return self._engineer_features(df, fast_mode=False)
+        df = self._engineer_features(df, fast_mode=False)
+        if df is None:
+            return None
+        
+        # Merge real WebSocket microstructure data (if available)
+        micro = self._load_microstructure_data()
+        if micro is not None and 'timestamp' in df.columns:
+            df['timestamp'] = pd.to_datetime(df['timestamp'])
+            micro['timestamp'] = pd.to_datetime(micro['timestamp'])
+            # Floor both to minute for alignment
+            df['_merge_ts'] = df['timestamp'].dt.floor('min')
+            micro['_merge_ts'] = micro['timestamp'].dt.floor('min')
+            micro_cols = [c for c in micro.columns if c.startswith('ws_')]
+            df = df.merge(micro[['_merge_ts'] + micro_cols], on='_merge_ts', how='left')
+            df.drop(columns=['_merge_ts'], inplace=True)
+            matched = df[micro_cols[0]].notna().sum() if micro_cols else 0
+            logging.info(f"Merged {matched:,}/{len(df):,} rows with WS microstructure data")
+        
+        # Fill missing WS features with neutral defaults
+        for col in ['ws_trades_per_sec', 'ws_buy_sell_ratio', 'ws_spread_bps']:
+            if col not in df.columns:
+                df[col] = 0.0
+        df['ws_buy_sell_ratio'] = df['ws_buy_sell_ratio'].fillna(1.0)  # neutral = 1.0
+        df['ws_trades_per_sec'] = df['ws_trades_per_sec'].fillna(0.0)
+        df['ws_spread_bps'] = df['ws_spread_bps'].fillna(0.0)
+        
+        return df
     
     def _add_microstructure_features(self, df):
         """
@@ -825,24 +980,25 @@ class NexusPredictor:
             with open(self.scaler_path, 'wb') as f:
                 pickle.dump(self.scaler, f)
             
-            # Create sliding window sequences for LSTM
+            # Create sliding window sequences for Transformer
             X_scaled = self.scaler.transform(X_train)
             y_values = y_train.values
             
             X_windows, y_windows = self._create_sliding_windows(X_scaled, y_values)
             
-            if len(X_windows) > LSTM_SEQ_LEN:
-                self.train_lstm(X_windows, y_windows, epochs=30)
-                torch.save(self.lstm.state_dict(), self.lstm_path)
-                logging.info(f"LSTM trained on {len(X_windows):,} sequences of {LSTM_SEQ_LEN} timesteps")
+            if len(X_windows) > DEEP_SEQ_LEN:
+                self.train_deep_model(X_windows, y_windows, epochs=30)
+                torch.save(self.lstm.state_dict(), self.deep_model_path)
+                logging.info(f"Transformer trained on {len(X_windows):,} sequences of {DEEP_SEQ_LEN} timesteps")
                 
                 # ===== STEP 3: Validate LSTM and assign ensemble weight =====
-                self._assign_lstm_weight(test_df)
+                self._assign_deep_model_weight(test_df)
             else:
-                logging.warning(f"Not enough data for LSTM windows ({len(X_windows)} < {LSTM_SEQ_LEN})")
+                logging.warning(f"Not enough data for Transformer windows ({len(X_windows)} < {DEEP_SEQ_LEN})")
             
             # Validate on test set
             self.last_validation_accuracy = self._validate_on_test_set(test_df)
+            self._training_accuracy = self.last_validation_accuracy  # preserve training score
             self.is_statistically_verified = True
             
             logging.info(
@@ -862,27 +1018,116 @@ class NexusPredictor:
         
         return True, 100
 
+    def train_on_candles(self, candle_df, timeframe_label='1s'):
+        """Train on arbitrary-timeframe OHLCV candles (e.g. 1s from WebSocket).
+
+        Adjusts prediction_horizon proportionally:
+          - '1s' → 900 rows = 15 minutes
+          - '1m' → 15 rows  = 15 minutes (default)
+        
+        Returns: (is_trained: bool, progress: float)
+        """
+        if candle_df is None or len(candle_df) < self.min_train_samples:
+            logging.warning(f"[RETRAIN-{timeframe_label}] Not enough candles: {len(candle_df) if candle_df is not None else 0}")
+            return False, 0.0
+
+        # Adjust horizon based on timeframe
+        original_horizon = self.prediction_horizon
+        if timeframe_label == '1s':
+            self.prediction_horizon = 900  # 900 × 1s = 15 min
+        elif timeframe_label == '1m':
+            self.prediction_horizon = 15   # 15 × 1m = 15 min (default)
+
+        try:
+            # Engineer features on the provided candles
+            df = self._engineer_features(candle_df.copy(), fast_mode=False)
+            if df is None or len(df) < self.min_train_samples:
+                logging.warning(f"[RETRAIN-{timeframe_label}] Feature engineering yielded too few rows")
+                return False, 50.0
+
+            # Fill missing WS features with neutrals (1s candles won't have these)
+            for col in ['ws_trades_per_sec', 'ws_buy_sell_ratio', 'ws_spread_bps']:
+                if col not in df.columns:
+                    df[col] = 0.0
+            df['ws_buy_sell_ratio'] = df['ws_buy_sell_ratio'].fillna(1.0)
+            df['ws_trades_per_sec'] = df['ws_trades_per_sec'].fillna(0.0)
+            df['ws_spread_bps'] = df['ws_spread_bps'].fillna(0.0)
+
+            # Temporal split
+            train_df, test_df = self.create_temporal_split(df)
+            train_df = self.create_target_variable(train_df, for_training=True)
+
+            if len(train_df) < 20 or train_df['target'].nunique() < 2:
+                logging.warning(f"[RETRAIN-{timeframe_label}] Insufficient training samples or variance")
+                return False, 75.0
+
+            X_train = train_df[self.features]
+            y_train = train_df['target']
+
+            # Exponential sample weighting (same as main train)
+            n = len(X_train)
+            decay_rate = 3.0 / n
+            sample_weights = np.exp(decay_rate * np.arange(n))
+            sample_weights /= sample_weights.mean()
+
+            self.model.fit(X_train, y_train, sample_weight=sample_weights)
+            joblib.dump(self.model, self.model_path)
+
+            # Fit scaler + Transformer if enough data
+            self.scaler.fit(X_train)
+            self.scaler_fitted = True
+            with open(self.scaler_path, 'wb') as f:
+                pickle.dump(self.scaler, f)
+
+            X_scaled = self.scaler.transform(X_train)
+            X_windows, y_windows = self._create_sliding_windows(X_scaled, y_train.values)
+
+            if len(X_windows) > DEEP_SEQ_LEN:
+                self.train_deep_model(X_windows, y_windows, epochs=15)  # Fewer epochs for quick retrain
+                torch.save(self.lstm.state_dict(), self.deep_model_path)
+                self._assign_deep_model_weight(test_df)
+
+            self.last_validation_accuracy = self._validate_on_test_set(test_df)
+            self.is_statistically_verified = True
+            self._save_ensemble_state()
+
+            logging.info(
+                f"[RETRAIN-{timeframe_label}] Complete on {len(train_df):,} {timeframe_label} candles | "
+                f"Acc: {self.last_validation_accuracy:.1f}%"
+            )
+            return True, 100.0
+
+        except Exception as e:
+            logging.error(f"[RETRAIN-{timeframe_label}] Training error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False, 50.0
+        finally:
+            # Restore original horizon
+            self.prediction_horizon = original_horizon
+
+
     def _create_sliding_windows(self, X, y):
         """
-        Create sliding window sequences for LSTM.
+        Create sliding window sequences for Transformer.
         Input: X (N, features), y (N,)
         Output: X_windows (N-seq_len, seq_len, features), y_windows (N-seq_len,)
         """
         windows_X = []
         windows_y = []
-        for i in range(LSTM_SEQ_LEN, len(X)):
-            windows_X.append(X[i - LSTM_SEQ_LEN:i])
+        for i in range(DEEP_SEQ_LEN, len(X)):
+            windows_X.append(X[i - DEEP_SEQ_LEN:i])
             windows_y.append(y[i])
         return np.array(windows_X), np.array(windows_y)
 
-    def _assign_lstm_weight(self, test_df):
+    def _assign_deep_model_weight(self, test_df):
         """
-        P0: LSTM must EARN its ensemble weight via validation.
+        P0: Transformer must EARN its ensemble weight via validation.
         If LSTM accuracy > 52% on test set, it gets proportional weight.
         """
         try:
             test_with_target = self.create_target_variable(test_df.copy(), for_training=True)
-            if len(test_with_target) < LSTM_SEQ_LEN + 10:
+            if len(test_with_target) < DEEP_SEQ_LEN + 10:
                 self.lstm_weight = 0.0
                 return
             
@@ -977,6 +1222,21 @@ class NexusPredictor:
             if df is None or df.empty:
                 logging.error("PREDICT FAIL [stage=feature_eng] Feature engineering returned None/empty")
                 return _fallback
+            
+            # ===== STAGE 2b: Inject live WebSocket microstructure =====
+            ws_snap = getattr(self, '_live_ws_snapshot', None)
+            if ws_snap:
+                df['ws_trades_per_sec'] = ws_snap.get('trades_per_sec', 0.0)
+                df['ws_buy_sell_ratio'] = ws_snap.get('buy_sell_ratio', 1.0)
+                price = ws_snap.get('price', 0)
+                bid = ws_snap.get('bid', 0)
+                ask = ws_snap.get('ask', 0)
+                df['ws_spread_bps'] = round((ask - bid) / (price + 1e-9) * 10000, 2) if price > 0 else 0.0
+            else:
+                for col in ['ws_trades_per_sec', 'ws_buy_sell_ratio', 'ws_spread_bps']:
+                    if col not in df.columns:
+                        df[col] = 0.0
+            
             logging.debug(f"PREDICT [stage=feature_eng] {len(df)} rows, {len(df.columns)} cols")
             
             # ===== STAGE 3: Check model readiness =====
@@ -984,14 +1244,29 @@ class NexusPredictor:
                 logging.error("PREDICT FAIL [stage=model_check] XGBoost model has no classes_ (not trained)")
                 return _fallback
             
-            # Check all required features exist
-            missing_feats = [f for f in self.features if f not in df.columns]
-            if missing_feats:
-                logging.error(f"PREDICT FAIL [stage=feature_check] Missing features: {missing_feats}")
-                return _fallback
+            # Dynamically resolve features: use only what the model was trained with
+            # This handles backward compatibility when new features are added
+            model_features = getattr(self.model, 'feature_names_in_', None)
+            if model_features is not None:
+                active_features = [f for f in model_features if f in df.columns]
+                if len(active_features) < len(model_features):
+                    missing_model = [f for f in model_features if f not in df.columns]
+                    logging.warning(f"PREDICT [stage=feature_compat] Model expects {missing_model} — filling with 0")
+                    for col in missing_model:
+                        df[col] = 0.0
+                    active_features = list(model_features)
+            else:
+                # Fallback: use self.features, check for missing
+                active_features = [f for f in self.features if f in df.columns]
+                missing_feats = [f for f in self.features if f not in df.columns]
+                if missing_feats:
+                    logging.warning(f"PREDICT [stage=feature_check] Missing features (filling 0): {missing_feats}")
+                    for col in missing_feats:
+                        df[col] = 0.0
+                    active_features = list(self.features)
             
             # Use ONLY the latest available data point for XGBoost
-            latest = df[self.features].tail(1)
+            latest = df[active_features].tail(1)
             current_price = float(df['close'].iloc[-1])
             hurst_val = float(df['hurst'].iloc[-1])
             
@@ -1002,22 +1277,22 @@ class NexusPredictor:
                 xgb_prob = float(self.model.predict_proba(latest)[0][1])
             logging.debug(f"PREDICT [stage=xgb] prob={xgb_prob:.4f}")
             
-            # ===== STAGE 5: LSTM prediction (only if it has earned weight) =====
-            lstm_prob = 0.5  # neutral default
-            if self.lstm_weight > 0 and self.scaler_fitted and len(df) >= LSTM_SEQ_LEN:
+            # ===== STAGE 5: Transformer prediction (only if it has earned weight) =====
+            lstm_prob = 0.5  # neutral default (kept var name for API compat)
+            if self.lstm_weight > 0 and self.scaler_fitted and len(df) >= DEEP_SEQ_LEN:
                 try:
                     # Build 30-step scaled window from the last 30 rows
-                    window_data = df[self.features].tail(LSTM_SEQ_LEN).values
+                    window_data = df[active_features].tail(DEEP_SEQ_LEN).values
                     window_scaled = self.scaler.transform(window_data)
                     
                     self.lstm.eval()
                     with torch.no_grad():
                         x_seq = torch.FloatTensor(window_scaled).unsqueeze(0).to(self.lstm_device)
                         lstm_prob = self.lstm(x_seq).item()
-                    logging.debug(f"PREDICT [stage=lstm] prob={lstm_prob:.4f}")
+                    logging.debug(f"PREDICT [stage=transformer] prob={lstm_prob:.4f}")
                 except Exception as e:
                     logging.warning(f"PREDICT [stage=lstm] failed: {e}")
-                    lstm_prob = 0.5
+                    lstm_prob = 0.5  # fallback to neutral
             
             # ===== STAGE 6: Dynamic ensemble =====
             final_prob = self.xgb_weight * xgb_prob + self.lstm_weight * lstm_prob
@@ -1115,6 +1390,7 @@ class NexusPredictor:
             now = datetime.now()
             
             # Validate past predictions whose window has elapsed
+            # Use 0.3% threshold aligned with training target
             validated = 0
             correct = 0
             for rec in self._prediction_history:
@@ -1123,28 +1399,35 @@ class NexusPredictor:
                     if rec.get('correct'):
                         correct += 1
                     continue
-                # Check if enough time has passed
+                # Check if enough time has passed since THIS prediction was made
                 elapsed = (now - rec['time']).total_seconds() / 60
                 if elapsed >= self._validation_window:
                     rec['validated'] = True
-                    actual_move = current_price - rec['price']
-                    rec['correct'] = (
-                        (rec['direction'] == 'UP' and actual_move > 0) or
-                        (rec['direction'] == 'DOWN' and actual_move < 0)
-                    )
+                    # Use current price as proxy for "price at target time"
+                    # (the closer predictions are spaced, the more accurate this is)
+                    price_change_pct = (current_price - rec['price']) / rec['price']
+                    # Aligned with training: 0.3% threshold for UP
+                    if rec['direction'] == 'UP':
+                        rec['correct'] = price_change_pct > 0.003
+                    else:  # DOWN
+                        rec['correct'] = price_change_pct < -0.003
                     validated += 1
                     if rec['correct']:
                         correct += 1
             
-            # Update running accuracy
+            # Update LIVE accuracy (separate from training accuracy)
             if validated >= 3:
-                self.last_validation_accuracy = round(correct / validated * 100, 1)
+                self._live_accuracy = round(correct / validated * 100, 1)
+                self._live_accuracy_samples = validated
+                # Also update the displayed accuracy to use live data
+                self.last_validation_accuracy = self._live_accuracy
             
             # Store this prediction (cap at 200 entries)
             self._prediction_history.append({
                 'time': now,
                 'direction': direction,
                 'price': current_price,
+                'confidence': confidence,
                 'validated': False,
                 'correct': False,
             })
@@ -1172,17 +1455,29 @@ class NexusPredictor:
             traceback.print_exc()
             return _fallback
 
-    def train_lstm(self, X_windows, y_windows, epochs=30):
+    def train_deep_model(self, X_windows, y_windows, epochs=30):
         """
-        Train LSTM on pre-built sliding window sequences.
+        Train Transformer on pre-built sliding window sequences.
         X_windows: (N, seq_len, features) numpy array
         y_windows: (N,) numpy array
-        Uses mini-batches on GPU with early stopping + best model checkpoint.
+        Uses mixed precision + cosine LR with early stopping.
         """
+        from torch.amp import autocast, GradScaler
+        
         self.lstm.train()
-        criterion = nn.BCELoss()
-        optimizer = torch.optim.AdamW(self.lstm.parameters(), lr=0.001, weight_decay=0.01)
-        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, patience=3, factor=0.5)
+        criterion = nn.BCEWithLogitsLoss()  # AMP-safe (expects raw logits)
+        optimizer = torch.optim.AdamW(self.lstm.parameters(), lr=5e-4, weight_decay=0.01, betas=(0.9, 0.98))
+        amp_scaler = GradScaler()
+        
+        # Cosine annealing with warmup
+        warmup_steps = min(100, len(X_windows) // 256)
+        total_steps = (len(X_windows) // 256) * epochs
+        def lr_lambda(step):
+            if step < warmup_steps:
+                return max(step / max(warmup_steps, 1), 0.1)
+            progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
+            return 0.5 * (1 + np.cos(np.pi * progress))
+        scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
         
         # Full tensors on GPU
         X_tensor = torch.FloatTensor(X_windows).to(self.lstm_device)
@@ -1193,6 +1488,7 @@ class NexusPredictor:
         best_state = None
         patience = 7
         patience_counter = 0
+        global_step = 0
         
         for epoch in range(epochs):
             epoch_loss = 0.0
@@ -1207,17 +1503,22 @@ class NexusPredictor:
                 batch_y = y_tensor[idx]
                 
                 optimizer.zero_grad()
-                output = self.lstm(batch_x)
-                loss = criterion(output, batch_y)
-                loss.backward()
+                with autocast('cuda', dtype=torch.float16):
+                    output = self.lstm(batch_x, return_logits=True)  # Raw logits for AMP
+                    loss = criterion(output, batch_y)
+                
+                amp_scaler.scale(loss).backward()
+                amp_scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(self.lstm.parameters(), max_norm=1.0)
-                optimizer.step()
+                amp_scaler.step(optimizer)
+                amp_scaler.update()
+                scheduler.step()
+                global_step += 1
                 
                 epoch_loss += loss.item()
                 n_batches += 1
             
             avg_loss = epoch_loss / max(n_batches, 1)
-            scheduler.step(avg_loss)
             
             # Early stopping with best model checkpoint
             if avg_loss < best_loss:
@@ -1227,14 +1528,19 @@ class NexusPredictor:
             else:
                 patience_counter += 1
                 if patience_counter >= patience:
-                    logging.info(f"LSTM early stopping at epoch {epoch} (loss: {best_loss:.4f})")
+                    logging.info(f"Transformer early stopping at epoch {epoch} (loss: {best_loss:.4f})")
                     break
         
         # Restore best model
         if best_state is not None:
             self.lstm.load_state_dict(best_state)
         
-        logging.info(f"LSTM training done. Best loss: {best_loss:.4f}")
+        vram_mb = torch.cuda.memory_allocated() / 1e6 if self.lstm_device.type == 'cuda' else 0
+        logging.info(f"Transformer training done. Best loss: {best_loss:.4f} | VRAM: {vram_mb:.0f} MB")
+
+    # Legacy alias
+    def train_lstm(self, *args, **kwargs):
+        return self.train_deep_model(*args, **kwargs)
 
     def save_prediction_for_audit(self, price, direction, confidence):
         """Save prediction with timestamp for future accuracy calculation."""

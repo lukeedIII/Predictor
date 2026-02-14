@@ -1,0 +1,58 @@
+[
+  {
+    "ts": "2026-02-13T23:18:44.562800",
+    "direction": "SHORT",
+    "confidence": 100.0,
+    "regime": "SIDEWAYS",
+    "hurst": 0.5664949167093165,
+    "pnl_usd": 3.17,
+    "pnl_pct": 1.59,
+    "won": true,
+    "close_reason": "TRAILING_STOP",
+    "hold_minutes": 7.4,
+    "trailing_sl_moved": true,
+    "best_price_seen": 68737.24
+  },
+  {
+    "ts": "2026-02-14T03:08:19.713463",
+    "direction": "SHORT",
+    "confidence": 100.0,
+    "regime": "SIDEWAYS",
+    "hurst": 0.583619064793765,
+    "pnl_usd": -3.94,
+    "pnl_pct": -1.97,
+    "won": false,
+    "close_reason": "MAX_HOLD_TIME",
+    "hold_minutes": 207.0,
+    "trailing_sl_moved": false,
+    "best_price_seen": 68828.21
+  },
+  {
+    "ts": "2026-02-14T14:18:18.083410",
+    "direction": "SHORT",
+    "confidence": 89.96333333333332,
+    "regime": "SIDEWAYS",
+    "hurst": 0.4172772886922359,
+    "pnl_usd": -16.35,
+    "pnl_pct": -8.18,
+    "won": false,
+    "close_reason": "MAX_HOLD_TIME",
+    "hold_minutes": 668.9,
+    "trailing_sl_moved": false,
+    "best_price_seen": 68962.99
+  },
+  {
+    "ts": "2026-02-14T15:59:27.161187",
+    "direction": "SHORT",
+    "confidence": 77.14,
+    "regime": "SIDEWAYS",
+    "hurst": 0.6648772585595637,
+    "pnl_usd": -10.05,
+    "pnl_pct": -5.02,
+    "won": false,
+    "close_reason": "STOP_LOSS",
+    "hold_minutes": 48.1,
+    "trailing_sl_moved": false,
+    "best_price_seen": 69417.98
+  }
+]

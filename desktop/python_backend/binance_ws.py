@@ -12,9 +12,11 @@ Requires: pip install websocket-client
 """
 
 import json
+import math
 import time
 import threading
 import logging
+import pandas as pd
 from collections import deque
 from typing import Optional, Callable
 
@@ -70,6 +72,11 @@ class BinanceWSClient:
         self._buy_volume_60s: deque = deque(maxlen=600)    # buy volume per trade
         self._sell_volume_60s: deque = deque(maxlen=600)   # sell volume per trade
         self._trade_ts_60s: deque = deque(maxlen=600)      # timestamps for volume deques
+
+        # ─── Phase 4: 1-second OHLCV candle aggregation ──
+        self._1s_candles: deque = deque(maxlen=7200)       # 2h of 1s candles
+        self._current_1s: dict = {}                         # candle being built
+        self._current_1s_sec: int = 0                       # epoch second of current candle
 
         # Callback for price updates (used by api_server to push to frontend WS)
         self._on_price_update = on_price_update
@@ -158,6 +165,17 @@ class BinanceWSClient:
             "buy_volume_60s": round(buy_vol, 4),
             "sell_volume_60s": round(sell_vol, 4),
         }
+
+    def get_1s_candles(self) -> 'pd.DataFrame':
+        """Return accumulated 1-second OHLCV candles as a DataFrame.
+        
+        Thread-safe: copies the deque under GIL.
+        Returns empty DataFrame if no candles yet.
+        """
+        candles = list(self._1s_candles)  # snapshot under GIL
+        if not candles:
+            return pd.DataFrame(columns=['timestamp', 'open', 'high', 'low', 'close', 'volume'])
+        return pd.DataFrame(candles)
 
     # ═══════════════════════════════════════════════════
     #  LIFECYCLE
@@ -316,6 +334,31 @@ class BinanceWSClient:
                 self._buy_volume_60s.append(trade_qty)
                 self._sell_volume_60s.append(0.0)
             self._trade_ts_60s.append(now)
+
+            # ── 1-second candle aggregation ──
+            epoch_sec = int(now)
+            if epoch_sec != self._current_1s_sec:
+                # Finalize previous candle (if exists)
+                if self._current_1s:
+                    self._1s_candles.append(self._current_1s.copy())
+                # Start new candle
+                self._current_1s_sec = epoch_sec
+                self._current_1s = {
+                    'timestamp': pd.Timestamp.utcfromtimestamp(epoch_sec),
+                    'open': new_price,
+                    'high': new_price,
+                    'low': new_price,
+                    'close': new_price,
+                    'volume': trade_qty,
+                }
+            else:
+                # Update current candle
+                c = self._current_1s
+                if c:
+                    c['high'] = max(c['high'], new_price)
+                    c['low'] = min(c['low'], new_price)
+                    c['close'] = new_price
+                    c['volume'] += trade_qty
 
             # Fire callback (used by api_server to push to frontend)
             if self._on_price_update:

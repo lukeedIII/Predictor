@@ -1,112 +1,210 @@
-import { useEffect, useState } from 'react';
-import { IconMonitor, IconBrain, IconCrosshair, IconChart } from './Icons';
+import { useLiveConnected } from '../stores/liveStore';
+import { useApi } from '../hooks/useApi';
+import { IconCpu, IconWifi } from './Icons';
 
-interface HealthData {
-    gpu_name: string;
-    gpu_vram_total_gb: number;
-    gpu_vram_used_gb: number;
-    model_trained: boolean;
-    model_version: string;
-    feature_count: number;
-    validation_accuracy: number;
-    ensemble_weights: { xgb: number; lstm: number };
-    model_age_hours?: number;
-    model_last_trained?: string;
-    data_size_mb?: number;
-}
+type AiService = {
+    connected: boolean;
+    models?: string[];
+    active_model?: string | null;
+    model_count?: number;
+    key_preview?: string | null;
+    reason?: string;
+};
+
+type HealthData = {
+    gpu_available?: boolean;
+    gpu_name?: string;
+    gpu_memory_used?: number;
+    gpu_memory_total?: number;
+    gpu_vram_total_gb?: number;
+    gpu_vram_used_gb?: number;
+    model_trained?: boolean;
+    uptime?: string;
+    uptime_seconds?: number;
+    is_retraining?: boolean;
+    retrain_count?: number;
+    next_retrain_countdown?: string;
+    api_keys?: Record<string, boolean>;
+    ai_services?: {
+        ollama?: AiService;
+        openai?: AiService;
+        gemini?: AiService;
+    };
+};
 
 export default function SystemHealth() {
-    const [health, setHealth] = useState<HealthData | null>(null);
-    const [loading, setLoading] = useState(true);
+    const { connected, wsConnected } = useLiveConnected();
+    const { data } = useApi<HealthData>('/api/health', 10_000);
 
-    useEffect(() => {
-        const fetchHealth = async () => {
-            try {
-                const res = await fetch('http://localhost:8420/api/system-health');
-                if (res.ok) setHealth(await res.json());
-            } catch { /* ignore */ }
-            setLoading(false);
-        };
-        fetchHealth();
-        const interval = setInterval(fetchHealth, 15000);
-        return () => clearInterval(interval);
-    }, []);
+    const dot = (ok: boolean) => <span className={`status-dot ${ok ? 'online' : 'offline'}`} />;
 
-    if (loading || !health) {
-        return <div className="system-health loading">Loading system health...</div>;
-    }
+    const gpuPct = data?.gpu_vram_total_gb
+        ? ((data.gpu_vram_used_gb ?? 0) / data.gpu_vram_total_gb * 100).toFixed(0)
+        : null;
 
-    const vramPct = health.gpu_vram_total_gb > 0
-        ? (health.gpu_vram_used_gb / health.gpu_vram_total_gb) * 100
-        : 0;
-
-    const formatAge = (hours?: number) => {
-        if (!hours) return 'Never';
-        if (hours < 1) return `${Math.round(hours * 60)}m ago`;
-        if (hours < 24) return `${Math.round(hours)}h ago`;
-        return `${Math.round(hours / 24)}d ago`;
-    };
+    const ai = data?.ai_services;
 
     return (
-        <div className="system-health">
-            <h3>System Health</h3>
-            <div className="sh-grid">
-                {/* GPU */}
-                <div className="sh-card">
-                    <span className="sh-icon"><IconMonitor size={20} /></span>
-                    <div className="sh-info">
-                        <span className="sh-label">GPU</span>
-                        <span className="sh-value">{health.gpu_name}</span>
-                        <div className="sh-progress-track">
-                            <div
-                                className="sh-progress-fill"
-                                style={{
-                                    width: `${vramPct}%`,
-                                    background: vramPct > 80 ? '#e57373' : vramPct > 50 ? '#ffd54f' : '#81c784',
-                                }}
-                            />
+        <div className="card card-compact animate-in">
+            <div className="card-header">
+                <span className="card-title">System</span>
+                {data?.uptime && (
+                    <span className="mono" style={{ fontSize: 10, color: 'var(--text-2)' }}>
+                        ⏱ {data.uptime}
+                    </span>
+                )}
+            </div>
+            <div className="flex-col gap-8" style={{ fontSize: 12 }}>
+                <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-4">
+                        <IconWifi style={{ width: 12, height: 12, color: 'var(--text-2)' }} />
+                        <span style={{ color: 'var(--text-1)' }}>Backend</span>
+                    </span>
+                    {dot(connected)}
+                </div>
+                <div className="flex items-center justify-between">
+                    <span className="flex items-center gap-4">
+                        <IconWifi style={{ width: 12, height: 12, color: 'var(--text-2)' }} />
+                        <span style={{ color: 'var(--text-1)' }}>Binance WS</span>
+                    </span>
+                    {dot(wsConnected)}
+                </div>
+                {data?.gpu_name != null && (
+                    <div className="flex items-center justify-between">
+                        <span className="flex items-center gap-4">
+                            <IconCpu style={{ width: 12, height: 12, color: 'var(--text-2)' }} />
+                            <span style={{ color: 'var(--text-1)' }}>GPU</span>
+                        </span>
+                        <span className="mono" style={{ fontSize: 11, color: 'var(--text-0)' }}>
+                            {gpuPct ? `${gpuPct}%` : 'Ready'}
+                        </span>
+                    </div>
+                )}
+                {data?.model_trained != null && (
+                    <div className="flex items-center justify-between">
+                        <span style={{ color: 'var(--text-1)' }}>Model</span>
+                        <span className={data.model_trained ? 'badge badge-long' : 'badge badge-warning'}>
+                            {data.model_trained ? 'Trained' : 'Untrained'}
+                        </span>
+                    </div>
+                )}
+
+                {/* ── AI Services ── */}
+                {ai && (
+                    <>
+                        <div style={{
+                            borderTop: '1px solid rgba(255,255,255,0.06)',
+                            margin: '4px 0 2px',
+                            paddingTop: 6,
+                        }}>
+                            <span style={{
+                                fontSize: 9,
+                                fontWeight: 700,
+                                letterSpacing: '1.2px',
+                                textTransform: 'uppercase',
+                                color: 'var(--text-2)',
+                            }}>AI Providers</span>
                         </div>
-                        <span className="sh-sub">
-                            {health.gpu_vram_used_gb}GB / {health.gpu_vram_total_gb}GB VRAM
-                        </span>
-                    </div>
-                </div>
 
-                {/* Model */}
-                <div className="sh-card">
-                    <span className="sh-icon"><IconBrain size={20} /></span>
-                    <div className="sh-info">
-                        <span className="sh-label">Model</span>
-                        <span className="sh-value">{health.model_version} • {health.feature_count} features</span>
-                        <span className="sh-sub">
-                            {health.model_trained ? `Trained ${formatAge(health.model_age_hours)}` : 'Not trained'}
-                        </span>
-                    </div>
-                </div>
+                        {/* Ollama */}
+                        <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-4">
+                                <span style={{ fontSize: 12 }}>🦙</span>
+                                <span style={{ color: 'var(--text-1)' }}>Ollama</span>
+                            </span>
+                            {ai.ollama?.connected ? (
+                                <span className="flex items-center gap-4">
+                                    <span className="mono" style={{
+                                        fontSize: 9,
+                                        color: '#0ECB81',
+                                        maxWidth: 90,
+                                        overflow: 'hidden',
+                                        textOverflow: 'ellipsis',
+                                        whiteSpace: 'nowrap',
+                                    }}>
+                                        {ai.ollama.active_model
+                                            ? ai.ollama.active_model.split(':')[0]
+                                            : `${ai.ollama.model_count} models`}
+                                    </span>
+                                    {dot(true)}
+                                </span>
+                            ) : (
+                                <span className="flex items-center gap-4">
+                                    <span style={{ fontSize: 9, color: 'var(--text-2)' }}>
+                                        {ai.ollama?.reason || 'Off'}
+                                    </span>
+                                    {dot(false)}
+                                </span>
+                            )}
+                        </div>
 
-                {/* Accuracy */}
-                <div className="sh-card">
-                    <span className="sh-icon"><IconCrosshair size={20} /></span>
-                    <div className="sh-info">
-                        <span className="sh-label">Accuracy</span>
-                        <span className={`sh-value ${health.validation_accuracy > 52 ? 'positive' : 'neutral'}`}>
-                            {health.validation_accuracy.toFixed(1)}%
-                        </span>
-                        <span className="sh-sub">
-                            XGB: {(health.ensemble_weights.xgb * 100).toFixed(0)}% • LSTM: {(health.ensemble_weights.lstm * 100).toFixed(0)}%
-                        </span>
-                    </div>
-                </div>
+                        {/* OpenAI */}
+                        <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-4">
+                                <span style={{ fontSize: 12 }}>⚡</span>
+                                <span style={{ color: 'var(--text-1)' }}>OpenAI</span>
+                            </span>
+                            {ai.openai?.connected ? (
+                                <span className="flex items-center gap-4">
+                                    <span className="mono" style={{ fontSize: 9, color: '#0ECB81' }}>
+                                        Key set
+                                    </span>
+                                    {dot(true)}
+                                </span>
+                            ) : (
+                                <span className="flex items-center gap-4">
+                                    <span style={{ fontSize: 9, color: 'var(--text-2)' }}>No key</span>
+                                    {dot(false)}
+                                </span>
+                            )}
+                        </div>
 
-                {/* Data */}
-                <div className="sh-card">
-                    <span className="sh-icon"><IconChart size={20} /></span>
-                    <div className="sh-info">
-                        <span className="sh-label">Data</span>
-                        <span className="sh-value">{health.data_size_mb ? `${health.data_size_mb} MB` : 'No data'}</span>
-                        <span className="sh-sub">Parquet format</span>
+                        {/* Gemini */}
+                        <div className="flex items-center justify-between">
+                            <span className="flex items-center gap-4">
+                                <span style={{ fontSize: 12 }}>💎</span>
+                                <span style={{ color: 'var(--text-1)' }}>Gemini</span>
+                            </span>
+                            {ai.gemini?.connected ? (
+                                <span className="flex items-center gap-4">
+                                    <span className="mono" style={{ fontSize: 9, color: '#0ECB81' }}>
+                                        Key set
+                                    </span>
+                                    {dot(true)}
+                                </span>
+                            ) : (
+                                <span className="flex items-center gap-4">
+                                    <span style={{ fontSize: 9, color: 'var(--text-2)' }}>No key</span>
+                                    {dot(false)}
+                                </span>
+                            )}
+                        </div>
+                    </>
+                )}
+
+                {/* ── Next Retrain Countdown ── */}
+                {data?.next_retrain_countdown != null && (
+                    <div className="flex items-center justify-between">
+                        <span style={{ color: 'var(--text-1)' }}>
+                            {data.is_retraining ? '🔄 Retraining' : '⏳ Next Train'}
+                        </span>
+                        <span className="mono" style={{
+                            fontSize: 11,
+                            color: data.is_retraining ? '#FF9100' : data.next_retrain_countdown === 'imminent' ? '#00E676' : 'var(--text-0)',
+                            fontWeight: data.is_retraining ? 600 : 400,
+                        }}>
+                            {data.is_retraining ? 'in progress...' : data.next_retrain_countdown}
+                        </span>
                     </div>
-                </div>
+                )}
+                {data?.retrain_count != null && data.retrain_count > 0 && (
+                    <div className="flex items-center justify-between">
+                        <span style={{ color: 'var(--text-1)' }}>Retrains</span>
+                        <span className="mono" style={{ fontSize: 11, color: 'var(--text-0)' }}>
+                            {data.retrain_count}×
+                        </span>
+                    </div>
+                )}
             </div>
         </div>
     );

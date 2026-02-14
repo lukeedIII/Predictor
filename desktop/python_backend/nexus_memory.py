@@ -116,7 +116,34 @@ def get_all_sessions() -> List[Dict]:
             ORDER BY last_message_at DESC
             LIMIT 50
         """).fetchall()
-        return [dict(r) for r in rows]
+        sessions = []
+        for r in rows:
+            d = dict(r)
+            # Attach first user message as title preview
+            first_msg = conn.execute(
+                "SELECT content FROM conversations "
+                "WHERE session_id = ? AND role = 'user' ORDER BY id ASC LIMIT 1",
+                (d['session_id'],)
+            ).fetchone()
+            d['title'] = (first_msg['content'][:60] + '…') if first_msg and len(first_msg['content']) > 60 else (first_msg['content'] if first_msg else 'New Chat')
+            sessions.append(d)
+        return sessions
+    finally:
+        conn.close()
+
+
+def delete_session(session_id: str) -> int:
+    """Delete all messages for a given session. Returns count of deleted rows."""
+    conn = _get_conn()
+    try:
+        cur = conn.execute(
+            "DELETE FROM conversations WHERE session_id = ?",
+            (session_id,)
+        )
+        conn.commit()
+        deleted = cur.rowcount
+        logging.info(f"Deleted session {session_id}: {deleted} messages removed")
+        return deleted
     finally:
         conn.close()
 

@@ -26,12 +26,12 @@ function getPythonPath() {
 }
 
 function getScriptPath(script) {
-    if (isDev) return path.join(__dirname, '..', '..', script);
+    if (isDev) return path.join(__dirname, '..', 'python_backend', script);
     return path.join(process.resourcesPath, 'python_backend', script);
 }
 
 function getBackendCwd() {
-    if (isDev) return path.join(__dirname, '..', '..');
+    if (isDev) return path.join(__dirname, '..', 'python_backend');
     return path.join(process.resourcesPath, 'python_backend');
 }
 
@@ -39,6 +39,61 @@ function getUserDataPath() {
     // In production, data is stored in AppData
     if (isDev) return path.join(__dirname, '..', '..');
     return path.join(app.getPath('userData'));
+}
+
+// ─── Dependency Bootstrap ────────────────────────────
+
+function runBootstrap() {
+    return new Promise((resolve) => {
+        const pythonPath = getPythonPath();
+        const scriptPath = getScriptPath('bootstrap.py');
+        const cwd = getBackendCwd();
+
+        console.log(`[Electron] Running bootstrap: ${pythonPath} ${scriptPath}`);
+
+        const proc = spawn(pythonPath, [scriptPath], {
+            env: { ...process.env, PYTHONPATH: cwd },
+            stdio: ['pipe', 'pipe', 'pipe'],
+            cwd: cwd,
+        });
+
+        let hasInstalls = false;
+
+        proc.stdout.on('data', (data) => {
+            const lines = data.toString().trim().split('\n');
+            for (const line of lines) {
+                try {
+                    const msg = JSON.parse(line);
+                    console.log(`[Bootstrap] ${msg.message}`);
+                    // Forward to splash
+                    if (splashWindow && !splashWindow.isDestroyed()) {
+                        splashWindow.webContents.send('boot-progress', {
+                            stage: msg.stage === 'done' ? 'bootstrap_done' : 'bootstrap',
+                            progress: Math.round(msg.progress * 0.3), // 0-30% of total
+                            message: msg.message,
+                        });
+                    }
+                    if (msg.stage === 'install') hasInstalls = true;
+                } catch {
+                    console.log(`[Bootstrap] ${line}`);
+                }
+            }
+        });
+
+        proc.stderr.on('data', (data) => {
+            console.error(`[Bootstrap] ${data.toString().trim()}`);
+        });
+
+        proc.on('exit', (code) => {
+            console.log(`[Bootstrap] Finished with code ${code}`);
+            resolve({ code, hasInstalls });
+        });
+
+        proc.on('error', (err) => {
+            console.error('[Bootstrap] Failed to start:', err);
+            resolve({ code: -1, hasInstalls: false });
+        });
+    });
 }
 
 // ─── Python Backend ──────────────────────────────────
@@ -179,10 +234,12 @@ function createMainWindow() {
     mainWindow = new BrowserWindow({
         width: 1440,
         height: 900,
-        minWidth: 1100,
-        minHeight: 700,
+        minWidth: 900,
+        minHeight: 600,
         show: false,
         frame: false,
+        resizable: true,
+        thickFrame: true,            // Windows: enables wider resize borders on frameless windows
         titleBarStyle: 'hidden',
         backgroundColor: '#080B12',
         webPreferences: {
@@ -205,6 +262,15 @@ function createMainWindow() {
         }
         mainWindow.show();
         mainWindow.focus();
+        if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' });
+    });
+
+    // Debug: log renderer errors
+    mainWindow.webContents.on('render-process-gone', (_e, details) => {
+        console.error('[Electron] Renderer crashed:', details.reason, details.exitCode);
+    });
+    mainWindow.webContents.on('console-message', (_e, level, msg) => {
+        if (level >= 2) console.error(`[Renderer] ${msg}`);
     });
 
     mainWindow.on('closed', () => {
@@ -254,6 +320,13 @@ function createTray() {
 app.whenReady().then(async () => {
     createSplash();
     createTray();
+
+    // Run dependency bootstrap first
+    const bootstrap = await runBootstrap();
+    if (bootstrap.code !== 0 && bootstrap.code !== -1) {
+        console.warn('[Electron] Bootstrap had issues but continuing...');
+    }
+
     startPython();
 
     // Wait for Python API to be ready

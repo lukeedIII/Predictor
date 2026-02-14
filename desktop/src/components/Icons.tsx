@@ -1,236 +1,227 @@
 /**
- * Icons — Inline SVG icon components
- * ====================================
- * Replaces emoji icons with crisp, accessible SVGs.
- * All icons accept `size` (default 20) and pass through
- * standard SVG/HTML attributes.
- *
- * Based on Lucide icon set (ISC license).
+ * Icons — SVG icon components for the fintech UI.
+ * Each icon is 24x24 viewBox, uses currentColor.
  */
-import type { SVGProps } from 'react';
 
-type IconProps = SVGProps<SVGSVGElement> & { size?: number };
+type PBase = React.SVGProps<SVGSVGElement> & { size?: number };
+type P = PBase;
 
-function base(props: IconProps, d: string | string[]) {
-    const { size = 20, ...rest } = props;
-    const paths = Array.isArray(d) ? d : [d];
-    return (
-        <svg
-            xmlns="http://www.w3.org/2000/svg"
-            width={size}
-            height={size}
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth={2}
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            {...rest}
-        >
-            {paths.map((p, i) => <path key={i} d={p} />)}
-        </svg>
-    );
-}
+const spread = ({ size, style, ...rest }: P) => ({
+    ...rest,
+    style: size ? { width: size, height: size, ...style } : style,
+});
 
-// ─── Navigation ──────────────────────────────────
-/** Zap / Lightning bolt — brand logo & accent */
-export function IconZap(props: IconProps) {
-    return base(props, 'M13 2L3 14h9l-1 8 10-12h-9l1-8z');
-}
+export const IconDashboard = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="4" rx="1" />
+        <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="11" width="7" height="10" rx="1" />
+    </svg>
+);
 
-/** LayoutDashboard — Dashboard nav */
-export function IconDashboard(props: IconProps) {
-    return base(props, [
-        'M3 3h7v9H3z',
-        'M14 3h7v5h-7z',
-        'M14 12h7v9h-7z',
-        'M3 16h7v5H3z',
-    ]);
-}
+export const IconChart = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+    </svg>
+);
 
-/** TrendingUp — Paper Trading nav */
-export function IconTrending(props: IconProps) {
-    return base(props, ['M22 7l-8.5 8.5-5-5L2 17', 'M16 7h6v6']);
-}
+export const IconBot = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <rect x="3" y="11" width="18" height="10" rx="2" /><circle cx="12" cy="5" r="2" />
+        <line x1="12" y1="7" x2="12" y2="11" /><circle cx="8" cy="16" r="1" /><circle cx="16" cy="16" r="1" />
+    </svg>
+);
 
-/** Bot / Agent — Nexus Agent nav */
-export function IconBot(props: IconProps) {
-    return base(props, [
-        'M12 8V4H8',
-        'M2 14a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v4a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z',
-        'M6 14v4',
-        'M9.5 14v1',
-        'M14.5 14v1',
-        'M18 14v4',
-    ]);
-}
+export const IconSettings = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <circle cx="12" cy="12" r="3" />
+        <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z" />
+    </svg>
+);
 
-/** Settings / Gear — Settings nav */
-export function IconSettings(props: IconProps) {
-    return base(props, [
-        'M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z',
-        'M12 15a3 3 0 1 0 0-6 3 3 0 0 0 0 6z',
-    ]);
-}
+export const IconMinimize = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} {...spread(p)}>
+        <line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+);
 
-// ─── Status Bar ──────────────────────────────────
-/** Clock — UTC time display */
-export function IconClock(props: IconProps) {
-    return base(props, ['M12 12V8', 'M12 12l3 3', 'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z']);
-}
+export const IconMaximize = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} {...spread(p)}>
+        <rect x="6" y="6" width="12" height="12" rx="1" />
+    </svg>
+);
 
-/** Monitor — Device indicator */
-export function IconMonitor(props: IconProps) {
-    return base(props, ['M2 3h20v14H2z', 'M8 21h8', 'M12 17v4']);
-}
+export const IconClose = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} {...spread(p)}>
+        <line x1="6" y1="6" x2="18" y2="18" /><line x1="18" y1="6" x2="6" y2="18" />
+    </svg>
+);
 
-/** Brain — Model status */
-export function IconBrain(props: IconProps) {
-    return base(props, [
-        'M12 5a3 3 0 1 0-5.997.125 4 4 0 0 0-2.526 5.77 4 4 0 0 0 .556 6.588A4 4 0 1 0 12 18Z',
-        'M12 5a3 3 0 1 1 5.997.125 4 4 0 0 1 2.526 5.77 4 4 0 0 1-.556 6.588A4 4 0 1 1 12 18Z',
-        'M12 5v13',
-        'M7.5 7.5L16 16',
-        'M16.5 7.5L8 16',
-    ]);
-}
+export const IconSend = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <line x1="22" y1="2" x2="11" y2="13" /><polygon points="22 2 15 22 11 13 2 9 22 2" />
+    </svg>
+);
 
-/** Activity — Positions */
-export function IconActivity(props: IconProps) {
-    return base(props, 'M22 12h-4l-3 9L9 3l-3 9H2');
-}
+export const IconTrend = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <polyline points="23 6 13.5 15.5 8.5 10.5 1 18" /><polyline points="17 6 23 6 23 12" />
+    </svg>
+);
 
-/** Keyboard — Shortcuts */
-export function IconKeyboard(props: IconProps) {
-    return base(props, [
-        'M2 6a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v12a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2z',
-        'M6 10h.01', 'M10 10h.01', 'M14 10h.01', 'M18 10h.01',
-        'M8 14h8',
-    ]);
-}
+export const IconTrendDown = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <polyline points="23 18 13.5 8.5 8.5 13.5 1 6" /><polyline points="17 18 23 18 23 12" />
+    </svg>
+);
 
-// ─── Card Titles / Content ───────────────────────
-/** BarChart3 — Performance/analytics */
-export function IconChart(props: IconProps) {
-    return base(props, ['M18 20V10', 'M12 20V4', 'M6 20v-6']);
-}
+export const IconRefresh = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" />
+    </svg>
+);
 
-/** LineChart — Equity curve / Price chart */
-export function IconLineChart(props: IconProps) {
-    return base(props, ['M3 3v18h18', 'M7 16l4-8 4 4 4-6']);
-}
+export const IconPlay = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="currentColor" {...spread(p)}>
+        <polygon points="6 3 20 12 6 21 6 3" />
+    </svg>
+);
 
-/** FileText — Trade history */
-export function IconList(props: IconProps) {
-    return base(props, [
-        'M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z',
-        'M14 2v6h6',
-        'M8 13h8',
-        'M8 17h8',
-        'M8 9h1',
-    ]);
-}
+export const IconStop = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="currentColor" {...spread(p)}>
+        <rect x="5" y="5" width="14" height="14" rx="2" />
+    </svg>
+);
 
-/** Newspaper — News feed */
-export function IconNews(props: IconProps) {
-    return base(props, [
-        'M4 22h16a2 2 0 0 0 2-2V4a2 2 0 0 0-2-2H8a2 2 0 0 0-2 2v16a2 2 0 0 0-2 0z',
-        'M2 6h4',
-        'M2 10h4',
-        'M2 14h4',
-        'M2 18h4',
-        'M10 6h8',
-        'M10 10h8',
-        'M10 14h4',
-    ]);
-}
+export const IconCheck = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <polyline points="20 6 9 17 4 12" />
+    </svg>
+);
 
-/** Crosshair — Regime / Target */
-export function IconCrosshair(props: IconProps) {
-    return base(props, [
-        'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z',
-        'M22 12h-4', 'M6 12H2', 'M12 6V2', 'M12 22v-4',
-    ]);
-}
+export const IconWarning = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+        <line x1="12" y1="9" x2="12" y2="13" /><line x1="12" y1="17" x2="12.01" y2="17" />
+    </svg>
+);
 
-/** Zap (small) — Jump Risk / Energy */
-export function IconBolt(props: IconProps) {
-    return base(props, 'M13 2L3 14h9l-1 8 10-12h-9l1-8z');
-}
+export const IconInfo = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" />
+    </svg>
+);
 
-/** AlertTriangle — Warning */
-export function IconWarning(props: IconProps) {
-    return base(props, [
-        'M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z',
-        'M12 9v4',
-        'M12 17h.01',
-    ]);
-}
+export const IconKey = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
+    </svg>
+);
 
-/** X — Close / Cancel */
-export function IconX(props: IconProps) {
-    return base(props, ['M18 6L6 18', 'M6 6l12 12']);
-}
+export const IconEye = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" />
+    </svg>
+);
 
-/** Play — Start bot */
-export function IconPlay(props: IconProps) {
-    return base(props, 'M5 3l14 9-14 9V3z');
-}
+export const IconEyeOff = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19m-6.72-1.07a3 3 0 1 1-4.24-4.24" />
+        <line x1="1" y1="1" x2="23" y2="23" />
+    </svg>
+);
 
-/** Square — Stop bot */
-export function IconSquare(props: IconProps) {
-    return base(props, 'M3 3h18v18H3z');
-}
+export const IconCpu = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <rect x="4" y="4" width="16" height="16" rx="2" /><rect x="9" y="9" width="6" height="6" />
+        <line x1="9" y1="1" x2="9" y2="4" /><line x1="15" y1="1" x2="15" y2="4" />
+        <line x1="9" y1="20" x2="9" y2="23" /><line x1="15" y1="20" x2="15" y2="23" />
+        <line x1="20" y1="9" x2="23" y2="9" /><line x1="20" y1="14" x2="23" y2="14" />
+        <line x1="1" y1="9" x2="4" y2="9" /><line x1="1" y1="14" x2="4" y2="14" />
+    </svg>
+);
 
-/** XCircle — Close all */
-export function IconXCircle(props: IconProps) {
-    return base(props, [
-        'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z',
-        'M15 9l-6 6', 'M9 9l6 6',
-    ]);
-}
+export const IconWifi = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <path d="M5 12.55a11 11 0 0 1 14.08 0" /><path d="M1.42 9a16 16 0 0 1 21.16 0" />
+        <path d="M8.53 16.11a6 6 0 0 1 6.95 0" /><line x1="12" y1="20" x2="12.01" y2="20" />
+    </svg>
+);
 
-/** ArrowUpRight — Long trade */
-export function IconArrowUp(props: IconProps) {
-    return base(props, ['M7 17L17 7', 'M7 7h10v10']);
-}
+export const IconActivity = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />
+    </svg>
+);
 
-/** ArrowDownRight — Short trade */
-export function IconArrowDown(props: IconProps) {
-    return base(props, ['M7 7l10 10', 'M17 7v10H7']);
-}
+export const IconBarChart = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <line x1="12" y1="20" x2="12" y2="10" /><line x1="18" y1="20" x2="18" y2="4" /><line x1="6" y1="20" x2="6" y2="16" />
+    </svg>
+);
 
-/** Minimize — Window control */
-export function IconMinus(props: IconProps) {
-    return base(props, 'M5 12h14');
-}
+export const IconArrowUp = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <line x1="12" y1="19" x2="12" y2="5" /><polyline points="5 12 12 5 19 12" />
+    </svg>
+);
 
-/** Maximize — Window control */
-export function IconMaximize(props: IconProps) {
-    return base(props, 'M3 3h18v18H3z');
-}
+export const IconArrowDown = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <line x1="12" y1="5" x2="12" y2="19" /><polyline points="19 12 12 19 5 12" />
+    </svg>
+);
 
-/** ShieldCheck — System health */
-export function IconShield(props: IconProps) {
-    return base(props, [
-        'M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z',
-        'M9 12l2 2 4-4',
-    ]);
-}
+export const IconKeyboard = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <rect x="2" y="4" width="20" height="16" rx="2" /><line x1="6" y1="8" x2="6.01" y2="8" />
+        <line x1="10" y1="8" x2="10.01" y2="8" /><line x1="14" y1="8" x2="14.01" y2="8" />
+        <line x1="18" y1="8" x2="18.01" y2="8" /><line x1="6" y1="12" x2="6.01" y2="12" />
+        <line x1="10" y1="12" x2="10.01" y2="12" /><line x1="14" y1="12" x2="14.01" y2="12" />
+        <line x1="18" y1="12" x2="18.01" y2="12" /><line x1="8" y1="16" x2="16" y2="16" />
+    </svg>
+);
 
-/** CheckCircle — Success */
-export function IconCheck(props: IconProps) {
-    return base(props, [
-        'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z',
-        'M9 12l2 2 4-4',
-    ]);
-}
+export const IconNexus = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <polygon points="12 2 2 7 12 12 22 7 12 2" />
+        <polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" />
+    </svg>
+);
 
-/** Info — Info toast */
-export function IconInfo(props: IconProps) {
-    return base(props, [
-        'M12 22c5.523 0 10-4.477 10-10S17.523 2 12 2 2 6.477 2 12s4.477 10 10 10z',
-        'M12 16v-4',
-        'M12 8h.01',
-    ]);
-}
+export const IconX = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+    </svg>
+);
+
+export const IconGpu = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <rect x="4" y="4" width="16" height="12" rx="2" /><rect x="7" y="7" width="4" height="4" rx="0.5" />
+        <rect x="13" y="7" width="4" height="4" rx="0.5" /><line x1="6" y1="16" x2="6" y2="20" />
+        <line x1="10" y1="16" x2="10" y2="20" /><line x1="14" y1="16" x2="14" y2="20" /><line x1="18" y1="16" x2="18" y2="20" />
+    </svg>
+);
+
+export const IconPlus = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <line x1="12" y1="5" x2="12" y2="19" /><line x1="5" y1="12" x2="19" y2="12" />
+    </svg>
+);
+
+export const IconTrash = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <polyline points="3 6 5 6 21 6" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+    </svg>
+);
+
+export const IconChatBubble = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
+    </svg>
+);
+
+export const IconChevronLeft = (p: P) => (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" {...spread(p)}>
+        <polyline points="15 18 9 12 15 6" />
+    </svg>
+);

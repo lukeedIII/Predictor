@@ -225,6 +225,28 @@ class NexusLogger:
             "exception": str(exception) if exception else None
         })
     
+    # ========== GPU GAME LOGGING ==========
+    
+    def log_game_transfer(self, amount: float, game_balance: float):
+        """Log a transfer from trading wallet to game wallet."""
+        self.logger.info(f"GAME | Transfer ${amount:.2f} to GPU Farm | Game Balance: ${game_balance:.2f}")
+        self._log_event("game_transfer", {"amount": amount, "game_balance": game_balance})
+    
+    def log_game_buy_card(self, tier: int, label: str, cost: float, game_balance: float):
+        """Log a GPU card purchase."""
+        self.logger.info(f"GAME | Bought {label} card for ${cost:.2f} | Balance: ${game_balance:.2f}")
+        self._log_event("game_buy_card", {"tier": tier, "label": label, "cost": cost, "game_balance": game_balance})
+    
+    def log_game_merge(self, from_tier: int, to_tier: int, to_label: str):
+        """Log a card merge."""
+        self.logger.info(f"GAME | Merged 2x Tier {from_tier} → {to_label}")
+        self._log_event("game_merge", {"from_tier": from_tier, "to_tier": to_tier, "to_label": to_label})
+    
+    def log_game_sell_ass(self, amount: float, price: float, usd_received: float):
+        """Log ASS coin sale."""
+        self.logger.info(f"GAME | Sold {amount:.2f} ASS @ ${price:.2f} = ${usd_received:.2f}")
+        self._log_event("game_sell_ass", {"amount": amount, "price": price, "usd_received": usd_received})
+    
     # ========== TIMING DECORATOR ==========
     
     @staticmethod

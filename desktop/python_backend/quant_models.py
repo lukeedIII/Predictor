@@ -2233,6 +2233,51 @@ class QuantEngine:
                 signals.append({'type': 'RQA', 'action': 'PATTERN_LOCK', 'reason': f'High determinism (DET={rqa.get("DET", 0):.2f})'})
             
             analysis['signals'] = signals
+            
+            # ===== Top-level convenience metrics for the UI QuantPanel =====
+            try:
+                closes = np.asarray(prices, dtype=float)
+                n = len(closes)
+                
+                # Momentum: short-term vs long-term price ratio (normalized to -1..1)
+                if n >= 50:
+                    short_ma = np.mean(closes[-10:])
+                    long_ma = np.mean(closes[-50:])
+                    analysis['momentum'] = float(np.clip((short_ma / long_ma - 1) * 10, -1, 1))
+                else:
+                    analysis['momentum'] = 0.0
+                
+                # RSI(14) — Wilder's relative strength
+                if n >= 15:
+                    deltas = np.diff(closes[-(15):])
+                    up = np.mean(deltas[deltas > 0]) if np.any(deltas > 0) else 0
+                    dn = -np.mean(deltas[deltas < 0]) if np.any(deltas < 0) else 0
+                    rs = up / dn if dn > 0 else 100
+                    analysis['rsi'] = float(100 - 100 / (1 + rs))
+                else:
+                    analysis['rsi'] = 50.0
+                
+                # VWAP distance (fraction of price away from VWAP)
+                if volumes is not None and n >= 20:
+                    vols = np.asarray(volumes, dtype=float)[-n:]
+                    vwap = np.sum(closes * vols) / np.sum(vols) if np.sum(vols) > 0 else closes[-1]
+                    analysis['vwap_dist'] = float((closes[-1] - vwap) / vwap) if vwap > 0 else 0.0
+                else:
+                    analysis['vwap_dist'] = 0.0
+                
+                # Rolling Sharpe (30-period annualized)
+                if n >= 31:
+                    rets = np.diff(np.log(closes[-31:]))
+                    mean_r = np.mean(rets)
+                    std_r = np.std(rets, ddof=1)
+                    analysis['sharpe'] = float(mean_r / std_r) if std_r > 1e-10 else 0.0
+                else:
+                    analysis['sharpe'] = 0.0
+            except Exception:
+                analysis.setdefault('momentum', 0.0)
+                analysis.setdefault('rsi', 50.0)
+                analysis.setdefault('vwap_dist', 0.0)
+                analysis.setdefault('sharpe', 0.0)
 
 
             self.last_analysis = analysis
@@ -2241,6 +2286,133 @@ class QuantEngine:
             logging.error(f"QuantEngine analysis error: {e}")
         
         return analysis
+
+    def get_ui_summary(self) -> Dict:
+        """
+        Flatten all model outputs into a clean, UI-friendly dictionary.
+        Called by the API after analyze() — the frontend receives this directly.
+        """
+        a = self.last_analysis
+        if not a:
+            return {}
+
+        def _safe(obj, *keys, default=0):
+            """Safely dig into nested dicts."""
+            cur = obj
+            for k in keys:
+                if isinstance(cur, dict):
+                    cur = cur.get(k, default)
+                else:
+                    return default
+            return cur if cur is not None else default
+
+        summary = {}
+
+        # ── Regime ──
+        regime = a.get('regime', {}) or {}
+        summary['regime'] = {
+            'label': regime.get('regime', 'UNKNOWN'),
+            'confidence': float(regime.get('confidence', 0)),
+            'probabilities': regime.get('probabilities', [0.33, 0.34, 0.33]),
+            'stats': regime.get('stats', {}),
+        }
+
+        # ── Volatility Suite ──
+        vol = a.get('volatility', {}) or {}
+        heston = a.get('heston', {}) or {}
+        rough = a.get('rough_vol', {}) or {}
+        summary['volatility'] = {
+            'garch_forecast': float(vol.get('forecast', 0)),
+            'garch_asymmetry': float(vol.get('asymmetry', 0)),
+            'garch_current': float(vol.get('current', 0)),
+            'heston_current_vol': float(heston.get('current_vol', 0)),
+            'heston_mean_vol': float(heston.get('mean_vol', 0)),
+            'heston_leverage': float(heston.get('leverage_effect', -0.7)),
+            'rough_H': float(rough.get('H', 0.5)),
+            'rough_interpretation': rough.get('interpretation', 'UNKNOWN'),
+            'rough_score': float(rough.get('roughness_score', 50)),
+        }
+
+        # ── Order Flow ──
+        oflow = a.get('order_flow', {}) or {}
+        summary['order_flow'] = {
+            'ofi': float(oflow.get('ofi', 0)),
+            'signal': oflow.get('signal', 'NEUTRAL'),
+            'strength': oflow.get('strength', 'WEAK'),
+            'normalized': float(oflow.get('normalized', 0)),
+        }
+
+        # ── Jump Detection ──
+        jump = a.get('jump', {}) or {}
+        jump_risk = a.get('jump_risk', {}) or {}
+        bates = a.get('bates_svj', {}) or {}
+        summary['jumps'] = {
+            'detected': bool(jump.get('is_jump', False)),
+            'probability': float(jump.get('probability', 0)),
+            'direction': jump.get('direction', 'NONE'),
+            'risk_level': jump_risk.get('risk_level', 'UNKNOWN'),
+            'bates_status': bates.get('status', bates.get('regime', 'N/A')),
+            'bates_jump_intensity': float(bates.get('jump_intensity', 0)),
+        }
+
+        # ── Cycles ──
+        cycles = a.get('cycles', {}) or {}
+        hht = a.get('hht', {}) or {}
+        summary['cycles'] = {
+            'strengths': cycles.get('strengths', [0, 0, 0]),
+            'details': cycles.get('details', []),
+            'hht_dominant_freq': float(hht.get('dominant_freq', 0)),
+            'hht_period_minutes': float(hht.get('dominant_period_minutes', 0)),
+        }
+
+        # ── Wavelets ──
+        wav = a.get('wavelet', {}) or {}
+        summary['wavelets'] = {
+            'trend_strength': float(wav.get('trend_strength', 0.5)),
+            'frequency_power': wav.get('frequency_power', {}),
+        }
+
+        # ── Fractal Intelligence ──
+        mf = a.get('multifractal', {}) or {}
+        tda = a.get('tda', {}) or {}
+        summary['fractals'] = {
+            'multifractal_delta_h': float(mf.get('delta_h', 0)),
+            'multifractal_interpretation': mf.get('interpretation', 'UNKNOWN'),
+            'multifractal_width': float(mf.get('spectrum_width', 0)),
+            'tda_n_features': int(tda.get('n_features', 0)),
+            'tda_persistence': float(tda.get('max_persistence', 0)),
+            'tda_complexity': tda.get('complexity', 'UNKNOWN'),
+        }
+
+        # ── RQA (Pattern Detection) ──
+        rqa = a.get('rqa', {}) or {}
+        summary['rqa'] = {
+            'recurrence_rate': float(rqa.get('RR', 0)),
+            'determinism': float(rqa.get('DET', 0)),
+            'avg_diagonal': float(rqa.get('L', 0)),
+            'interpretation': rqa.get('interpretation', 'UNKNOWN'),
+        }
+
+        # ── Execution (Almgren-Chriss) ──
+        exe = a.get('execution', {}) or {}
+        summary['execution'] = {
+            'status': exe.get('status', 'N/A'),
+            'optimal_horizon': float(exe.get('optimal_horizon', 0)),
+            'market_impact': float(exe.get('market_impact_bps', 0)),
+        }
+
+        # ── Active Signals ──
+        summary['signals'] = a.get('signals', [])
+
+        # ── Basic Metrics (top-level convenience) ──
+        summary['basics'] = {
+            'momentum': float(a.get('momentum', 0)),
+            'rsi': float(a.get('rsi', 50)),
+            'vwap_dist': float(a.get('vwap_dist', 0)),
+            'sharpe': float(a.get('sharpe', 0)),
+        }
+
+        return summary
 
 
 if __name__ == "__main__":

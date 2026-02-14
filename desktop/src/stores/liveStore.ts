@@ -17,6 +17,8 @@ export type WSState = {
     quant: Record<string, unknown> | null;
     alt_signals: Record<string, unknown> | null;
     accuracy: number | null;
+    accuracy_source: 'live' | 'training' | null;
+    live_accuracy_samples: number;
     positions: Array<Record<string, unknown>>;
     stats: Record<string, unknown> | null;
     bot_running: boolean;
@@ -37,6 +39,8 @@ const DEFAULT_STATE: WSState = {
     quant: null,
     alt_signals: null,
     accuracy: null,
+    accuracy_source: null,
+    live_accuracy_samples: 0,
     positions: [],
     stats: null,
     bot_running: false,
@@ -110,6 +114,8 @@ function connect() {
                         quant: data.quant ?? state.quant,
                         alt_signals: data.alt_signals ?? state.alt_signals,
                         accuracy: data.accuracy ?? state.accuracy,
+                        accuracy_source: data.accuracy_source ?? state.accuracy_source,
+                        live_accuracy_samples: data.live_accuracy_samples ?? state.live_accuracy_samples,
                         positions: data.positions ?? state.positions,
                         stats: data.stats ?? state.stats,
                         bot_running: data.bot_running ?? state.bot_running,
@@ -228,6 +234,16 @@ export function useLiveQuant() {
 /** Accuracy value. */
 export function useLiveAccuracy() {
     return useSyncExternalStore(subscribe, () => getSnapshot().accuracy);
+}
+
+/** Accuracy source: 'live' or 'training'. */
+export function useLiveAccuracySource() {
+    return useSyncExternalStore(subscribe, () => getSnapshot().accuracy_source);
+}
+
+/** Number of live predictions validated. */
+export function useLiveAccuracySamples() {
+    return useSyncExternalStore(subscribe, () => getSnapshot().live_accuracy_samples);
 }
 
 /** Alt signals. */

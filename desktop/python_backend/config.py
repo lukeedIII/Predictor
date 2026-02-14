@@ -40,6 +40,10 @@ LOG_DIR = os.path.join(DATA_ROOT, "logs")
 DB_PATH = os.path.join(DATA_DIR, "nexus_brain.db")
 MARKET_DATA_PATH = os.path.join(DATA_DIR, "market_data.csv")
 MARKET_DATA_PARQUET_PATH = os.path.join(DATA_DIR, "market_data.parquet")
+MICROSTRUCTURE_DATA_PATH = os.path.join(DATA_DIR, "microstructure.parquet")
+CANDLE_1S_DATA_PATH = os.path.join(DATA_DIR, "candles_1s.parquet")
+SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
+GPU_GAME_STATE_PATH = os.path.join(DATA_DIR, "gpu_game_state.json")
 
 # Cross-asset data paths (Phase 3: inter-market correlation)
 CROSS_ASSET_PAIRS = ['ETH/USDT', 'PAXG/USDT', 'ETH/BTC']
@@ -74,7 +78,7 @@ else:
 
 # ── System Settings ───────────────────────────────────
 DEFAULT_DEVICE = "cuda"
-VERSION = "v6.0.1 Beta Stable"
+VERSION = "v6.1.2 Beta Stable"
 SYMBOL = "BTC/USDT"
 TIMEFRAME = "1m"
 IS_INSTALLED = _is_installed()

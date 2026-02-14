@@ -1,257 +1,197 @@
-import { useState, useEffect, useCallback } from 'react';
-import { IconSettings, IconWarning } from '../components/Icons';
-
-import { API_BASE } from '../hooks/useApi';
-const API = API_BASE;
-
-type KeyStatus = Record<string, boolean>;
-type KeyMasked = Record<string, string>;
-
-type SettingsData = {
-    keys: KeyMasked;
-    has_keys: KeyStatus;
-    data_root: string;
-    version: string;
-    is_installed: boolean;
-};
+import { useState, useEffect } from 'react';
+import { apiPost } from '../hooks/useApi';
+import { toast } from '../stores/toastStore';
+import { IconKey, IconEye, IconEyeOff, IconCheck } from '../components/Icons';
 
 type KeyConfig = {
-    id: string;
-    label: string;
+    name: string;
     envKey: string;
-    provider: string;
-    icon: string;
     placeholder: string;
     description: string;
 };
 
-const KEY_CONFIGS: KeyConfig[] = [
-    {
-        id: 'gemini',
-        label: 'Google Gemini',
-        envKey: 'GEMINI_API_KEY',
-        provider: 'gemini',
-        icon: '🔮',
-        placeholder: 'AIza...',
-        description: 'Enhanced AI market commentary and analysis',
-    },
-    {
-        id: 'openai',
-        label: 'OpenAI (ChatGPT)',
-        envKey: 'OPENAI_API_KEY',
-        provider: 'openai',
-        icon: '🤖',
-        placeholder: 'sk-...',
-        description: 'Alternative AI provider for analysis',
-    },
-    {
-        id: 'binance',
-        label: 'Binance API Key',
-        envKey: 'BINANCE_API_KEY',
-        provider: 'binance',
-        icon: '📊',
-        placeholder: 'Your Binance API key...',
-        description: 'Live market data access (public endpoints work without)',
-    },
-    {
-        id: 'binance_secret',
-        label: 'Binance Secret Key',
-        envKey: 'BINANCE_SECRET_KEY',
-        provider: '',
-        icon: '🔒',
-        placeholder: 'Your Binance secret key...',
-        description: 'Required only for future real trading features',
-    },
+const API_KEYS: KeyConfig[] = [
+    { name: 'Binance API Key', envKey: 'BINANCE_API_KEY', placeholder: 'Enter Binance API key…', description: 'Required for live market data' },
+    { name: 'Binance Secret', envKey: 'BINANCE_API_SECRET', placeholder: 'Enter Binance secret…', description: 'Required for live market data' },
+    { name: 'OpenAI API Key', envKey: 'OPENAI_API_KEY', placeholder: 'sk-…', description: 'For Nexus Agent (GPT-4o)' },
+    { name: 'Gemini API Key', envKey: 'GEMINI_API_KEY', placeholder: 'AIza…', description: 'For Nexus Agent (Gemini 2.0 Flash)' },
+    { name: 'News API Key', envKey: 'NEWS_API_KEY', placeholder: 'Enter News API key…', description: 'Optional — for news feed' },
 ];
 
+const LLM_PROVIDERS = [
+    { value: 'ollama', label: '🦙 Ollama (Local)', description: 'Free, private, runs on your GPU' },
+    { value: 'openai', label: '⚡ OpenAI (GPT-4o)', description: 'Requires API key, best quality' },
+    { value: 'gemini', label: '💎 Gemini (2.0 Flash)', description: 'Requires API key, fast & free tier' },
+];
 
-export default function Settings() {
-    const [settings, setSettings] = useState<SettingsData | null>(null);
-    const [editValues, setEditValues] = useState<Record<string, string>>({});
-    const [validating, setValidating] = useState<Record<string, boolean>>({});
-    const [validResults, setValidResults] = useState<Record<string, { valid: boolean; message: string }>>({});
-    const [saving, setSaving] = useState(false);
-    const [saveResult, setSaveResult] = useState<string | null>(null);
+function KeyCard({ config }: { config: KeyConfig }) {
+    const [value, setValue] = useState('');
+    const [show, setShow] = useState(false);
+    const [saved, setSaved] = useState(false);
+    const [configured, setConfigured] = useState(false);
 
-    // Load settings
     useEffect(() => {
-        fetch(`${API}/api/settings`)
+        // Check if key is already configured
+        fetch(`http://127.0.0.1:8420/api/settings/key-status/${config.envKey}`)
             .then(r => r.json())
-            .then(d => setSettings(d))
+            .then(d => setConfigured(d.is_set === true))
+            .catch(() => { });
+    }, [config.envKey]);
+
+    const save = async () => {
+        try {
+            await apiPost('/api/settings/keys', { key: config.envKey, value });
+            setSaved(true);
+            setConfigured(true);
+            toast.success(`${config.name} saved`);
+            setTimeout(() => setSaved(false), 2000);
+        } catch (e: any) {
+            toast.error(e.message);
+        }
+    };
+
+    return (
+        <div className="card key-card animate-in">
+            <div className="flex items-center justify-between">
+                <div className="flex items-center gap-8">
+                    <IconKey style={{ width: 16, height: 16, color: 'var(--accent)' }} />
+                    <div>
+                        <div style={{ fontSize: 13, fontWeight: 600 }}>{config.name}</div>
+                        <div style={{ fontSize: 11, color: 'var(--text-2)' }}>{config.description}</div>
+                    </div>
+                </div>
+                <span className={`badge ${configured ? 'badge-long' : 'badge-warning'}`}>
+                    {configured ? 'Configured' : 'Missing'}
+                </span>
+            </div>
+            <div className="input-row">
+                <input
+                    className="input"
+                    type={show ? 'text' : 'password'}
+                    placeholder={config.placeholder}
+                    value={value}
+                    onChange={e => setValue(e.target.value)}
+                    autoComplete="off"
+                />
+                <button className="btn btn-sm btn-ghost" onClick={() => setShow(s => !s)} aria-label="Toggle visibility">
+                    {show ? <IconEyeOff style={{ width: 14, height: 14 }} /> : <IconEye style={{ width: 14, height: 14 }} />}
+                </button>
+                <button
+                    className={`btn btn-sm ${saved ? 'btn-success' : 'btn-primary'}`}
+                    onClick={save}
+                    disabled={!value.trim()}
+                >
+                    {saved ? <IconCheck style={{ width: 14, height: 14 }} /> : 'Save'}
+                </button>
+            </div>
+        </div>
+    );
+}
+
+function LlmProviderSelector() {
+    const [provider, setProvider] = useState('ollama');
+    const [saving, setSaving] = useState(false);
+
+    useEffect(() => {
+        fetch('http://127.0.0.1:8420/api/settings')
+            .then(r => r.json())
+            .then(d => {
+                if (d.llm_provider) setProvider(d.llm_provider);
+            })
             .catch(() => { });
     }, []);
 
-    // Validate a key
-    const handleValidate = useCallback(async (cfg: KeyConfig) => {
-        const key = editValues[cfg.envKey];
-        if (!key || !cfg.provider) return;
-
-        setValidating(v => ({ ...v, [cfg.envKey]: true }));
-        try {
-            const res = await fetch(`${API}/api/settings/validate`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ provider: cfg.provider, key }),
-            });
-            const data = await res.json();
-            setValidResults(v => ({ ...v, [cfg.envKey]: data }));
-        } catch {
-            setValidResults(v => ({ ...v, [cfg.envKey]: { valid: false, message: 'Connection failed' } }));
-        }
-        setValidating(v => ({ ...v, [cfg.envKey]: false }));
-    }, [editValues]);
-
-    // Save all keys
-    const handleSave = useCallback(async () => {
-        const body: Record<string, string> = {};
-        for (const cfg of KEY_CONFIGS) {
-            if (editValues[cfg.envKey] !== undefined && editValues[cfg.envKey] !== '') {
-                const field = cfg.envKey.toLowerCase();
-                body[field] = editValues[cfg.envKey];
-            }
-        }
-        if (Object.keys(body).length === 0) return;
-
+    const save = async (newProvider: string) => {
+        setProvider(newProvider);
         setSaving(true);
-        setSaveResult(null);
         try {
-            const res = await fetch(`${API}/api/settings`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(body),
-            });
-            const data = await res.json();
-            if (data.saved) {
-                setSaveResult('Settings saved successfully!');
-                setEditValues({});
-                // Reload settings
-                const r2 = await fetch(`${API}/api/settings`);
-                setSettings(await r2.json());
-            } else {
-                setSaveResult('Failed to save settings');
-            }
-        } catch {
-            setSaveResult('Connection error');
+            await apiPost('/api/settings', { llm_provider: newProvider });
+            const label = LLM_PROVIDERS.find(p => p.value === newProvider)?.label || newProvider;
+            toast.success(`LLM priority set to ${label}`);
+        } catch (e: any) {
+            toast.error(e.message);
         }
         setSaving(false);
-    }, [editValues]);
-
-    const hasEdits = Object.values(editValues).some(v => v !== '');
+    };
 
     return (
-        <div className="settings-page">
-            {/* Header */}
-            <div className="mb-32">
-                <h1 className="settings-title"><IconSettings size={20} style={{ marginRight: 8, verticalAlign: -3 }} /> Settings</h1>
-                <p className="settings-subtitle">
-                    Configure API keys and preferences. Keys are stored locally on your device.
-                </p>
-            </div>
-
-            {/* API Key Cards */}
-            <div className="flex-col gap-16">
-                {KEY_CONFIGS.map(cfg => {
-                    const hasKey = settings?.has_keys?.[cfg.envKey];
-                    const masked = settings?.keys?.[cfg.envKey] || '';
-                    const editVal = editValues[cfg.envKey] ?? '';
-                    const vResult = validResults[cfg.envKey];
-                    const isValidating = validating[cfg.envKey];
-
-                    return (
-                        <div key={cfg.id} className="settings-card">
-                            {/* Label Row */}
-                            <div className="settings-card-head">
-                                <div className="settings-card-label">
-                                    <span className="text-18">{cfg.icon}</span>
-                                    <span className="font-600 text-1 text-14">{cfg.label}</span>
-                                    {hasKey && (
-                                        <span className="settings-badge-ok">Configured</span>
-                                    )}
-                                </div>
-                            </div>
-
-                            {/* Description */}
-                            <p className="settings-desc">{cfg.description}</p>
-
-                            {/* Input Row */}
-                            <div className="flex gap-8">
-                                <input
-                                    type="password"
-                                    className="settings-input"
-                                    placeholder={hasKey ? `Current: ${masked}` : cfg.placeholder}
-                                    value={editVal}
-                                    onChange={e => setEditValues(v => ({ ...v, [cfg.envKey]: e.target.value }))}
-                                />
-                                {cfg.provider && editVal && (
-                                    <button
-                                        className="settings-test-btn"
-                                        onClick={() => handleValidate(cfg)}
-                                        disabled={isValidating}
-                                    >
-                                        {isValidating ? '...' : 'Test'}
-                                    </button>
-                                )}
-                            </div>
-
-                            {/* Validation Result */}
-                            {vResult && (
-                                <div
-                                    className="validation-result"
-                                    style={{
-                                        background: vResult.valid ? 'rgba(0,217,156,0.1)' : 'rgba(244,67,54,0.1)',
-                                        color: vResult.valid ? 'var(--positive)' : 'var(--negative)',
-                                    }}
-                                >
-                                    {vResult.valid ? '✓' : '✗'} {vResult.message}
-                                </div>
-                            )}
-                        </div>
-                    );
-                })}
-            </div>
-
-            {/* Save Button */}
-            {hasEdits && (
-                <div className="mt-24 flex items-center gap-16">
-                    <button
-                        className="settings-save-btn"
-                        onClick={handleSave}
-                        disabled={saving}
+        <div className="card animate-in">
+            <div className="card-title" style={{ marginBottom: 8 }}>AI Provider Priority</div>
+            <p style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 12 }}>
+                Choose which AI provider Dr. Nexus uses first. If it fails, the system automatically falls back to the next available provider.
+            </p>
+            <div className="flex-col gap-6">
+                {LLM_PROVIDERS.map(p => (
+                    <label
+                        key={p.value}
+                        className="flex items-center gap-10"
+                        style={{
+                            padding: '8px 12px',
+                            borderRadius: 8,
+                            cursor: 'pointer',
+                            background: provider === p.value ? 'rgba(99,102,241,0.12)' : 'transparent',
+                            border: provider === p.value ? '1px solid var(--accent)' : '1px solid transparent',
+                            transition: 'all 0.2s',
+                        }}
                     >
-                        {saving ? 'Saving...' : 'Save All Keys'}
-                    </button>
-                    {saveResult && (
-                        <span className="text-13 text-positive">{saveResult}</span>
-                    )}
-                </div>
-            )}
+                        <input
+                            type="radio"
+                            name="llm_provider"
+                            value={p.value}
+                            checked={provider === p.value}
+                            onChange={() => save(p.value)}
+                            disabled={saving}
+                            style={{ accentColor: 'var(--accent)' }}
+                        />
+                        <div>
+                            <div style={{ fontSize: 13, fontWeight: 600 }}>{p.label}</div>
+                            <div style={{ fontSize: 11, color: 'var(--text-2)' }}>{p.description}</div>
+                        </div>
+                    </label>
+                ))}
+            </div>
+            <p style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 10, fontStyle: 'italic' }}>
+                Fallback order: if the primary provider fails, the system tries the remaining providers automatically.
+            </p>
+        </div>
+    );
+}
 
-            {/* System Info */}
-            <div className="mt-40 settings-info-panel">
-                <h3 className="text-14 font-600 text-2 mb-12">System Information</h3>
-                <div className="settings-info-grid">
-                    <span className="text-4">Version</span>
-                    <span className="text-2" style={{ fontFamily: 'monospace' }}>
-                        {settings?.version || '...'}
-                    </span>
-                    <span className="text-4">Data Location</span>
-                    <span className="text-2" style={{ fontFamily: 'monospace', fontSize: 11, wordBreak: 'break-all' as const }}>
-                        {settings?.data_root || '...'}
-                    </span>
-                    <span className="text-4">Runtime</span>
-                    <span className="text-2" style={{ fontFamily: 'monospace' }}>
-                        {settings?.is_installed ? 'Installed App' : 'Development Mode'}
-                    </span>
+export default function Settings() {
+    return (
+        <div className="flex-col gap-16">
+            <div>
+                <h1 style={{ fontSize: 18, fontWeight: 700, marginBottom: 4 }}>Settings</h1>
+                <p style={{ fontSize: 12, color: 'var(--text-2)' }}>Manage API keys, AI provider priority, and system configuration</p>
+            </div>
+
+            <LlmProviderSelector />
+
+            <div>
+                <div className="card-title" style={{ marginBottom: 12 }}>API Keys</div>
+                <div className="settings-grid stagger">
+                    {API_KEYS.map(config => (
+                        <KeyCard key={config.envKey} config={config} />
+                    ))}
                 </div>
             </div>
 
-            {/* Disclaimer */}
-            <div className="mt-24 settings-disclaimer">
-                <p>
-                    <IconWarning size={14} style={{ marginRight: 6, verticalAlign: -2, color: 'var(--warning)' }} /> <strong>Research Tool Disclaimer</strong> — Nexus Shadow-Quant is an educational
-                    and research tool. It is NOT financial advice. All predictions are statistical models
-                    and do NOT guarantee profits. You are fully responsible for any trading decisions.
-                </p>
+            <div className="card animate-in" style={{ maxWidth: 480 }}>
+                <div className="card-title" style={{ marginBottom: 12 }}>System Info</div>
+                <div className="flex-col gap-8" style={{ fontSize: 12 }}>
+                    <div className="flex justify-between">
+                        <span style={{ color: 'var(--text-1)' }}>Platform</span>
+                        <span className="mono">Nexus Shadow-Quant</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span style={{ color: 'var(--text-1)' }}>Frontend</span>
+                        <span className="mono">React + Vite</span>
+                    </div>
+                    <div className="flex justify-between">
+                        <span style={{ color: 'var(--text-1)' }}>Backend</span>
+                        <span className="mono">FastAPI @ 127.0.0.1:8420</span>
+                    </div>
+                </div>
             </div>
         </div>
     );

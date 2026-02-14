@@ -33,6 +33,7 @@ from data_collector import DataCollector
 from math_core import MathCore
 import nexus_agent
 from binance_ws import BinanceWSClient
+from gpu_game import GpuGame
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -51,6 +52,10 @@ _auto_trade_thread: Optional[threading.Thread] = None
 _auto_trade_stop = threading.Event()
 _event_loop: Optional[asyncio.AbstractEventLoop] = None  # for thread→async bridge
 
+# GPU Game instance
+gpu_game: Optional[GpuGame] = None
+_gpu_game_stop = threading.Event()
+
 # Auto-retrain scheduler state
 RETRAIN_INTERVAL_HOURS = 6
 _retrain_stop = threading.Event()
@@ -62,6 +67,13 @@ _retrain_status = {
     "is_retraining": False,
     "last_error": None,
 }
+
+# Continuous data collection (independent of trading bot)
+_data_collect_stop = threading.Event()
+DATA_COLLECT_INTERVAL_SEC = 60  # Collect every minute
+
+# App boot timestamp — used by agent for lifetime awareness
+_app_boot_time = time.time()
 
 
 def _check_system_requirements():
@@ -107,7 +119,7 @@ def _check_system_requirements():
 
 def _init_engines():
     """Initialize all engines in order, updating boot status."""
-    global predictor, trader, collector, math_core, binance_ws, boot_status
+    global predictor, trader, collector, math_core, binance_ws, boot_status, gpu_game
     
     try:
         # ── System Requirements Check ──
@@ -143,6 +155,11 @@ def _init_engines():
         boot_status = {"stage": "trader", "progress": 85, "message": "Starting paper trader..."}
         trader = PaperTrader()
         
+        # ── GPU Game ──
+        boot_status = {"stage": "game", "progress": 92, "message": "Loading GPU game..."}
+        gpu_game = GpuGame()
+        # NOTE: tick thread is started by lifespan context manager (_gpu_game_tick_loop)
+        
         boot_status = {"stage": "ready", "progress": 100, "message": "All systems online"}
         logging.info("All engines initialized successfully")
         
@@ -152,8 +169,83 @@ def _init_engines():
         traceback.print_exc()
 
 
+def _continuous_data_collect():
+    """Background loop: collects and saves market candles every 60s.
+    Also snapshots WebSocket microstructure data (trades/sec, buy/sell ratio, spread).
+    Runs INDEPENDENTLY of the trading bot so the retrain loop always has fresh data."""
+    import pandas as _pd
+    
+    # Wait for engines to be ready first
+    while not _data_collect_stop.is_set() and boot_status.get('stage') != 'ready':
+        _data_collect_stop.wait(5)
+    
+    logging.info("[DATA-COLLECTOR] Continuous background collection started")
+    candles_saved = 0
+    micro_path = config.MICROSTRUCTURE_DATA_PATH
+    
+    while not _data_collect_stop.is_set():
+        try:
+            # ── 1. Collect OHLCV candles (always) ──
+            if collector is not None:
+                collector.collect_and_save(limit=5)
+                candles_saved += 1
+            
+            # ── 2. Snapshot WebSocket microstructure data ──
+            if binance_ws is not None and binance_ws.connected:
+                snap = binance_ws.snapshot
+                row = {
+                    'timestamp': _pd.Timestamp.now(tz='UTC').floor('min'),
+                    'ws_trades_per_sec': snap.get('trades_per_sec', 0.0),
+                    'ws_buy_sell_ratio': snap.get('buy_sell_ratio', 1.0),
+                    'ws_buy_volume_60s': snap.get('buy_volume_60s', 0.0),
+                    'ws_sell_volume_60s': snap.get('sell_volume_60s', 0.0),
+                    'ws_spread_bps': round(
+                        (snap['ask'] - snap['bid']) / (snap['price'] + 1e-9) * 10000, 2
+                    ) if snap.get('price', 0) > 0 else 0.0,
+                    'ws_price': snap.get('price', 0.0),
+                }
+                new_row = _pd.DataFrame([row])
+                
+                try:
+                    if os.path.exists(micro_path):
+                        existing = _pd.read_parquet(micro_path)
+                        combined = _pd.concat([existing, new_row]).drop_duplicates(
+                            subset=['timestamp'], keep='last'
+                        )
+                        # Cap at 50K rows (~35 days of 1-min data)
+                        combined = combined.tail(50_000)
+                        combined.to_parquet(micro_path, index=False)
+                    else:
+                        new_row.to_parquet(micro_path, index=False)
+                except Exception as e:
+                    logging.debug(f"[DATA-COLLECTOR] Microstructure save error: {e}")
+                
+                # Push live snapshot to predictor for real-time predictions
+                if predictor is not None:
+                    predictor._live_ws_snapshot = snap
+            
+            if candles_saved % 60 == 0 and candles_saved > 0:  # Log every hour
+                logging.info(f"[DATA-COLLECTOR] {candles_saved} cycles complete, micro file: {os.path.exists(micro_path)}")
+                
+        except Exception as e:
+            logging.warning(f"[DATA-COLLECTOR] Collection error: {e}")
+        
+        # Sleep 60s in 5s chunks so shutdown is responsive
+        for _ in range(12):
+            if _data_collect_stop.is_set():
+                return
+            _data_collect_stop.wait(5)
+    
+    logging.info("[DATA-COLLECTOR] Stopped")
+
+
 def _auto_retrain_loop():
-    """Background loop: retrains the model every RETRAIN_INTERVAL_HOURS."""
+    """Background loop: retraining schedule.
+    
+    Schedule:
+      1h after boot  → First retrain (let data accumulate)
+      Every 6h after → Full retrain with all accumulated 1m data
+    """
     import json as _json
     global _retrain_status
     
@@ -164,24 +256,35 @@ def _auto_retrain_loop():
     retrain_history_path = os.path.join(config.LOG_DIR, 'retrain_history.json')
     os.makedirs(config.LOG_DIR, exist_ok=True)
     
-    while not _retrain_stop.is_set():
-        next_time = datetime.now() + timedelta(hours=RETRAIN_INTERVAL_HOURS)
-        _retrain_status['next_retrain'] = next_time.isoformat()
-        
-        # Sleep until next retrain (check every 30s for shutdown)
-        for _ in range(RETRAIN_INTERVAL_HOURS * 120):
-            if _retrain_stop.is_set():
-                return
-            _retrain_stop.wait(30)
-        
-        if predictor is None or _retrain_stop.is_set():
-            continue
+    def _do_retrain(data_source: str, label: str):
+        """Execute a single retrain using the specified data source."""
+        if predictor is None:
+            logging.warning(f"[AUTO-RETRAIN] {label} — predictor not available, skipping")
+            return
         
         try:
             _retrain_status['is_retraining'] = True
-            logging.info("[AUTO-RETRAIN] Starting scheduled retrain...")
+            logging.info(f"[AUTO-RETRAIN] {label} — starting...")
             
-            result = predictor.train()
+            if data_source == '1s' and binance_ws is not None:
+                # Train on 1-second WebSocket candles
+                candle_df = binance_ws.get_1s_candles()
+                if len(candle_df) < 80:
+                    logging.warning(f"[AUTO-RETRAIN] {label} — only {len(candle_df)} 1s candles, skipping")
+                    _retrain_status['is_retraining'] = False
+                    return
+                logging.info(f"[AUTO-RETRAIN] Training on {len(candle_df):,} 1s candles")
+                result = predictor.train_on_candles(candle_df, timeframe_label='1s')
+            else:
+                # Train on 1m candles (standard path)
+                if collector is not None:
+                    try:
+                        collector.collect_and_save(limit=100)
+                        logging.info("[AUTO-RETRAIN] Refreshed 1m market data before training")
+                    except Exception as e:
+                        logging.warning(f"[AUTO-RETRAIN] Pre-train data refresh failed: {e}")
+                result = predictor.train()
+            
             now = datetime.now().isoformat()
             acc = predictor.last_validation_accuracy if hasattr(predictor, 'last_validation_accuracy') else None
             
@@ -193,8 +296,7 @@ def _auto_retrain_loop():
                 'last_error': None,
             })
             
-            # Append to history log
-            entry = {'timestamp': now, 'accuracy': acc, 'result': str(result)}
+            # Append to history log (with delta tracking)
             history = []
             if os.path.exists(retrain_history_path):
                 try:
@@ -202,18 +304,109 @@ def _auto_retrain_loop():
                         history = _json.load(f)
                 except Exception:
                     history = []
+            
+            # Compute delta vs previous accuracy
+            prev_acc = None
+            if history:
+                prev_acc = history[-1].get('accuracy')
+            
+            delta = None
+            trend = '→'  # neutral
+            if acc is not None and prev_acc is not None:
+                delta = round(acc - prev_acc, 2)
+                if delta > 0.1:
+                    trend = '↑'
+                elif delta < -0.1:
+                    trend = '↓'
+                else:
+                    trend = '→'
+            
+            # Count consecutive improvements/regressions
+            streak = 0
+            if delta is not None and delta > 0:
+                streak = 1
+                for h in reversed(history):
+                    if h.get('delta') is not None and h['delta'] > 0:
+                        streak += 1
+                    else:
+                        break
+            elif delta is not None and delta < 0:
+                streak = -1
+                for h in reversed(history):
+                    if h.get('delta') is not None and h['delta'] < 0:
+                        streak -= 1
+                    else:
+                        break
+            
+            entry = {
+                'timestamp': now,
+                'accuracy': acc,
+                'prev_accuracy': prev_acc,
+                'delta': delta,
+                'trend': trend,
+                'streak': streak,
+                'label': label,
+                'data_source': data_source,
+                'feature_count': len(getattr(predictor, 'features', [])),
+            }
             history.append(entry)
-            # Keep last 100 retrains
             history = history[-100:]
             with open(retrain_history_path, 'w') as f:
                 _json.dump(history, f, indent=2)
             
-            logging.info(f"[AUTO-RETRAIN] Complete. Accuracy: {acc:.1f}%")
+            delta_str = f" (Δ {delta:+.2f}%)" if delta is not None else ""
+            acc_str = f"{acc:.1f}%{delta_str}" if acc is not None else "N/A"
+            logging.info(f"[AUTO-RETRAIN] {label} — complete. Accuracy: {acc_str} {trend}")
             
         except Exception as e:
             _retrain_status['is_retraining'] = False
             _retrain_status['last_error'] = str(e)[:200]
-            logging.error(f"[AUTO-RETRAIN] Failed: {e}")
+            logging.error(f"[AUTO-RETRAIN] {label} — failed: {e}")
+    
+    # ── First retrain: 1 hour after boot ──
+    FIRST_RETRAIN_MINUTES = 60
+    next_time = datetime.now() + timedelta(minutes=FIRST_RETRAIN_MINUTES)
+    _retrain_status['next_retrain'] = next_time.isoformat()
+    logging.info(f"[AUTO-RETRAIN] First retrain scheduled in {FIRST_RETRAIN_MINUTES}min")
+    
+    for _ in range(FIRST_RETRAIN_MINUTES * 6):  # check every 10s
+        if _retrain_stop.is_set():
+            return
+        _retrain_stop.wait(10)
+    
+    if _retrain_stop.is_set():
+        return
+    
+    _do_retrain('1m', 'First retrain (1h after boot)')
+    
+    # ── Ongoing: every 6 hours ──
+    while not _retrain_stop.is_set():
+        next_time = datetime.now() + timedelta(hours=RETRAIN_INTERVAL_HOURS)
+        _retrain_status['next_retrain'] = next_time.isoformat()
+        
+        # Sleep until next retrain (check every 30s for shutdown)
+        for _ in range(RETRAIN_INTERVAL_HOURS * 120):
+            if _retrain_stop.is_set():
+                return
+            _retrain_stop.wait(30)
+        
+        if _retrain_stop.is_set():
+            return
+        
+        _do_retrain('1m', f'Scheduled 6h retrain #{_retrain_status["retrain_count"] + 1}')
+
+
+def _gpu_game_tick_loop():
+    """Background loop: update ASS price + mine coins every 30s."""
+    import time as _time
+    _time.sleep(5)  # wait for startup
+    while not _gpu_game_stop.is_set():
+        try:
+            if gpu_game:
+                gpu_game.tick()
+        except Exception as e:
+            logging.error(f"GPU game tick error: {e}")
+        _gpu_game_stop.wait(30)
 
 
 @asynccontextmanager
@@ -226,11 +419,20 @@ async def lifespan(app: FastAPI):
     init_thread.start()
     retrain_thread = threading.Thread(target=_auto_retrain_loop, daemon=True)
     retrain_thread.start()
-    # Start periodic WS push to frontend clients
+    data_thread = threading.Thread(target=_continuous_data_collect, daemon=True)
+    data_thread.start()
+    gpu_tick_thread = threading.Thread(target=_gpu_game_tick_loop, daemon=True)
+    gpu_tick_thread.start()
+    # Slow prediction refresh thread (2s cycle — feeds cached data to fast WS push)
+    pred_thread = threading.Thread(target=_prediction_refresh_loop, daemon=True)
+    pred_thread.start()
+    # Start periodic WS push to frontend clients (200ms fast ticks)
     push_task = asyncio.create_task(_ws_push_loop())
     yield
     _auto_trade_stop.set()
     _retrain_stop.set()
+    _data_collect_stop.set()
+    _gpu_game_stop.set()
     push_task.cancel()
     if binance_ws:
         binance_ws.stop()
@@ -275,8 +477,65 @@ def _on_binance_price(price: float):
     pass
 
 
+# ─── Cached prediction state (updated by slow thread) ────────────
+_cached_prediction: dict = {}        # latest prediction + quant + accuracy
+_cached_prediction_lock = threading.Lock()
+_FAST_TICK_INTERVAL = 0.2            # 200ms → 5 ticks/sec for price data
+_SLOW_TICK_INTERVAL = 2.0            # 2s    → prediction/quant refresh
+
+
+def _prediction_refresh_loop():
+    """Background thread: recompute prediction + quant every SLOW_TICK_INTERVAL.
+
+    This keeps the expensive model inference off the fast WS push path.
+    Results are stored in `_cached_prediction` and merged by the fast loop.
+    """
+    global _cached_prediction
+    while True:
+        try:
+            if predictor and predictor.is_trained:
+                pred = predictor.get_prediction()
+                live_acc = getattr(predictor, '_live_accuracy', 0.0)
+                live_samples = getattr(predictor, '_live_accuracy_samples', 0)
+                training_acc = (
+                    getattr(predictor, '_training_accuracy', 0.0)
+                    or predictor.last_validation_accuracy
+                )
+                quant = (
+                    predictor.quant_engine.get_ui_summary()
+                    if predictor.quant_engine and predictor.quant_initialized
+                    else predictor.last_quant_analysis or {}
+                )
+                alt = predictor.last_alt_signals or {}
+
+                enrichment = {
+                    "prediction": _sanitize_for_json(pred),
+                    "accuracy": live_acc if live_samples >= 3 else training_acc,
+                    "accuracy_source": "live" if live_samples >= 3 else "training",
+                    "live_accuracy_samples": live_samples,
+                    "training_accuracy": training_acc,
+                    "quant": _sanitize_for_json(quant),
+                    "alt_signals": _sanitize_for_json(alt),
+                }
+
+                with _cached_prediction_lock:
+                    _cached_prediction = enrichment
+        except Exception as e:
+            logging.debug(f"Prediction refresh error: {e}")
+        time.sleep(_SLOW_TICK_INTERVAL)
+
+
 async def _ws_push_loop():
-    """Push live data to frontend WebSocket clients every ~1 second."""
+    """Push live data to frontend WebSocket clients at high frequency.
+
+    ┌──────────────┬─────────────────────────────────────────────────┐
+    │ FAST (200ms) │ Price, 24h stats, volume, positions, bot stats │
+    │ SLOW (2s)    │ Prediction, accuracy, quant, alt_signals       │
+    └──────────────┴─────────────────────────────────────────────────┘
+
+    The slow parts are computed by `_prediction_refresh_loop` in a background
+    thread and merged via `_cached_prediction` on each fast tick.
+    """
     while True:
         try:
             if _ws_manager.active and binance_ws:
@@ -293,30 +552,35 @@ async def _ws_push_loop():
                     "ws_connected": snapshot.get("ws_connected", False),
                     "timestamp": time.time(),
                 }
-                # Enrich with prediction/bot data if available
-                if predictor and predictor.is_trained:
-                    try:
-                        pred = predictor.get_prediction()
-                        payload["prediction"] = _sanitize_for_json(pred)
-                        payload["accuracy"] = predictor.last_validation_accuracy
-                        payload["quant"] = _sanitize_for_json(predictor.last_quant_analysis or {})
-                        payload["alt_signals"] = _sanitize_for_json(predictor.last_alt_signals or {})
-                    except Exception:
-                        pass
+
+                # ── Merge cached prediction data (computed on slow thread) ──
+                with _cached_prediction_lock:
+                    if _cached_prediction:
+                        payload.update(_cached_prediction)
+
+                # ── Trader / positions (cheap — in-memory read) ──
                 if trader:
                     payload["bot_running"] = trader.is_running
-                    payload["positions"] = _sanitize_for_json([
-                        pos.to_dict() for pos in trader.positions
-                    ]) if trader.positions else []
+                    if trader.positions:
+                        live_price = snapshot.get("price") or 0
+                        pos_list = []
+                        for pos in trader.positions:
+                            d = pos.to_dict()
+                            if live_price > 0:
+                                d["unrealized_pnl"] = round(pos.unrealized_pnl(live_price), 2)
+                            pos_list.append(d)
+                        payload["positions"] = _sanitize_for_json(pos_list)
+                    else:
+                        payload["positions"] = []
                     try:
                         payload["stats"] = _sanitize_for_json(trader.get_stats())
                     except Exception:
                         pass
-                
+
                 await _ws_manager.broadcast(payload)
         except Exception as e:
             logging.debug(f"WS push error: {e}")
-        await asyncio.sleep(1)
+        await asyncio.sleep(_FAST_TICK_INTERVAL)
 
 
 # ============================================================
@@ -353,6 +617,89 @@ class CloseRequest(BaseModel):
 def get_boot_status():
     """Real-time boot progress for the splash screen."""
     return boot_status
+
+
+# ── Settings persistence (JSON file) ─────────────────
+
+def _load_settings() -> dict:
+    """Load settings from JSON file."""
+    if os.path.exists(config.SETTINGS_PATH):
+        try:
+            with open(config.SETTINGS_PATH, 'r') as f:
+                return json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+def _save_settings(data: dict):
+    """Save settings to JSON file."""
+    os.makedirs(os.path.dirname(config.SETTINGS_PATH), exist_ok=True)
+    with open(config.SETTINGS_PATH, 'w') as f:
+        json.dump(data, f, indent=2)
+
+
+@app.get("/api/settings")
+def get_settings_json():
+    """Return merged settings: JSON persistence (first_run_done etc.) + masked env keys."""
+    json_settings = _load_settings()
+    # Also try to add masked API key info
+    try:
+        keys = _load_env_keys()
+        json_settings["keys"] = {k: _mask_key(v) for k, v in keys.items()}
+        json_settings["has_keys"] = {k: bool(v) for k, v in keys.items()}
+    except Exception:
+        pass
+    json_settings["data_root"] = config.DATA_ROOT
+    json_settings["version"] = config.VERSION
+    return json_settings
+
+
+@app.post("/api/settings")
+def post_settings(body: dict):
+    """Merge incoming settings into the stored JSON file."""
+    current = _load_settings()
+    current.update(body)
+    _save_settings(current)
+    return current
+
+
+@app.post("/api/settings/keys")
+def post_settings_keys(body: dict):
+    """Store an API key securely in the .env file."""
+    key = body.get("key")
+    value = body.get("value")
+    if not key or not value:
+        raise HTTPException(status_code=400, detail="key and value required")
+
+    env_path = os.path.join(config.DATA_ROOT, ".env")
+    # Read existing lines, replace or append
+    lines = []
+    replaced = False
+    if os.path.exists(env_path):
+        with open(env_path, 'r') as f:
+            for line in f:
+                if line.startswith(f"{key}="):
+                    lines.append(f"{key}={value}\n")
+                    replaced = True
+                else:
+                    lines.append(line)
+    if not replaced:
+        lines.append(f"{key}={value}\n")
+    with open(env_path, 'w') as f:
+        f.writelines(lines)
+
+    # Reload into current environment
+    os.environ[key] = value
+    logging.info(f"API key '{key}' saved to .env")
+    return {"status": "ok", "key": key}
+
+
+@app.get("/api/settings/key-status/{env_key}")
+def get_key_status(env_key: str):
+    """Check if an environment variable / API key is configured."""
+    value = os.environ.get(env_key, "")
+    return {"key": env_key, "is_set": bool(value), "masked": f"{'*' * 8}…{value[-4:]}" if len(value) > 4 else ""}
 
 
 @app.websocket("/ws/live")
@@ -452,11 +799,22 @@ def get_prediction():
     quant = predictor.last_quant_analysis or {}
     alt = predictor.last_alt_signals or {}
     
+    # Accuracy: prefer live accuracy (from real predictions), fallback to training accuracy
+    live_acc = getattr(predictor, '_live_accuracy', 0.0)
+    live_samples = getattr(predictor, '_live_accuracy_samples', 0)
+    training_acc = getattr(predictor, '_training_accuracy', 0.0) or predictor.last_validation_accuracy
+    
+    accuracy = live_acc if live_samples >= 3 else training_acc
+    
     data = _sanitize_for_json({
         "prediction": pred,
         "quant": quant,
         "alt_signals": alt,
-        "accuracy": predictor.last_validation_accuracy,
+        "accuracy": accuracy,
+        "accuracy_source": "live" if live_samples >= 3 else "training",
+        "live_accuracy": live_acc,
+        "live_accuracy_samples": live_samples,
+        "training_accuracy": training_acc,
     })
     # _sanitize_for_json already converts NaN/Infinity → None recursively.
     return JSONResponse(content=data)
@@ -501,41 +859,151 @@ def get_feature_importance():
 
 
 # ===== Phase 4: System Health =====
+@app.get("/api/health")
 @app.get("/api/system-health")
 def get_system_health():
     """System health: GPU, model age, data size, disk usage."""
-    import torch
-    
-    health = {
-        "gpu_name": torch.cuda.get_device_name(0) if torch.cuda.is_available() else "CPU-only",
-        "gpu_vram_total_gb": round(torch.cuda.get_device_properties(0).total_mem / 1e9, 1) if torch.cuda.is_available() else 0,
-        "gpu_vram_used_gb": round(torch.cuda.memory_allocated(0) / 1e9, 2) if torch.cuda.is_available() else 0,
-        "model_trained": predictor.is_trained if predictor else False,
-        "model_version": "v6.0",
-        "feature_count": len(predictor.features) if predictor else 0,
-        "validation_accuracy": predictor.last_validation_accuracy if predictor else 0,
-        "ensemble_weights": {
-            "xgb": predictor.xgb_weight if predictor else 1.0,
-            "lstm": predictor.lstm_weight if predictor else 0.0,
-        },
-    }
-    
-    # Model file age
-    if predictor and os.path.exists(predictor.model_path):
-        model_mtime = os.path.getmtime(predictor.model_path)
-        age_hours = (time.time() - model_mtime) / 3600
-        health["model_age_hours"] = round(age_hours, 1)
-        health["model_last_trained"] = datetime.fromtimestamp(model_mtime).isoformat()
-    
-    # Data file size
-    if os.path.exists(config.MARKET_DATA_PARQUET_PATH):
-        size_mb = os.path.getsize(config.MARKET_DATA_PARQUET_PATH) / (1024 * 1024)
-        health["data_size_mb"] = round(size_mb, 1)
-    elif os.path.exists(config.MARKET_DATA_PATH):
-        size_mb = os.path.getsize(config.MARKET_DATA_PATH) / (1024 * 1024)
-        health["data_size_mb"] = round(size_mb, 1)
-    
-    return health
+    try:
+        import torch
+        
+        health = {
+            "model_trained": getattr(predictor, 'is_trained', False) if predictor else False,
+            "model_version": "v6.0",
+            "feature_count": len(getattr(predictor, 'features', [])) if predictor else 0,
+            "validation_accuracy": getattr(predictor, 'last_validation_accuracy', 0) if predictor else 0,
+            "ensemble_weights": {
+                "xgb": getattr(predictor, 'xgb_weight', 1.0) if predictor else 1.0,
+                "lstm": getattr(predictor, 'lstm_weight', 0.0) if predictor else 0.0,
+            },
+        }
+        
+        # GPU info — handle attribute differences across PyTorch versions
+        try:
+            if torch.cuda.is_available():
+                health["gpu_name"] = torch.cuda.get_device_name(0)
+                props = torch.cuda.get_device_properties(0)
+                total_mem = getattr(props, 'total_memory', None) or getattr(props, 'total_mem', 0)
+                health["gpu_vram_total_gb"] = round(total_mem / 1e9, 1)
+                health["gpu_vram_used_gb"] = round(torch.cuda.memory_allocated(0) / 1e9, 2)
+            else:
+                health["gpu_name"] = "CPU-only"
+                health["gpu_vram_total_gb"] = 0
+                health["gpu_vram_used_gb"] = 0
+        except Exception:
+            health["gpu_name"] = torch.cuda.get_device_name(0) if torch.cuda.is_available() else "Unknown"
+            health["gpu_vram_total_gb"] = 0
+            health["gpu_vram_used_gb"] = 0
+        
+        # Model file age
+        if predictor and hasattr(predictor, 'model_path') and os.path.exists(predictor.model_path):
+            model_mtime = os.path.getmtime(predictor.model_path)
+            age_hours = (time.time() - model_mtime) / 3600
+            health["model_age_hours"] = round(age_hours, 1)
+            health["model_last_trained"] = datetime.fromtimestamp(model_mtime).isoformat()
+        
+        # Data file size
+        if os.path.exists(config.MARKET_DATA_PARQUET_PATH):
+            size_mb = os.path.getsize(config.MARKET_DATA_PARQUET_PATH) / (1024 * 1024)
+            health["data_size_mb"] = round(size_mb, 1)
+        elif os.path.exists(config.MARKET_DATA_PATH):
+            size_mb = os.path.getsize(config.MARKET_DATA_PATH) / (1024 * 1024)
+            health["data_size_mb"] = round(size_mb, 1)
+        
+        # ── Uptime & Retrain Schedule ──────────────────
+        uptime_sec = time.time() - _app_boot_time
+        uptime_h = int(uptime_sec // 3600)
+        uptime_m = int((uptime_sec % 3600) // 60)
+        health["uptime"] = f"{uptime_h}h {uptime_m}m" if uptime_h > 0 else f"{uptime_m}m"
+        health["uptime_seconds"] = round(uptime_sec)
+        
+        health["is_retraining"] = _retrain_status.get("is_retraining", False)
+        health["retrain_count"] = _retrain_status.get("retrain_count", 0)
+        health["last_retrain"] = _retrain_status.get("last_retrain")
+        
+        # Next retrain countdown
+        nxt = _retrain_status.get("next_retrain")
+        if nxt:
+            try:
+                from datetime import datetime as _dt
+                next_dt = _dt.fromisoformat(nxt)
+                now_dt = _dt.now()
+                delta_sec = max(0, (next_dt - now_dt).total_seconds())
+                rem_h = int(delta_sec // 3600)
+                rem_m = int((delta_sec % 3600) // 60)
+                if delta_sec <= 0:
+                    health["next_retrain_countdown"] = "imminent"
+                elif rem_h > 0:
+                    health["next_retrain_countdown"] = f"{rem_h}h {rem_m}m"
+                else:
+                    health["next_retrain_countdown"] = f"{rem_m}m"
+                health["next_retrain_ts"] = nxt
+            except Exception:
+                health["next_retrain_countdown"] = "unknown"
+        else:
+            health["next_retrain_countdown"] = "pending"
+        # ── AI Services Status ──────────────────────────
+        ai_services = {}
+        
+        # Ollama — ping local server
+        try:
+            ollama_base = os.environ.get("OLLAMA_BASE_URL", "http://localhost:11434")
+            ol_resp = requests.get(f"{ollama_base}/api/tags", timeout=2)
+            if ol_resp.status_code == 200:
+                ol_data = ol_resp.json()
+                models = [m.get("name", "?") for m in (ol_data.get("models") or [])]
+                # Check which model is actively loaded
+                active_model = None
+                try:
+                    ps_resp = requests.get(f"{ollama_base}/api/ps", timeout=2)
+                    if ps_resp.status_code == 200:
+                        running = ps_resp.json().get("models", [])
+                        if running:
+                            active_model = running[0].get("name", "?")
+                except Exception:
+                    pass
+                ai_services["ollama"] = {
+                    "connected": True,
+                    "models": models[:5],
+                    "active_model": active_model,
+                    "model_count": len(models),
+                }
+            else:
+                ai_services["ollama"] = {"connected": False, "reason": f"HTTP {ol_resp.status_code}"}
+        except requests.exceptions.ConnectionError:
+            ai_services["ollama"] = {"connected": False, "reason": "Not running"}
+        except Exception:
+            ai_services["ollama"] = {"connected": False, "reason": "Unreachable"}
+        
+        # OpenAI — check if API key is configured
+        openai_key = getattr(config, 'OPENAI_API_KEY', '') or os.environ.get('OPENAI_API_KEY', '')
+        ai_services["openai"] = {
+            "connected": bool(openai_key and len(openai_key) > 10),
+            "key_preview": f"{openai_key[:8]}...{openai_key[-4:]}" if openai_key and len(openai_key) > 12 else None,
+        }
+        
+        # Gemini — check if API key is configured
+        gemini_key = getattr(config, 'GEMINI_API_KEY', '') or os.environ.get('GEMINI_API_KEY', '')
+        ai_services["gemini"] = {
+            "connected": bool(gemini_key and len(gemini_key) > 10),
+            "key_preview": f"{gemini_key[:8]}...{gemini_key[-4:]}" if gemini_key and len(gemini_key) > 12 else None,
+        }
+        
+        health["ai_services"] = ai_services
+        
+        return health
+    except Exception as e:
+        logging.error(f"Health endpoint error: {e}")
+        return {
+            "gpu_name": "Unknown",
+            "gpu_vram_total_gb": 0,
+            "gpu_vram_used_gb": 0,
+            "model_trained": False,
+            "model_version": "v6.0",
+            "feature_count": 0,
+            "validation_accuracy": 0,
+            "ensemble_weights": {"xgb": 1.0, "lstm": 0.0},
+            "error": str(e),
+        }
 
 
 # ===== Phase 4: CSV Export =====
@@ -574,65 +1042,119 @@ def export_trades():
 
 
 @app.get("/api/market-data")
-def get_market_data(limit: int = 200, interval: str = "1m"):
-    """OHLCV data for price chart with candle aggregation.
+def get_market_data(limit: int = 500, interval: str = "1m"):
+    """OHLCV data for price chart — fetched from Binance klines API (free, no key).
     
-    interval: 1m, 5m, 15m, 1h, 4h
-    limit: number of aggregated candles to return
+    Supports: 1m, 5m, 15m, 1h, 4h, 1d
+    Returns up to 1000 candles per request.
+    Falls back to local data if Binance is unreachable.
     """
-    if predictor is None:
-        raise HTTPException(503, "Engine not ready")
+    global _kline_cache
     
-    # Map interval to minutes
+    # Validate interval
+    valid_intervals = {"1m", "5m", "15m", "1h", "4h", "1d"}
+    if interval not in valid_intervals:
+        interval = "1m"
+    limit = min(max(limit, 10), 1000)
+    
+    # Cache key: interval + limit
+    cache_key = f"{interval}_{limit}"
+    now = time.time()
+    
+    # Return cache if fresh (5 min for larger TFs, 30s for 1m)
+    cache_ttl = 30 if interval == "1m" else 300
+    if cache_key in _kline_cache:
+        cached = _kline_cache[cache_key]
+        if now - cached["ts"] < cache_ttl:
+            return {"candles": cached["candles"], "count": len(cached["candles"])}
+    
+    # ─── Primary: Binance REST API (free, no key) ──────
+    candles = _fetch_binance_klines(interval, limit)
+    
+    # ─── Fallback: local parquet/csv ───────────────────
+    if not candles:
+        candles = _fetch_local_candles(interval, limit)
+    
+    # Cache result
+    _kline_cache[cache_key] = {"candles": candles, "ts": now}
+    
+    return {"candles": candles, "count": len(candles)}
+
+
+# In-memory kline cache
+_kline_cache: dict = {}
+
+
+def _fetch_binance_klines(interval: str, limit: int) -> list:
+    """Fetch OHLCV klines from Binance public API (free, no key needed)."""
+    try:
+        url = f"https://api.binance.com/api/v3/klines?symbol=BTCUSDT&interval={interval}&limit={limit}"
+        resp = requests.get(url, timeout=8)
+        if resp.status_code != 200:
+            logging.warning(f"Binance klines HTTP {resp.status_code}")
+            return []
+        
+        raw = resp.json()
+        candles = []
+        for k in raw:
+            # Binance kline format: [openTime, open, high, low, close, volume, closeTime, ...]
+            candles.append({
+                "timestamp": int(k[0]),  # open time in ms
+                "open": float(k[1]),
+                "high": float(k[2]),
+                "low": float(k[3]),
+                "close": float(k[4]),
+                "volume": float(k[5]),
+            })
+        
+        logging.info(f"Binance klines: {len(candles)} {interval} candles fetched")
+        return candles
+        
+    except requests.exceptions.Timeout:
+        logging.warning("Binance klines: timeout")
+        return []
+    except Exception as e:
+        logging.warning(f"Binance klines error: {e}")
+        return []
+
+
+def _fetch_local_candles(interval: str, limit: int) -> list:
+    """Fallback: load from local parquet/csv and aggregate."""
     interval_map = {"1m": 1, "5m": 5, "15m": 15, "1h": 60, "4h": 240, "1d": 1440}
     interval_mins = interval_map.get(interval, 1)
-    
-    # Calculate how far back we need to go (in minutes) + 10% buffer
     lookback_minutes = int(limit * interval_mins * 1.1) + interval_mins
     
-    # Load the FULL dataset and filter by date (avoids gap issues)
     try:
         if os.path.exists(config.MARKET_DATA_PARQUET_PATH):
             full_df = pd.read_parquet(config.MARKET_DATA_PARQUET_PATH)
         elif os.path.exists(config.MARKET_DATA_PATH):
             full_df = pd.read_csv(config.MARKET_DATA_PATH)
         else:
-            return {"candles": [], "count": 0}
+            return []
     except Exception:
-        return {"candles": [], "count": 0}
+        return []
     
     if full_df is None or full_df.empty:
-        return {"candles": [], "count": 0}
+        return []
     
-    # Filter by date range (not row count!)
     full_df['timestamp'] = pd.to_datetime(full_df['timestamp'])
     cutoff = full_df['timestamp'].max() - pd.Timedelta(minutes=lookback_minutes)
     df = full_df[full_df['timestamp'] >= cutoff].copy()
     
     if df.empty:
-        return {"candles": [], "count": 0}
+        return []
     
     if interval_mins > 1:
-        # Aggregate 1-minute candles into larger intervals
         df = df.set_index('timestamp')
         agg = df.resample(f'{interval_mins}min').agg({
-            'open': 'first',
-            'high': 'max',
-            'low': 'min',
-            'close': 'last',
-            'volume': 'sum'
+            'open': 'first', 'high': 'max', 'low': 'min',
+            'close': 'last', 'volume': 'sum'
         }).dropna(subset=['open'])
-        agg = agg.reset_index()
-        df = agg
+        df = agg.reset_index()
     
-    # Take last `limit` candles
     df = df.tail(limit).reset_index(drop=True)
-    
-    # Convert to JSON-friendly format — send UNIX ms timestamps for chart
     df['timestamp'] = (pd.to_datetime(df['timestamp']).astype('int64') // 10**6).astype('int64')
-    candles = df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
-    
-    return {"candles": candles, "count": len(candles)}
+    return df[['timestamp', 'open', 'high', 'low', 'close', 'volume']].to_dict('records')
 
 
 @app.get("/api/stats")
@@ -750,16 +1272,7 @@ def get_equity_history():
     return {"points": points}
 
 
-@app.get("/api/news")
-def get_news():
-    """News feed."""
-    try:
-        from twitter_scraper import CryptoNewsScraper
-        scraper = CryptoNewsScraper()
-        items = scraper.fetch_news("BTC", limit=10)
-        return {"items": items or []}
-    except Exception as e:
-        return {"items": [], "error": str(e)}
+# NOTE: /api/news is defined below in the NEWS INTELLIGENCE FEED section (aggregated feed)
 
 
 @app.get("/api/cycles")
@@ -910,6 +1423,45 @@ def stop_bot():
     return {"running": False}
 
 
+# ─── Paper Trading Aliases (frontend uses /api/paper/*) ──────
+
+@app.post("/api/paper/start")
+def paper_start():
+    """Alias for /api/bot/start — used by PaperTrading page."""
+    return start_bot()
+
+
+@app.post("/api/paper/stop")
+def paper_stop():
+    """Alias for /api/bot/stop — used by PaperTrading page."""
+    return stop_bot()
+
+
+@app.post("/api/paper/reset")
+def paper_reset():
+    """Reset paper trader: close all positions, clear history, reset balance."""
+    if trader is None:
+        raise HTTPException(503, "Engine not ready")
+    trader.is_running = False
+    _auto_trade_stop.set()
+    # Close all positions
+    for pos in list(trader.positions):
+        try:
+            trader.close_position(pos, pos.entry_price, "RESET")
+        except Exception:
+            pass
+    trader.positions.clear()
+    trader.trade_history.clear()
+    trader.balance = trader.starting_balance
+    return {"status": "reset", "balance": trader.balance}
+
+
+@app.get("/api/paper/trades")
+def paper_trades(limit: int = 50):
+    """Alias for /api/trade-history — used by PaperTrading page."""
+    return get_trade_history(limit)
+
+
 @app.post("/api/train")
 def trigger_training():
     """Trigger model retraining."""
@@ -934,6 +1486,44 @@ def get_retrain_status():
     """Auto-retrain scheduler status."""
     return _retrain_status
 
+
+@app.get("/api/retrain-history")
+def get_retrain_history(limit: int = 20):
+    """Training history with accuracy deltas and trend analysis."""
+    import json as _json
+    retrain_history_path = os.path.join(config.LOG_DIR, 'retrain_history.json')
+    
+    if not os.path.exists(retrain_history_path):
+        return {"entries": [], "summary": None}
+    
+    try:
+        with open(retrain_history_path, 'r') as f:
+            history = _json.load(f)
+    except Exception:
+        return {"entries": [], "summary": None}
+    
+    # Return most recent entries (newest first)
+    entries = list(reversed(history[-limit:]))
+    
+    # Build summary statistics
+    accuracies = [e['accuracy'] for e in history if e.get('accuracy') is not None]
+    deltas = [e['delta'] for e in history if e.get('delta') is not None]
+    
+    summary = None
+    if accuracies:
+        summary = {
+            "total_retrains": len(history),
+            "best_accuracy": round(max(accuracies), 2),
+            "worst_accuracy": round(min(accuracies), 2),
+            "latest_accuracy": round(accuracies[-1], 2) if accuracies else None,
+            "avg_delta": round(sum(deltas) / len(deltas), 2) if deltas else None,
+            "positive_retrains": sum(1 for d in deltas if d > 0),
+            "negative_retrains": sum(1 for d in deltas if d < 0),
+            "neutral_retrains": sum(1 for d in deltas if d == 0),
+            "current_streak": history[-1].get('streak', 0) if history else 0,
+        }
+    
+    return {"entries": entries, "summary": summary}
 
 # ============================================================
 #  SETTINGS & API KEY MANAGEMENT
@@ -996,17 +1586,7 @@ def _save_env_keys(keys: dict):
         os.environ[k] = v
 
 
-@app.get("/api/settings")
-def get_settings():
-    """Return current settings with masked API keys."""
-    keys = _load_env_keys()
-    return {
-        "keys": {k: _mask_key(v) for k, v in keys.items()},
-        "has_keys": {k: bool(v) for k, v in keys.items()},
-        "data_root": config.DATA_ROOT,
-        "version": config.VERSION,
-        "is_installed": config.IS_INSTALLED,
-    }
+# NOTE: /api/settings GET is defined above (merged JSON settings + env keys)
 
 
 class SettingsUpdate(BaseModel):
@@ -1175,6 +1755,114 @@ def trigger_first_run(body: dict = None):
 
 
 # ============================================================
+#  GPU FARM (AssGPU Mini-Game)
+# ============================================================
+
+# gpu_game is initialized by _init_engines() and available as module global
+
+class TransferRequest(BaseModel):
+    amount: float
+
+class MergeRequest(BaseModel):
+    card_id_1: int
+    card_id_2: int
+
+class SellAssRequest(BaseModel):
+    amount: float
+
+@app.get("/api/game/state")
+def game_state():
+    """Get full GPU Farm game state."""
+    if gpu_game is None:
+        raise HTTPException(503, "GPU game not initialized")
+    return gpu_game.get_state()
+
+@app.post("/api/game/transfer")
+def game_transfer(req: TransferRequest):
+    """Transfer USD from trading wallet to game wallet (one-way)."""
+    if gpu_game is None:
+        raise HTTPException(503, "GPU game not initialized")
+    if req.amount <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    # Deduct from paper trader balance
+    if trader and hasattr(trader, 'balance'):
+        if trader.balance < req.amount:
+            raise HTTPException(400, f"Insufficient trading balance (${trader.balance:.2f})")
+        trader.balance -= req.amount
+        trader._save_equity_point()
+    result = gpu_game.transfer_in(req.amount)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Transfer failed"))
+    result["trading_balance"] = round(trader.balance, 2) if trader else 0
+    # Log to NexusLogger
+    try:
+        from nexus_logger import get_logger
+        get_logger().log_game_transfer(req.amount, result["game_balance"])
+    except Exception:
+        pass
+    return result
+
+@app.post("/api/game/buy-card")
+def game_buy_card():
+    """Buy a new 10 Series GPU card."""
+    if gpu_game is None:
+        raise HTTPException(503, "GPU game not initialized")
+    result = gpu_game.buy_card()
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Buy failed"))
+    try:
+        from nexus_logger import get_logger
+        card = result.get("card", {})
+        get_logger().log_game_buy_card(card.get("tier", 1), "10s", result.get("cost", 0), result.get("game_balance", 0))
+    except Exception:
+        pass
+    return result
+
+@app.post("/api/game/merge")
+def game_merge(req: MergeRequest):
+    """Merge two same-tier GPU cards into next tier."""
+    if gpu_game is None:
+        raise HTTPException(503, "GPU game not initialized")
+    result = gpu_game.merge_cards(req.card_id_1, req.card_id_2)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Merge failed"))
+    try:
+        from nexus_logger import get_logger
+        new_card = result.get("new_card", {})
+        get_logger().log_game_merge(new_card.get("tier", 2) - 1, new_card.get("tier", 2), new_card.get("label", "?"))
+    except Exception:
+        pass
+    return result
+
+@app.post("/api/game/sell-ass")
+def game_sell_ass(req: SellAssRequest):
+    """Sell ASS coin at current market price."""
+    if gpu_game is None:
+        raise HTTPException(503, "GPU game not initialized")
+    if req.amount <= 0:
+        raise HTTPException(400, "Amount must be positive")
+    result = gpu_game.sell_ass(req.amount)
+    if not result.get("ok"):
+        raise HTTPException(400, result.get("error", "Sell failed"))
+    try:
+        from nexus_logger import get_logger
+        get_logger().log_game_sell_ass(result.get("amount_sold", 0), result.get("price", 0), result.get("usd_received", 0))
+    except Exception:
+        pass
+    return result
+
+@app.get("/api/game/price-history")
+def game_price_history():
+    """Get ASS coin price history for charting."""
+    if gpu_game is None:
+        raise HTTPException(503, "GPU game not initialized")
+    state = gpu_game.get_state()
+    return {"history": state.get("ass_price_history", [])}
+
+# Background game tick thread is started by lifespan (_gpu_game_tick_loop)
+
+
+# ============================================================
 #  NEXUS AGENT (AI CHAT)
 # ============================================================
 
@@ -1184,19 +1872,73 @@ class AgentChatRequest(BaseModel):
 
 @app.post("/api/agent/chat")
 def agent_chat(req: AgentChatRequest):
-    """Chat with the Nexus Agent. Returns AI analysis based on live state."""
-    try:
-        result = nexus_agent.chat(
-            user_message=req.message,
-            predictor=predictor,
-            trader=trader,
-            collector=collector,
-            session_id=req.session_id,
-        )
-        return _sanitize_for_json(result)
-    except Exception as e:
-        logging.error(f"Agent chat error: {e}")
-        return {"reply": f"⚠️ Error: {str(e)}", "provider": "error"}
+    """Chat with the Nexus Agent — streams response as SSE."""
+    from starlette.responses import StreamingResponse
+    import nexus_memory
+
+    def sse_generator():
+        try:
+            sid = req.session_id or nexus_agent.get_or_create_session()
+
+            # Save user message
+            user_msg_id = nexus_memory.save_message(sid, "user", req.message)
+
+            # Build state + multi-layer message stack
+            state = nexus_agent.build_state_snapshot(predictor, trader, collector)
+            state_json = json.dumps(state, indent=2, default=str)
+            knowledge_context = nexus_memory.get_knowledge_summary()
+
+            # Conversation history
+            conv_history = nexus_memory.get_recent_messages(session_id=sid, limit=10)
+            conv_history = [m for m in conv_history if m['id'] != user_msg_id]
+
+            # Build multi-layer message stack
+            messages = nexus_agent.build_messages(
+                user_message=req.message,
+                state_json=state_json,
+                conversation_history=conv_history,
+                knowledge_context=knowledge_context,
+            )
+
+            # Get OpenAI key
+            openai_key = getattr(config, 'OPENAI_API_KEY', None) or os.environ.get('OPENAI_API_KEY', '')
+            if not openai_key:
+                try:
+                    env_path = os.path.join(config.DATA_ROOT, ".env")
+                    if os.path.exists(env_path):
+                        with open(env_path, 'r', encoding='utf-8', errors='replace') as f:
+                            for line in f:
+                                line = line.strip()
+                                if line.startswith("OPENAI_API_KEY="):
+                                    openai_key = line.split("=", 1)[1].strip().strip('"').strip("'")
+                except Exception:
+                    pass
+            if not openai_key:
+                openai_key = nexus_agent._OPENAI_API_KEY
+
+            if not openai_key:
+                yield f"data: {json.dumps({'content': '⚠️ No OpenAI API key configured.'})}\n\n"
+                yield "data: [DONE]\n\n"
+                return
+
+            # Stream from OpenAI using multi-layer message stack
+            full_reply = ""
+            for chunk in nexus_agent._call_openai_stream(messages, openai_key):
+                full_reply += chunk
+                yield f"data: {json.dumps({'content': chunk})}\n\n"
+
+            yield "data: [DONE]\n\n"
+
+            # Save full reply to memory
+            if full_reply:
+                nexus_memory.save_message(sid, "agent", full_reply)
+
+        except Exception as e:
+            logging.error(f"Agent stream error: {e}")
+            yield f"data: {json.dumps({'content': f'⚠️ Error: {str(e)}'})}\n\n"
+            yield "data: [DONE]\n\n"
+
+    return StreamingResponse(sse_generator(), media_type="text/event-stream")
 
 @app.get("/api/agent/state")
 def agent_state():
@@ -1230,6 +1972,21 @@ def agent_new_session():
     sid = nexus_agent.new_session()
     return {"session_id": sid}
 
+@app.get("/api/agent/sessions")
+def agent_sessions():
+    """List all chat sessions with titles."""
+    import nexus_memory
+    sessions = nexus_memory.get_all_sessions()
+    current = nexus_agent.get_or_create_session()
+    return {"sessions": sessions, "current_session_id": current}
+
+@app.delete("/api/agent/sessions/{session_id}")
+def agent_delete_session(session_id: str):
+    """Delete a chat session and all its messages."""
+    import nexus_memory
+    deleted = nexus_memory.delete_session(session_id)
+    return {"deleted": deleted, "session_id": session_id}
+
 
 # ============================================================
 #  NEWS INTELLIGENCE FEED
@@ -1259,10 +2016,11 @@ def _fetch_cryptopanic():
                 sentiment = "BULLISH" if score > 0.15 else ("BEARISH" if score < -0.15 else "NEUTRAL")
                 source = (post.get("source", {}) or {}).get("title", "CryptoPanic")
                 items.append({
-                    "title": title,
+                    "headline": title,
                     "source": source,
-                    "sentiment": sentiment,
+                    "sentiment": sentiment.lower(),
                     "sentiment_score": round(score, 2),
+                    "url": post.get("url", ""),
                 })
     except Exception as e:
         logging.debug(f"CryptoPanic fetch error: {e}")
@@ -1287,14 +2045,110 @@ def _fetch_coingecko_trending():
                 price_change = c.get("data", {}).get("price_change_percentage_24h", {}).get("usd", 0) or 0
                 sent = "BULLISH" if price_change > 2 else ("BEARISH" if price_change < -2 else "NEUTRAL")
                 items.append({
-                    "title": f"🔥 {name} ({symbol}) trending — #{rank} by market cap, 24h: {price_change:+.1f}%",
+                    "headline": f"🔥 {name} ({symbol}) trending — #{rank} by market cap, 24h: {price_change:+.1f}%",
                     "source": "CoinGecko Trending",
-                    "sentiment": sent,
+                    "sentiment": sent.lower(),
                     "sentiment_score": round(min(1, max(-1, price_change / 10)), 2),
                 })
     except Exception as e:
         logging.debug(f"CoinGecko trending error: {e}")
     return items
+
+
+def _analyze_headline_sentiment(title: str) -> tuple:
+    """Keyword-based sentiment scoring for news headlines."""
+    t = title.lower()
+    bullish = ['surge', 'soar', 'rally', 'breakout', 'bullish', 'record high',
+                'all-time high', 'ath', 'moon', 'adoption', 'approval', 'buy',
+                'accumulate', 'inflow', 'upgrade', 'etf', 'partnership',
+                'institutional', 'support', 'recover', 'bounce', 'gain', 'rising',
+                'outperform', 'profit', 'milestone', 'breakthrough', 'launch',
+                'integrate', 'grow', 'expand']
+    bearish = ['crash', 'plunge', 'dump', 'bearish', 'sell-off', 'selloff',
+                'hack', 'exploit', 'fraud', 'ban', 'crackdown', 'regulation',
+                'lawsuit', 'sec', 'fine', 'collapse', 'bankruptcy', 'liquidat',
+                'outflow', 'decline', 'drop', 'fall', 'warn', 'risk', 'fear',
+                'scam', 'rug pull', 'arrest', 'sanction', 'attack', 'vulnerability']
+    bull_hits = sum(1 for kw in bullish if kw in t)
+    bear_hits = sum(1 for kw in bearish if kw in t)
+    if bull_hits > bear_hits:
+        return "BULLISH", round(min(0.3 + bull_hits * 0.15, 0.9), 2)
+    elif bear_hits > bull_hits:
+        return "BEARISH", round(max(-0.3 - bear_hits * 0.15, -0.9), 2)
+    return "NEUTRAL", 0.0
+
+
+def _fetch_rss_news():
+    """Fetch real crypto news from multiple RSS feeds (free, no API key)."""
+    items = []
+    feeds = [
+        ("https://cointelegraph.com/rss", "CoinTelegraph"),
+        ("https://www.coindesk.com/arc/outboundfeeds/rss/", "CoinDesk"),
+        ("https://bitcoinmagazine.com/feed", "Bitcoin Magazine"),
+        ("https://www.newsbtc.com/feed/", "NewsBTC"),
+    ]
+    try:
+        import feedparser
+    except ImportError:
+        logging.warning("feedparser not installed — run: pip install feedparser")
+        return items
+
+    for url, source_name in feeds:
+        try:
+            # Use requests with timeout then parse the content
+            # (feedparser.parse(url) can hang without timeout)
+            resp = requests.get(url, timeout=6, headers={
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) NexusBot/1.0"
+            })
+            if resp.status_code != 200:
+                logging.warning(f"RSS {source_name}: HTTP {resp.status_code}")
+                continue
+            feed = feedparser.parse(resp.content)
+            if not feed.entries:
+                logging.warning(f"RSS {source_name}: 0 entries (bozo={feed.bozo})")
+                continue
+            logging.info(f"RSS {source_name}: {len(feed.entries)} entries fetched")
+            for entry in feed.entries[:4]:
+                title = entry.get("title", "").strip()
+                if not title:
+                    continue
+                link = entry.get("link", "")
+                # Parse time
+                pub = entry.get("published", entry.get("updated", ""))
+                time_str = ""
+                if pub:
+                    try:
+                        from email.utils import parsedate_to_datetime
+                        dt = parsedate_to_datetime(pub)
+                        from datetime import datetime, timezone
+                        delta = datetime.now(timezone.utc) - dt
+                        hrs = int(delta.total_seconds() // 3600)
+                        if hrs < 1:
+                            time_str = f"{int(delta.total_seconds() // 60)}m ago"
+                        elif hrs < 24:
+                            time_str = f"{hrs}h ago"
+                        else:
+                            time_str = f"{hrs // 24}d ago"
+                    except Exception:
+                        pass
+
+                sentiment, score = _analyze_headline_sentiment(title)
+                items.append({
+                    "headline": title,
+                    "source": source_name,
+                    "sentiment": sentiment.lower(),
+                    "sentiment_score": score,
+                    "time": time_str,
+                    "url": link,
+                })
+        except requests.exceptions.Timeout:
+            logging.warning(f"RSS {source_name}: timeout after 6s")
+        except Exception as e:
+            logging.warning(f"RSS feed error ({source_name}): {e}")
+    
+    logging.info(f"RSS total: {len(items)} items from {len(feeds)} feeds")
+    return items
+
 
 def _generate_market_signals():
     """Generate smart 'news' from live prediction/market data."""
@@ -1312,18 +2166,18 @@ def _generate_market_signals():
             sent = "BULLISH" if direction == "LONG" else "BEARISH"
             score = (confidence / 100) if direction == "LONG" else -(confidence / 100)
             items.append({
-                "title": f"🤖 AI predicts {'📈 LONG' if direction == 'LONG' else '📉 SHORT'} with {confidence:.0f}% confidence — Target: ${pred.get('target_price', 0):,.0f}",
+                "headline": f"🤖 AI predicts {'📈 LONG' if direction == 'LONG' else '📉 SHORT'} with {confidence:.0f}% confidence — Target: ${pred.get('target_price', 0):,.0f}",
                 "source": "Nexus AI Engine",
-                "sentiment": sent,
+                "sentiment": sent.lower(),
                 "sentiment_score": round(score, 2),
             })
             
             # Regime signal
             regime_sent = {"TRENDING": "BULLISH", "MEAN_REVERTING": "NEUTRAL", "VOLATILE": "BEARISH", "CHAOTIC": "BEARISH"}
             items.append({
-                "title": f"📊 Market regime: {regime} — Hurst exponent: {hurst:.3f} ({'trending' if hurst > 0.55 else 'mean-reverting' if hurst < 0.45 else 'random walk'})",
+                "headline": f"📊 Market regime: {regime} — Hurst exponent: {hurst:.3f} ({'trending' if hurst > 0.55 else 'mean-reverting' if hurst < 0.45 else 'random walk'})",
                 "source": "Quant Engine",
-                "sentiment": regime_sent.get(regime, "NEUTRAL"),
+                "sentiment": regime_sent.get(regime, "NEUTRAL").lower(),
                 "sentiment_score": round(hurst - 0.5, 2),
             })
             
@@ -1336,9 +2190,9 @@ def _generate_market_signals():
                     fg_label = "Extreme Fear" if fg_val < 25 else "Fear" if fg_val < 40 else "Neutral" if fg_val < 60 else "Greed" if fg_val < 75 else "Extreme Greed"
                     fg_sent = "BEARISH" if fg_val < 35 else ("BULLISH" if fg_val > 55 else "NEUTRAL")
                     items.append({
-                        "title": f"😱 Fear & Greed Index: {fg_val}/100 ({fg_label}) — {'contrarian buy signal' if fg_val < 25 else 'contrarian sell signal' if fg_val > 75 else 'no extreme'}",
+                        "headline": f"😱 Fear & Greed Index: {fg_val}/100 ({fg_label}) — {'contrarian buy signal' if fg_val < 25 else 'contrarian sell signal' if fg_val > 75 else 'no extreme'}",
                         "source": "Alternative.me",
-                        "sentiment": fg_sent,
+                        "sentiment": fg_sent.lower(),
                         "sentiment_score": round((fg_val - 50) / 50, 2),
                     })
                 except (ValueError, TypeError):
@@ -1348,9 +2202,9 @@ def _generate_market_signals():
             acc = predictor.last_validation_accuracy
             if acc > 0:
                 items.append({
-                    "title": f"🎯 Model accuracy: {acc:.1f}% ({('outperforming' if acc > 52 else 'at') + ' baseline'}) — Statistically {'verified ✅' if predictor.is_statistically_verified else 'tracking...'}",
+                    "headline": f"🎯 Model accuracy: {acc:.1f}% ({('outperforming' if acc > 52 else 'at') + ' baseline'}) — Statistically {'verified ✅' if predictor.is_statistically_verified else 'tracking...'}",
                     "source": "Validation Engine",
-                    "sentiment": "BULLISH" if acc > 52 else "NEUTRAL",
+                    "sentiment": "bullish" if acc > 52 else "neutral",
                     "sentiment_score": round((acc - 50) / 20, 2),
                 })
             
@@ -1361,9 +2215,9 @@ def _generate_market_signals():
                 bp = flow.get("buy_pressure", 0.5)
                 if abs(bp - 0.5) > 0.05:
                     items.append({
-                        "title": f"📈 Order flow: {'buyers dominating' if bp > 0.55 else 'sellers dominating'} — Buy pressure: {bp:.1%}",
+                        "headline": f"📈 Order flow: {'buyers dominating' if bp > 0.55 else 'sellers dominating'} — Buy pressure: {bp:.1%}",
                         "source": "Order Flow Analysis",
-                        "sentiment": "BULLISH" if bp > 0.55 else "BEARISH",
+                        "sentiment": "bullish" if bp > 0.55 else "bearish",
                         "sentiment_score": round((bp - 0.5) * 4, 2),
                     })
                 
@@ -1371,9 +2225,9 @@ def _generate_market_signals():
                 jl = jump.get("level", "")
                 if jl and jl != "LOW":
                     items.append({
-                        "title": f"⚡ Jump risk: {jl} — Hawkes process detecting volatility clustering",
+                        "headline": f"⚡ Jump risk: {jl} — Hawkes process detecting volatility clustering",
                         "source": "Hawkes Process",
-                        "sentiment": "BEARISH",
+                        "sentiment": "bearish",
                         "sentiment_score": -0.4 if jl == "HIGH" else -0.2,
                     })
         
@@ -1384,18 +2238,18 @@ def _generate_market_signals():
             n_pos = len(trader.positions)
             if n_pos > 0:
                 items.append({
-                    "title": f"💼 {n_pos} position{'s' if n_pos > 1 else ''} open — Portfolio PnL: {pnl_pct:+.2f}%, Balance: ${stats.get('balance', 10000):,.0f}",
+                    "headline": f"💼 {n_pos} position{'s' if n_pos > 1 else ''} open — Portfolio PnL: {pnl_pct:+.2f}%, Balance: ${stats.get('balance', 10000):,.0f}",
                     "source": "Paper Trader",
-                    "sentiment": "BULLISH" if pnl_pct > 0 else ("BEARISH" if pnl_pct < 0 else "NEUTRAL"),
+                    "sentiment": "bullish" if pnl_pct > 0 else ("bearish" if pnl_pct < 0 else "neutral"),
                     "sentiment_score": round(min(1, max(-1, pnl_pct / 5)), 2),
                 })
             
             dd = stats.get("max_drawdown_pct", 0)
             if dd > 5:
                 items.append({
-                    "title": f"⚠️ Drawdown alert: {dd:.1f}% max drawdown — {'circuit breaker zone' if dd > 15 else 'elevated risk'}",
+                    "headline": f"⚠️ Drawdown alert: {dd:.1f}% max drawdown — {'circuit breaker zone' if dd > 15 else 'elevated risk'}",
                     "source": "Risk Manager",
-                    "sentiment": "BEARISH",
+                    "sentiment": "bearish",
                     "sentiment_score": round(min(-0.3, -dd / 20), 2),
                 })
     except Exception as e:
@@ -1421,7 +2275,10 @@ def get_news():
     # 2. CryptoPanic headlines
     all_items.extend(_fetch_cryptopanic())
     
-    # 3. CoinGecko trending
+    # 3. RSS feeds (CoinTelegraph, CoinDesk, Bitcoin Magazine, NewsBTC)
+    all_items.extend(_fetch_rss_news())
+    
+    # 4. CoinGecko trending
     all_items.extend(_fetch_coingecko_trending())
     
     # Cache the result
