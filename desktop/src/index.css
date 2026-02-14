@@ -1989,6 +1989,82 @@ kbd {
     }
 }
 
+/* ─── World Clock ─────────────────────────────── */
+.world-clock-grid {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.clock-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 1px 0;
+}
+
+.clock-city {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.clock-flag {
+    font-size: 11px;
+    flex-shrink: 0;
+}
+
+.clock-name {
+    font-size: 10px;
+    color: var(--text-2);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.clock-right {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    flex-shrink: 0;
+}
+
+.clock-time {
+    font-size: 10px;
+    color: var(--text-1);
+    letter-spacing: 0.3px;
+}
+
+.clock-dot {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    flex-shrink: 0;
+}
+
+.clock-dot.clock-open {
+    background: #34D399;
+    box-shadow: 0 0 4px rgba(52, 211, 153, 0.5);
+    animation: clockPulse 2s ease-in-out infinite;
+}
+
+.clock-dot.clock-closed {
+    background: #64748B;
+}
+
+@keyframes clockPulse {
+
+    0%,
+    100% {
+        opacity: 1;
+    }
+
+    50% {
+        opacity: 0.5;
+    }
+}
+
 /* Card wrapper inside each grid cell */
 .grid-card-wrapper {
     display: flex;

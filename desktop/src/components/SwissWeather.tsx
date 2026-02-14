@@ -47,33 +47,42 @@ type Particle = {
 
 function createParticles(type: WeatherType, w: number, h: number): Particle[] {
     const particles: Particle[] = [];
-    const count = type === 'rain' || type === 'storm' ? 60
-        : type === 'drizzle' ? 30
-            : type === 'snow' ? 40
-                : type === 'clear' ? 8
-                    : type === 'fog' ? 12
-                        : type === 'cloudy' ? 6
-                            : 0;
+    // More particles for every type — always visually alive
+    const count = type === 'storm' ? 100
+        : type === 'rain' ? 80
+            : type === 'drizzle' ? 40
+                : type === 'snow' ? 50
+                    : type === 'clear' ? 30   // stars + glow orbs
+                        : type === 'fog' ? 20
+                            : type === 'cloudy' ? 18  // drifting cloud blobs
+                                : 12;
 
     for (let i = 0; i < count; i++) {
+        const isStar = type === 'clear' && i < 22;
         particles.push({
             x: Math.random() * w,
             y: Math.random() * h,
-            vx: type === 'rain' || type === 'storm' ? -0.5 + Math.random() * -0.5 : (Math.random() - 0.5) * 0.3,
-            vy: type === 'rain' ? 3 + Math.random() * 4
-                : type === 'storm' ? 5 + Math.random() * 5
+            vx: type === 'rain' || type === 'storm' ? -0.5 + Math.random() * -0.5
+                : type === 'cloudy' ? 0.1 + Math.random() * 0.2
+                    : (Math.random() - 0.5) * 0.3,
+            vy: type === 'rain' ? 3 + Math.random() * 5
+                : type === 'storm' ? 5 + Math.random() * 6
                     : type === 'drizzle' ? 1.5 + Math.random() * 2
                         : type === 'snow' ? 0.3 + Math.random() * 0.8
-                            : type === 'clear' ? 0.1 + Math.random() * 0.2
-                                : 0.05 + Math.random() * 0.1,
+                            : type === 'clear' ? (isStar ? 0 : 0.05 + Math.random() * 0.1)
+                                : type === 'cloudy' ? 0.02 + Math.random() * 0.04
+                                    : 0.03 + Math.random() * 0.05,
             size: type === 'snow' ? 2 + Math.random() * 3
                 : type === 'rain' || type === 'storm' ? 1
-                    : type === 'clear' ? 1 + Math.random() * 2
-                        : 4 + Math.random() * 8,
-            opacity: type === 'fog' ? 0.03 + Math.random() * 0.06
-                : type === 'cloudy' ? 0.04 + Math.random() * 0.06
-                    : 0.3 + Math.random() * 0.5,
-            life: Math.random(),
+                    : type === 'clear' ? (isStar ? 0.5 + Math.random() * 1.5 : 3 + Math.random() * 5)
+                        : type === 'fog' ? 8 + Math.random() * 16
+                            : type === 'cloudy' ? 6 + Math.random() * 12
+                                : 4 + Math.random() * 8,
+            opacity: type === 'clear' ? (isStar ? 0.3 + Math.random() * 0.7 : 0.08 + Math.random() * 0.15)
+                : type === 'fog' ? 0.03 + Math.random() * 0.06
+                    : type === 'cloudy' ? 0.04 + Math.random() * 0.08
+                        : 0.3 + Math.random() * 0.5,
+            life: Math.random() * Math.PI * 2, // phase offset for twinkling
         });
     }
     return particles;
@@ -81,102 +90,137 @@ function createParticles(type: WeatherType, w: number, h: number): Particle[] {
 
 function drawParticles(ctx: CanvasRenderingContext2D, particles: Particle[], type: WeatherType, w: number, h: number) {
     ctx.clearRect(0, 0, w, h);
+    const t = Date.now() * 0.001;
 
     // Background gradient based on weather
     const grad = ctx.createLinearGradient(0, 0, w, h);
     if (type === 'clear') {
-        grad.addColorStop(0, 'rgba(255, 200, 50, 0.06)');
-        grad.addColorStop(1, 'rgba(255, 140, 0, 0.03)');
+        grad.addColorStop(0, 'rgba(15, 23, 42, 0.3)');
+        grad.addColorStop(1, 'rgba(30, 41, 59, 0.15)');
     } else if (type === 'rain' || type === 'drizzle') {
-        grad.addColorStop(0, 'rgba(59, 130, 246, 0.06)');
-        grad.addColorStop(1, 'rgba(30, 64, 175, 0.04)');
+        grad.addColorStop(0, 'rgba(59, 130, 246, 0.08)');
+        grad.addColorStop(1, 'rgba(30, 64, 175, 0.05)');
     } else if (type === 'storm') {
-        grad.addColorStop(0, 'rgba(88, 28, 135, 0.08)');
-        grad.addColorStop(1, 'rgba(30, 58, 138, 0.06)');
+        grad.addColorStop(0, 'rgba(88, 28, 135, 0.10)');
+        grad.addColorStop(1, 'rgba(30, 58, 138, 0.08)');
     } else if (type === 'snow') {
-        grad.addColorStop(0, 'rgba(186, 230, 253, 0.06)');
-        grad.addColorStop(1, 'rgba(147, 197, 253, 0.04)');
+        grad.addColorStop(0, 'rgba(186, 230, 253, 0.08)');
+        grad.addColorStop(1, 'rgba(147, 197, 253, 0.05)');
     } else if (type === 'fog') {
-        grad.addColorStop(0, 'rgba(148, 163, 184, 0.06)');
-        grad.addColorStop(1, 'rgba(100, 116, 139, 0.04)');
+        grad.addColorStop(0, 'rgba(148, 163, 184, 0.08)');
+        grad.addColorStop(1, 'rgba(100, 116, 139, 0.05)');
     } else {
-        grad.addColorStop(0, 'rgba(148, 163, 184, 0.04)');
-        grad.addColorStop(1, 'rgba(71, 85, 105, 0.03)');
+        grad.addColorStop(0, 'rgba(148, 163, 184, 0.06)');
+        grad.addColorStop(1, 'rgba(71, 85, 105, 0.04)');
     }
     ctx.fillStyle = grad;
     ctx.fillRect(0, 0, w, h);
 
-    for (const p of particles) {
-        ctx.globalAlpha = p.opacity;
+    for (let pi = 0; pi < particles.length; pi++) {
+        const p = particles[pi];
 
-        if (type === 'rain' || type === 'drizzle') {
-            // Rain drops — thin diagonal lines
-            ctx.strokeStyle = '#60A5FA';
+        if (type === 'clear') {
+            const isStar = pi < 22;
+            if (isStar) {
+                // ★ Twinkling stars — pulsing opacity
+                const twinkle = 0.3 + Math.abs(Math.sin(t * (1.5 + pi * 0.3) + p.life)) * 0.7;
+                ctx.globalAlpha = twinkle;
+                // Star core
+                ctx.fillStyle = '#F8FAFC';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+                // Star cross glow
+                ctx.globalAlpha = twinkle * 0.3;
+                ctx.strokeStyle = '#E2E8F0';
+                ctx.lineWidth = 0.5;
+                ctx.beginPath();
+                ctx.moveTo(p.x - p.size * 3, p.y);
+                ctx.lineTo(p.x + p.size * 3, p.y);
+                ctx.moveTo(p.x, p.y - p.size * 3);
+                ctx.lineTo(p.x, p.y + p.size * 3);
+                ctx.stroke();
+            } else {
+                // Warm floating glow orbs
+                const pulse = 0.5 + Math.sin(t * 0.8 + p.life) * 0.3;
+                ctx.globalAlpha = p.opacity * pulse;
+                ctx.fillStyle = 'rgba(255, 215, 0, 0.6)';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+                ctx.fill();
+                ctx.fillStyle = 'rgba(255, 200, 50, 0.12)';
+                ctx.beginPath();
+                ctx.arc(p.x, p.y, p.size * 4, 0, Math.PI * 2);
+                ctx.fill();
+                p.x += p.vx;
+                p.y += p.vy;
+            }
+        } else if (type === 'rain' || type === 'drizzle') {
+            ctx.globalAlpha = p.opacity;
+            ctx.strokeStyle = type === 'drizzle' ? '#93C5FD' : '#60A5FA';
             ctx.lineWidth = type === 'drizzle' ? 0.5 : 1;
             ctx.beginPath();
             ctx.moveTo(p.x, p.y);
             ctx.lineTo(p.x + p.vx * 3, p.y + p.vy * 2.5);
             ctx.stroke();
+            p.x += p.vx;
+            p.y += p.vy;
         } else if (type === 'storm') {
-            // Storm — thick rain + occasional "flash"
+            ctx.globalAlpha = p.opacity;
             ctx.strokeStyle = '#818CF8';
             ctx.lineWidth = 1.2;
             ctx.beginPath();
             ctx.moveTo(p.x, p.y);
             ctx.lineTo(p.x + p.vx * 4, p.y + p.vy * 3);
             ctx.stroke();
-
-            // Lightning flash (rare)
-            if (Math.random() < 0.001) {
-                ctx.globalAlpha = 0.15;
+            p.x += p.vx;
+            p.y += p.vy;
+            // Lightning flash (slightly more frequent)
+            if (Math.random() < 0.003) {
+                ctx.globalAlpha = 0.2;
                 ctx.fillStyle = '#E0E7FF';
                 ctx.fillRect(0, 0, w, h);
             }
         } else if (type === 'snow') {
-            // Snow — soft circles
+            const drift = Math.sin(p.life + t * 1.2) * 0.4;
+            ctx.globalAlpha = p.opacity;
             ctx.fillStyle = '#E0F2FE';
             ctx.beginPath();
             ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
             ctx.fill();
-        } else if (type === 'clear') {
-            // Sun — warm floating dots
-            ctx.fillStyle = `rgba(255, 215, 0, ${p.opacity * 0.6})`;
+            // Soft glow around each flake
+            ctx.globalAlpha = p.opacity * 0.2;
             ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, p.size * 2.5, 0, Math.PI * 2);
             ctx.fill();
-            // Glow
-            ctx.fillStyle = `rgba(255, 200, 50, ${p.opacity * 0.15})`;
-            ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size * 4, 0, Math.PI * 2);
-            ctx.fill();
+            p.x += p.vx + drift;
+            p.y += p.vy;
         } else if (type === 'fog') {
-            // Fog — large blurry blobs
-            ctx.fillStyle = `rgba(148, 163, 184, ${p.opacity})`;
+            const pulse = 0.7 + Math.sin(t * 0.5 + p.life) * 0.3;
+            ctx.globalAlpha = p.opacity * pulse;
+            ctx.fillStyle = 'rgba(148, 163, 184, 1)';
             ctx.beginPath();
             ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
             ctx.fill();
+            p.x += p.vx;
+            p.y += p.vy;
         } else {
-            // Cloudy — soft gray blobs
-            ctx.fillStyle = `rgba(100, 116, 139, ${p.opacity})`;
+            // Cloudy — drifting gray cloud blobs
+            const pulse = 0.6 + Math.sin(t * 0.4 + p.life) * 0.4;
+            ctx.globalAlpha = p.opacity * pulse;
+            ctx.fillStyle = 'rgba(100, 116, 139, 1)';
             ctx.beginPath();
-            ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+            ctx.arc(p.x, p.y, p.size * (0.8 + Math.sin(t * 0.3 + pi) * 0.2), 0, Math.PI * 2);
             ctx.fill();
-        }
-
-        // Update position
-        p.x += p.vx;
-        p.y += p.vy;
-
-        // Snow sway
-        if (type === 'snow') {
-            p.x += Math.sin(p.life * 6 + Date.now() * 0.001) * 0.3;
+            p.x += p.vx;
+            p.y += p.vy;
         }
 
         // Wrap around
-        if (p.y > h + 10) { p.y = -10; p.x = Math.random() * w; }
-        if (p.y < -10) { p.y = h + 10; p.x = Math.random() * w; }
-        if (p.x > w + 10) p.x = -10;
-        if (p.x < -10) p.x = w + 10;
+        if (p.y > h + 20) { p.y = -20; p.x = Math.random() * w; }
+        if (p.y < -20) { p.y = h + 20; p.x = Math.random() * w; }
+        if (p.x > w + 20) p.x = -20;
+        if (p.x < -20) p.x = w + 20;
     }
 
     ctx.globalAlpha = 1;

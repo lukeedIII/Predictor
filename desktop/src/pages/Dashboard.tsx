@@ -11,11 +11,12 @@ import SystemHealth from '../components/SystemHealth';
 import TrainingLog from '../components/TrainingLog';
 import TradingViewChart from '../components/TradingViewChart';
 import SwissWeather from '../components/SwissWeather';
+import WorldClock from '../components/WorldClock';
 import { IconRefresh } from '../components/Icons';
 
 // ── Constants ────────────────────────────────────────────────
-const STORAGE_KEY = 'nexus-dashboard-layout-v4';
-const PRESETS_KEY = 'nexus-dashboard-presets-v1';
+const STORAGE_KEY = 'nexus-dashboard-layout-v5';
+const PRESETS_KEY = 'nexus-dashboard-presets-v2';
 const ACTIVE_SLOT_KEY = 'nexus-dashboard-active-slot';
 const COLS = 12;
 const ROW_HEIGHT = 30;
@@ -24,9 +25,10 @@ const ROW_HEIGHT = 30;
 const MINS: Record<string, { minW: number; minH: number }> = {
     price: { minW: 2, minH: 4 }, signal: { minW: 2, minH: 4 },
     accuracy: { minW: 2, minH: 4 }, volume: { minW: 2, minH: 4 },
-    weather: { minW: 2, minH: 4 }, chart: { minW: 4, minH: 8 },
-    quant: { minW: 3, minH: 8 }, news: { minW: 3, minH: 6 },
-    health: { minW: 3, minH: 6 }, training: { minW: 3, minH: 6 },
+    weather: { minW: 2, minH: 4 }, clock: { minW: 2, minH: 5 },
+    chart: { minW: 4, minH: 8 }, quant: { minW: 3, minH: 8 },
+    news: { minW: 3, minH: 6 }, health: { minW: 3, minH: 6 },
+    training: { minW: 3, minH: 6 },
 };
 
 function applyMins(layout: LayoutItem[]): LayoutItem[] {
@@ -40,9 +42,10 @@ function applyMins(layout: LayoutItem[]): LayoutItem[] {
 const DEFAULT_LAYOUT: LayoutItem[] = applyMins([
     { i: 'price', x: 0, y: 0, w: 2, h: 5 },
     { i: 'signal', x: 2, y: 0, w: 2, h: 5 },
-    { i: 'accuracy', x: 4, y: 0, w: 3, h: 5 },
-    { i: 'volume', x: 7, y: 0, w: 2, h: 5 },
-    { i: 'weather', x: 9, y: 0, w: 3, h: 5 },
+    { i: 'accuracy', x: 4, y: 0, w: 2, h: 5 },
+    { i: 'volume', x: 6, y: 0, w: 2, h: 5 },
+    { i: 'weather', x: 8, y: 0, w: 2, h: 5 },
+    { i: 'clock', x: 10, y: 0, w: 2, h: 5 },
     { i: 'chart', x: 0, y: 5, w: 8, h: 16 },
     { i: 'quant', x: 8, y: 5, w: 4, h: 16 },
     { i: 'news', x: 0, y: 21, w: 4, h: 12 },
@@ -55,9 +58,10 @@ const DEFAULT_LAYOUT: LayoutItem[] = applyMins([
 const PRESET_1: LayoutItem[] = applyMins([
     { i: 'price', x: 0, y: 0, w: 2, h: 5 },
     { i: 'signal', x: 2, y: 0, w: 2, h: 5 },
-    { i: 'accuracy', x: 4, y: 0, w: 3, h: 5 },
-    { i: 'volume', x: 7, y: 0, w: 2, h: 5 },
-    { i: 'weather', x: 9, y: 0, w: 3, h: 5 },
+    { i: 'accuracy', x: 4, y: 0, w: 2, h: 5 },
+    { i: 'volume', x: 6, y: 0, w: 2, h: 5 },
+    { i: 'weather', x: 8, y: 0, w: 2, h: 5 },
+    { i: 'clock', x: 10, y: 0, w: 2, h: 5 },
     { i: 'chart', x: 0, y: 5, w: 8, h: 20 },
     { i: 'quant', x: 8, y: 5, w: 4, h: 20 },
     { i: 'news', x: 0, y: 25, w: 4, h: 10 },
@@ -271,6 +275,11 @@ export default function Dashboard() {
                 <div key="weather">
                     <GridCard title="Weather">
                         <SwissWeather />
+                    </GridCard>
+                </div>
+                <div key="clock">
+                    <GridCard title="World Clock">
+                        <WorldClock />
                     </GridCard>
                 </div>
                 <div key="chart">
