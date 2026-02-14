@@ -381,6 +381,16 @@ def _auto_retrain_loop():
                 _retrain_status['last_drift_severity'] = drift_report.get('overall_severity')
                 _retrain_status['last_drift_report'] = drift_report
             
+            # Append walk-forward evaluation results if available
+            if promotion is not None and 'walk_forward' in promotion:
+                wf = promotion['walk_forward']
+                entry['wf_mean_accuracy'] = wf.get('mean_accuracy')
+                entry['wf_std_accuracy'] = wf.get('std_accuracy')
+                entry['wf_min_accuracy'] = wf.get('min_accuracy')
+                entry['wf_max_accuracy'] = wf.get('max_accuracy')
+                entry['wf_mean_logloss'] = wf.get('mean_logloss')
+                entry['wf_folds'] = wf.get('n_folds')
+            
             history.append(entry)
             history = history[-100:]
             with open(retrain_history_path, 'w') as f:
@@ -390,9 +400,12 @@ def _auto_retrain_loop():
             if promotion is not None:
                 promoted_str = f" | {'PROMOTED' if promotion.get('promoted') else 'REJECTED'}: {promotion.get('reason', '')}"
             drift_str = f" | Drift: {entry.get('drift_severity', 'N/A')}" if drift_report else ""
+            wf_str = ""
+            if entry.get('wf_mean_accuracy') is not None:
+                wf_str = f" | WF: {entry['wf_mean_accuracy']:.1f}%±{entry['wf_std_accuracy']:.1f}%"
             delta_str = f" (Δ {delta:+.2f}%)" if delta is not None else ""
             acc_str = f"{acc:.1f}%{delta_str}" if acc is not None else "N/A"
-            logging.info(f"[AUTO-RETRAIN] {label} — complete. Accuracy: {acc_str} {trend}{promoted_str}{drift_str}")
+            logging.info(f"[AUTO-RETRAIN] {label} — complete. Accuracy: {acc_str} {trend}{promoted_str}{drift_str}{wf_str}")
             
         except Exception as e:
             _retrain_status['is_retraining'] = False

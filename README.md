@@ -223,6 +223,7 @@ A walk-forward backtest on ~3.15M candles reported:
 - single temporal split (80/20) for calibration
 - accuracy validation logged after the 15m horizon passes
 - fee-adjusted net-PnL tracked per trade (gross/net/fee breakdown in CSV)
+- **rolling walk-forward evaluation** (K=5 expanding-window folds) runs after each retrain; per-fold accuracy/logloss + aggregates logged in retrain history
 
 ---
 
@@ -270,6 +271,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 - **Champion-Challenger deployment gate** — new models must match or beat production model on logloss + accuracy before promotion (with configurable grace period for cold start)
 - **Drift monitoring** — 3-channel detection: feature PSI, prediction distribution shift, and calibration drift (Brier score + ECE); runs every 30 min with `OK / WARNING / CRITICAL` severity levels
 - **Fee-adjusted net-PnL** — Binance taker (0.04%) + slippage (0.01%) deducted at both open and close; trade records include gross/net/fee breakdown; stats expose total_fees and net Sharpe
+- **Rolling walk-forward evaluation** — K=5 expanding-window folds after each retrain; logs per-fold accuracy/logloss + aggregates (mean/std/min/max) in retrain history for regime-stability analysis
 
 ---
 
@@ -277,7 +279,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 1) ~~No **champion–challenger** deployment~~ → ✅ **Implemented v6.2.0**
 2) ~~No **drift monitoring**~~ → ✅ **Implemented v6.2.0** (feature PSI + prediction drift + calibration Brier/ECE)
 3) ~~No fee-adjusted **net-PnL accounting**~~ → ✅ **Implemented v6.2.0** (taker 0.04% + slippage 0.01% per fill)
-4) No rolling **walk-forward evaluation** inside the live retrain pipeline
+4) ~~No rolling **walk-forward evaluation**~~ → ✅ **Implemented v6.2.0** (K=5 expanding-window folds, logged in retrain history)
 5) No **early stopping** for XGBoost (always builds 500 trees)
 6) No regime-specific models or regime-based trade gating
 7) No explicit class-imbalance handling (label skew from +0.30% hurdle)
@@ -289,7 +291,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 - [x] Champion–Challenger + promotion rules (logloss + accuracy gate, configurable thresholds)
 - [x] Drift monitoring: PSI + calibration drift + prediction drift (3-channel `DriftMonitor`)
 - [x] Fee/slippage-aware paper fills + net-PnL tracking + fee breakdown in trade records
-- [ ] Rolling walk-forward evaluation integrated into retraining loop
+- [x] Rolling walk-forward evaluation (K=5 folds, accuracy/logloss aggregates in retrain history)
 - [ ] Early stopping + light hyperparameter sweeps
 - [ ] Regime gating or regime-specific models (router via HMM/Hurst/vol regime)
 - [ ] Time-of-day / day-of-week features (optional)

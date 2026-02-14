@@ -1151,6 +1151,14 @@ class NexusPredictor:
                 except Exception as e:
                     logging.warning(f"[DRIFT-MONITOR] Snapshot failed: {e}")
             
+            # ── Walk-Forward Evaluation (diagnostic, non-blocking) ──
+            try:
+                wf_result = self.walk_forward_evaluate(df)
+                if wf_result is not None:
+                    promotion['walk_forward'] = wf_result
+            except Exception as e:
+                logging.warning(f"[WALK-FORWARD] Evaluation failed: {e}")
+            
         except Exception as e:
             logging.error(f"Training error: {e}")
             import traceback
@@ -1333,6 +1341,105 @@ class NexusPredictor:
         # Calculate accuracy
         accuracy = (xgb_preds == y_test.values).mean() * 100
         return accuracy
+
+    def walk_forward_evaluate(self, df):
+        """
+        Rolling walk-forward evaluation with K expanding-window folds.
+        
+        Gives a more robust performance estimate than a single temporal split
+        by testing the model across multiple sequential time windows.
+        
+        Returns:
+            dict with per-fold results + aggregate metrics, or None if insufficient data.
+        """
+        K = getattr(config, 'WALK_FORWARD_FOLDS', 5)
+        n = len(df)
+        fold_size = n // (K + 1)  # each test fold size
+        
+        if fold_size < 50:
+            logging.warning(f"[WALK-FORWARD] Not enough data for {K} folds ({n} rows, fold_size={fold_size})")
+            return None
+        
+        folds = []
+        for k in range(1, K + 1):
+            train_end = fold_size * k
+            test_end = min(train_end + fold_size, n)
+            
+            if test_end <= train_end:
+                continue
+            
+            fold_train = df.iloc[:train_end].copy()
+            fold_test = df.iloc[train_end:test_end].copy()
+            
+            # Create targets
+            fold_train = self.create_target_variable(fold_train, for_training=True)
+            fold_test = self.create_target_variable(fold_test, for_training=True)
+            
+            if len(fold_train) < 20 or fold_train['target'].nunique() < 2:
+                continue
+            if len(fold_test) < 5 or fold_test['target'].nunique() < 2:
+                continue
+            
+            X_tr = fold_train[self.features]
+            y_tr = fold_train['target']
+            X_te = fold_test[self.features]
+            y_te = fold_test['target']
+            
+            try:
+                import copy
+                from sklearn.metrics import log_loss
+                
+                fold_model = copy.deepcopy(self.model)
+                
+                # Same exponential sample weighting as main train
+                m = len(X_tr)
+                decay_rate = 3.0 / m
+                sw = np.exp(decay_rate * np.arange(m))
+                sw /= sw.mean()
+                
+                fold_model.fit(X_tr, y_tr, sample_weight=sw)
+                
+                probs = fold_model.predict_proba(X_te)[:, 1]
+                preds = (probs > 0.5).astype(int)
+                acc = (preds == y_te.values).mean() * 100
+                ll = log_loss(y_te, probs)
+                
+                folds.append({
+                    'fold': k,
+                    'train_rows': len(X_tr),
+                    'test_rows': len(X_te),
+                    'accuracy': round(acc, 2),
+                    'logloss': round(ll, 4),
+                })
+            except Exception as e:
+                logging.warning(f"[WALK-FORWARD] Fold {k} failed: {e}")
+                continue
+        
+        if len(folds) < 2:
+            logging.warning(f"[WALK-FORWARD] Only {len(folds)} folds completed, insufficient")
+            return None
+        
+        accs = [f['accuracy'] for f in folds]
+        lls = [f['logloss'] for f in folds]
+        
+        result = {
+            'folds': folds,
+            'n_folds': len(folds),
+            'mean_accuracy': round(np.mean(accs), 2),
+            'std_accuracy': round(np.std(accs), 2),
+            'min_accuracy': round(np.min(accs), 2),
+            'max_accuracy': round(np.max(accs), 2),
+            'mean_logloss': round(np.mean(lls), 4),
+        }
+        
+        logging.info(
+            f"[WALK-FORWARD] {len(folds)} folds — "
+            f"Acc: {result['mean_accuracy']:.1f}% ± {result['std_accuracy']:.1f}% "
+            f"(min {result['min_accuracy']:.1f}%, max {result['max_accuracy']:.1f}%) | "
+            f"Logloss: {result['mean_logloss']:.4f}"
+        )
+        
+        return result
 
     def get_prediction(self):
         """

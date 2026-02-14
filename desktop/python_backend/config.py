@@ -118,6 +118,9 @@ DRIFT_BRIER_WARNING = 0.30      # Brier score threshold for WARNING
 DRIFT_BRIER_CRITICAL = 0.35     # Brier score threshold for CRITICAL
 DRIFT_CHECK_INTERVAL_MIN = 30   # minutes between drift checks during live prediction
 
+# ── Walk-Forward Evaluation ──────────────────────────
+WALK_FORWARD_FOLDS = 5          # number of expanding-window folds for post-train evaluation
+
 # ── Paper Trading ─────────────────────────────────────
 PAPER_STARTING_BALANCE = 10000
 PAPER_TRADES_PATH = os.path.join(DATA_DIR, "paper_trades.csv")
