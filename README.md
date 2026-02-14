@@ -273,6 +273,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 - **Fee-adjusted net-PnL** — Binance taker (0.04%) + slippage (0.01%) deducted at both open and close; trade records include gross/net/fee breakdown; stats expose total_fees and net Sharpe
 - **Rolling walk-forward evaluation** — K=5 expanding-window folds after each retrain; logs per-fold accuracy/logloss + aggregates (mean/std/min/max) in retrain history for regime-stability analysis
 - **XGBoost early stopping** — stops building trees when eval-set logloss stalls for 30 rounds; typically saves 50-70% training time while preserving (or improving) generalization
+- **Regime-based trade gating** — 3-layer filter: (1) Hurst chaos filter (H ≈ 0.5 = random walk), (2) vol-regime bounds (skip extreme volatility > 3x and dead markets < 0.15x), (3) regime win-rate gate blocks trading when a regime's recent win rate drops below 35% over 5+ trades
 
 ---
 
@@ -282,7 +283,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 3) ~~No fee-adjusted **net-PnL accounting**~~ → ✅ **Implemented v6.2.0** (taker 0.04% + slippage 0.01% per fill)
 4) ~~No rolling **walk-forward evaluation**~~ → ✅ **Implemented v6.2.0** (K=5 expanding-window folds, logged in retrain history)
 5) ~~No **early stopping** for XGBoost~~ → ✅ **Implemented v6.2.0** (stops at best iteration via eval-set logloss, `early_stopping_rounds=30`)
-6) No regime-specific models or regime-based trade gating
+6) ~~No regime-specific models or regime-based trade gating~~ → ✅ **Implemented v6.2.0** (3-layer gating: Hurst + vol-regime bounds + win-rate gate)
 7) No explicit class-imbalance handling (label skew from +0.30% hurdle)
 8) Missing gap detection/quarantine (currently forward-fill)
 
@@ -294,7 +295,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 - [x] Fee/slippage-aware paper fills + net-PnL tracking + fee breakdown in trade records
 - [x] Rolling walk-forward evaluation (K=5 folds, accuracy/logloss aggregates in retrain history)
 - [x] XGBoost early stopping (eval-set logloss, `early_stopping_rounds=30`, logs trees used)
-- [ ] Regime gating or regime-specific models (router via HMM/Hurst/vol regime)
+- [x] Regime-based trade gating (Hurst filter + vol-regime bounds + regime win-rate gate)
 - [ ] Time-of-day / day-of-week features (optional)
 
 ---

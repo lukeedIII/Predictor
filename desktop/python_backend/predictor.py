@@ -1747,6 +1747,7 @@ class NexusPredictor:
                 "current_price": round(current_price, 2),
                 "hurst": float(hurst_val),
                 "regime_label": self.last_quant_analysis.get('regime', {}).get('regime', 'UNKNOWN'),
+                "vol_regime": float(df['vol_regime'].iloc[-1]) if 'vol_regime' in df.columns else 1.0,
                 "xgb_prob": round(xgb_prob, 4),
                 "lstm_prob": round(lstm_prob, 4),
                 "ensemble_weights": f"XGB={self.xgb_weight:.1f} LSTM={self.lstm_weight:.1f}",

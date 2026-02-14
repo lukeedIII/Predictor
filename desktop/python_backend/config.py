@@ -124,6 +124,12 @@ WALK_FORWARD_FOLDS = 5          # number of expanding-window folds for post-trai
 # ── XGBoost Early Stopping ───────────────────────────
 XGB_EARLY_STOPPING_ROUNDS = 30  # stop if logloss doesn't improve for N rounds on eval set
 
+# ── Regime Gating ────────────────────────────────────
+REGIME_MIN_WIN_RATE = 0.35      # block trading if regime win rate falls below this (0-1)
+REGIME_MIN_TRADES = 5           # need at least N regime trades before gating kicks in
+REGIME_VOL_MAX = 3.0            # skip if vol_regime > N (extreme volatility / whipsaw)
+REGIME_VOL_MIN = 0.15           # skip if vol_regime < N (dead market / no opportunity)
+
 # ── Paper Trading ─────────────────────────────────────
 PAPER_STARTING_BALANCE = 10000
 PAPER_TRADES_PATH = os.path.join(DATA_DIR, "paper_trades.csv")

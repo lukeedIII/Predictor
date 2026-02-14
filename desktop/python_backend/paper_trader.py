@@ -303,6 +303,37 @@ class PaperTrader:
             logging.debug(f"Skip: Hurst {hurst:.3f} indicates random/chaotic regime")
             return None
         
+        # Rule 2b: Vol-regime filter — skip extreme volatility (whipsaw) and dead markets
+        vol_regime = prediction.get('vol_regime', 1.0)
+        vol_max = getattr(config, 'REGIME_VOL_MAX', 3.0)
+        vol_min = getattr(config, 'REGIME_VOL_MIN', 0.15)
+        if vol_regime > vol_max:
+            self._signal_streak = 0
+            logging.debug(f"Skip: vol_regime {vol_regime:.2f} > {vol_max} (extreme volatility)")
+            return None
+        if vol_regime < vol_min:
+            self._signal_streak = 0
+            logging.debug(f"Skip: vol_regime {vol_regime:.2f} < {vol_min} (dead market)")
+            return None
+        
+        # Rule 2c: Regime win-rate gate — block trading in losing regimes
+        regime_label = prediction.get('regime_label', 'UNKNOWN')
+        min_wr = getattr(config, 'REGIME_MIN_WIN_RATE', 0.35)
+        min_trades = getattr(config, 'REGIME_MIN_TRADES', 5)
+        if self._feedback_log:
+            regime_trades = [t for t in self._feedback_log[-50:] if t.get('regime') == regime_label]
+            if len(regime_trades) >= min_trades:
+                wins = sum(1 for t in regime_trades if t.get('won', False))
+                wr = wins / len(regime_trades)
+                if wr < min_wr:
+                    self._signal_streak = 0
+                    logging.info(
+                        f"REGIME GATE: {regime_label} blocked — "
+                        f"win rate {wr*100:.0f}% < {min_wr*100:.0f}% "
+                        f"({wins}/{len(regime_trades)} wins)"
+                    )
+                    return None
+        
         # Rule 3: Signal confirmation — need 2+ consecutive predictions in same direction
         wanted = 'LONG' if direction == 'UP' else 'SHORT'
         if not hasattr(self, '_signal_streak'):
