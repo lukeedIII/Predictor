@@ -156,7 +156,7 @@ class PaperTrader:
     """
     
     # Max concurrent positions for data farming
-    MAX_CONCURRENT = 3
+    MAX_CONCURRENT = 6
 
     def __init__(self, starting_balance: float = None, default_leverage: int = None):
         self.starting_balance = starting_balance or config.PAPER_STARTING_BALANCE
@@ -216,7 +216,7 @@ class PaperTrader:
         Floor at 5% so positions stay meaningful.
         """
         if self._avg_loss == 0 or self.total_trades < 5:
-            return 0.15  # Default 15% until enough data — meaningful position sizes
+            return 0.08  # Default 8% per slot (6 slots × 8% = 48% max deployed)
         
         p = self._win_rate
         q = 1 - p
