@@ -8,14 +8,15 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-6.2.0-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
+[![Version](https://img.shields.io/badge/version-6.2.1-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 [![Electron](https://img.shields.io/badge/Electron-40-47848F?style=flat-square&logo=electron&logoColor=white)](https://electronjs.org)
-[![CUDA](https://img.shields.io/badge/CUDA-GPU%20Accelerated-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
-[![License](https://img.shields.io/badge/license-Private-red?style=flat-square)]()
+[![CUDA](https://img.shields.io/badge/CUDA-Optional-76B900?style=flat-square&logo=nvidia&logoColor=white)](https://developer.nvidia.com/cuda-toolkit)
+[![License](https://img.shields.io/badge/license-MIT-green?style=flat-square)](LICENSE)
+[![Tests](https://img.shields.io/badge/tests-24%20passed-brightgreen?style=flat-square)](desktop/python_backend/tests/test_core.py)
 
-**Nexus Shadow-Quant** is a self-contained desktop application that ingests live BTC market data, computes institutional-style quant diagnostics, produces calibrated ML probabilities, and runs a fully local **autonomous paper trader** — all on your machine.
+**Nexus Shadow-Quant** is a self-contained desktop application that ingests live BTC market data, computes quant diagnostics, produces calibrated ML probabilities, and runs a fully local **autonomous paper trader** — all on your machine.
 
 </div>
 
@@ -227,35 +228,90 @@ A walk-forward backtest on ~3.15M candles reported:
 
 ---
 
-## 🧪 Reproducibility
+## 🚀 Installation
 
-### Development mode
+### Prerequisites
+
+| Software | Version | Required? |
+|:---------|:--------|:----------|
+| [Python](https://python.org) | 3.12 (3.10+ works) | ✅ Yes |
+| [Node.js](https://nodejs.org) | 20 LTS+ | ✅ Yes |
+| [Git](https://git-scm.com) | any | Optional |
+| NVIDIA GPU + CUDA | RTX 3060+ | ❌ Optional (only for Transformer) |
+
+> **Note:** XGBoost (the primary model) runs on CPU. GPU is only needed for the optional Transformer/LSTM module.
+
+### Option A: Clone with Git
+
 ```powershell
 git clone https://github.com/lukeedIII/Predictor.git
 cd Predictor
+```
 
-cd desktop
-npm install
+### Option B: Download ZIP
 
+1. Go to [github.com/lukeedIII/Predictor](https://github.com/lukeedIII/Predictor)
+2. Click **Code → Download ZIP**
+3. Extract and open PowerShell in the extracted folder
+
+### Step-by-Step Setup
+
+```powershell
+# ── 1. Python backend ──
+cd desktop\python_backend
+python -m venv venv
+.\venv\Scripts\Activate.ps1
+pip install --upgrade pip
 pip install -r requirements.txt
 
-copy ..\.env.example python_backend\.env
-# OpenAI key is optional (Dr. Nexus disabled if missing)
+# ── 2. API keys (create .env file) ──
+# Binance keys are required (free, read-only is enough)
+# OpenAI key is optional (only for Dr. Nexus AI chat)
+New-Item .env -ItemType File
+# Edit .env and add:
+#   BINANCE_API_KEY=your_key_here
+#   BINANCE_SECRET_KEY=your_secret_here
+#   OPENAI_API_KEY=your_key_here    (optional)
 
+# ── 3. Verify backend ──
+python -c "import predictor; print('Backend OK')"
+
+# ── 4. Frontend (Electron + React) ──
+cd ..
+npm install
+
+# ── 5. Launch ──
 npm run dev
 ```
 
-### Backtest / audit scripts
-This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reproduce headline metrics:
+### Quick One-Liner (after prerequisites are installed)
 
-1) Ensure you have historical BTC/USDT 1m candles available in the expected data location used by the backtest script.
-2) Run the backtest script from the python backend context.
-3) Compare reported:
-   - accuracy
-   - Sharpe (confirm definition)
-   - regime breakdown (if supported)
+```powershell
+# From the project root:
+cd desktop\python_backend && python -m venv venv && .\venv\Scripts\Activate.ps1 && pip install -r requirements.txt && cd .. && npm install && npm run dev
+```
 
-> If you want, add a `BACKTEST.md` with exact dataset path expectations and command examples for your machine.
+### Running Tests
+
+```powershell
+cd desktop\python_backend
+.\venv\Scripts\Activate.ps1
+python -m pytest tests/ -v
+```
+
+### Backtest / Audit Scripts
+
+To reproduce the walk-forward backtest metrics:
+
+```powershell
+cd desktop\python_backend
+.\venv\Scripts\Activate.ps1
+python run_backtest_parallel.py    # uses all cores
+# or
+python run_backtest.py             # single-threaded
+```
+
+> Requires historical BTC/USDT 1m candles in the data directory. Horizon is set via `config.PREDICTION_HORIZON_MINUTES` (default: 15 min).
 
 ---
 
@@ -279,6 +335,12 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 - **Pinned dependency versions** — all packages in `requirements.txt` use compatible-range constraints (`>=min,<next-major`) for reproducibility
 - **Semantic HMM state ordering** — after fit, HMM states are sorted by mean return (highest → BULL, lowest → BEAR); eliminates label instability across refits
 - **RQA/TDA computational guardrails** — both capped at 200-point windows and use `scipy.spatial.distance.cdist` (vectorized) instead of O(n²) Python loops
+- **Backtest horizon alignment** — all backtest runners use `config.PREDICTION_HORIZON_MINUTES` (15 min), matching the predictor's label horizon exactly
+- **Thread-safe model access** — `threading.RLock` protects model swap during retrain and model read during prediction; eliminates race conditions
+- **Dynamic CPU pinning** — XGBoost `n_jobs` set to `min(8, cpu_count-1)`, leaving one core for UI responsiveness
+- **GPU is optional** — system check downgrades GPU absence to a warning (XGBoost runs on CPU); GPU only needed for optional Transformer/LSTM
+- **Test suite** — 24 pytest tests across 8 areas: label creation, causal integrity, gap detection, HMM ordering, PSI drift, Sharpe annualization, champion-challenger config, RQA/TDA guardrails
+- **Clean MIT license** — pure MIT with no contradictory additional terms
 
 ---
 
@@ -319,6 +381,6 @@ Nexus Shadow-Quant is an educational and research tool. It is not financial advi
 
 <div align="center">
 
-**v6.2.0 Beta Stable** · Built locally with ⚡ by **G-luc**
+**v6.2.1 Beta Stable** · Built locally with ⚡ by **G-luc**
 
 </div>
