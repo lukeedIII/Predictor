@@ -49,6 +49,11 @@ class Position:
         self.entry_time = datetime.now()
         self.liquidation_price = self._calc_liquidation()
         
+        # Fee tracking — entry fee charged at open
+        fee_pct = (getattr(config, 'PAPER_FEE_TAKER_PCT', 0.04)
+                   + getattr(config, 'PAPER_SLIPPAGE_PCT', 0.01))
+        self.entry_fee = round(size_usd * fee_pct / 100, 4)
+        
         # Trailing stop loss state
         self.best_price = entry_price       # Best price seen while open
     
@@ -83,13 +88,19 @@ class Position:
                 if trail_price < self.sl_price:
                     self.sl_price = trail_price
     
-    def unrealized_pnl(self, current_price: float) -> float:
-        """Calculate unrealized PnL at current price."""
+    def unrealized_pnl(self, current_price: float, net: bool = True) -> float:
+        """Calculate unrealized PnL at current price.
+        If net=True (default), subtracts entry fee + estimated exit fee."""
         if self.direction == "LONG":
             pct_move = (current_price - self.entry_price) / self.entry_price
         else:
             pct_move = (self.entry_price - current_price) / self.entry_price
-        return self.size_usd * pct_move
+        gross = self.size_usd * pct_move
+        if not net:
+            return gross
+        # Subtract entry fee + estimated exit fee
+        est_exit_fee = self.entry_fee  # same rate both sides
+        return gross - self.entry_fee - est_exit_fee
     
     def unrealized_pnl_pct(self, current_price: float) -> float:
         """PnL as percentage of margin (not notional)."""
@@ -131,7 +142,8 @@ class Position:
             'initial_sl': self.initial_sl,
             'best_price': self.best_price,
             'entry_time': self.entry_time.isoformat(),
-            'liquidation_price': self.liquidation_price
+            'liquidation_price': self.liquidation_price,
+            'entry_fee': self.entry_fee
         }
 
 
@@ -163,7 +175,9 @@ class PaperTrader:
         self.total_trades = 0
         self.winning_trades = 0
         self.losing_trades = 0
-        self.total_pnl = 0.0
+        self.total_pnl = 0.0        # Net PnL (after fees)
+        self.total_gross_pnl = 0.0  # Gross PnL (before fees)
+        self.total_fees = 0.0       # Cumulative fees paid
         self.trade_history = []
         self.equity_history = []
         
@@ -381,6 +395,12 @@ class PaperTrader:
             sl_price=sl,
             hurst=prediction.get('hurst', 0.5)
         )
+        
+        # Deduct entry fee from balance
+        entry_fee = new_pos.entry_fee
+        self.balance -= entry_fee
+        self.total_fees += entry_fee
+        
         self.positions.append(new_pos)
         self.position = self.positions[0] if self.positions else None  # Legacy compat
         self._save_positions()  # Persist for crash recovery
@@ -391,7 +411,7 @@ class PaperTrader:
                                   prediction.get('confidence', 0))
         logging.info(
             f"OPENED {direction} #{len(self.positions)} @ ${current_price:,.2f} | "
-            f"Size: ${size_usd:,.2f} ({self.leverage}x) | "
+            f"Size: ${size_usd:,.2f} ({self.leverage}x) | Fee: ${entry_fee:.2f} | "
             f"TP: ${tp:,.2f} | SL: ${sl:,.2f} | "
             f"Liq: ${new_pos.liquidation_price:,.2f}"
         )
@@ -409,20 +429,36 @@ class PaperTrader:
         if pos not in self.positions:
             return {}
         
-        pnl = pos.unrealized_pnl(current_price)
-        pnl_pct = pos.unrealized_pnl_pct(current_price)
+        gross_pnl = pos.unrealized_pnl(current_price, net=False)
         
         # Handle liquidation — lose entire margin
         if reason == "LIQUIDATED":
-            pnl = -pos.margin
-            pnl_pct = -100.0
+            gross_pnl = -pos.margin
         
-        # Update balance
-        self.balance += pnl
-        self.total_pnl += pnl
+        # ── Fee deduction: exit fee ──
+        fee_pct = (getattr(config, 'PAPER_FEE_TAKER_PCT', 0.04)
+                   + getattr(config, 'PAPER_SLIPPAGE_PCT', 0.01))
+        exit_fee = round(pos.size_usd * fee_pct / 100, 4)
+        entry_fee = pos.entry_fee  # already charged at open
+        total_fee = round(entry_fee + exit_fee, 4)
+        
+        net_pnl = gross_pnl - exit_fee  # entry fee was already deducted at open
+        net_pnl_pct = (net_pnl / pos.margin) * 100 if pos.margin else 0
+        gross_pnl_pct = (gross_pnl / pos.margin) * 100 if pos.margin else 0
+        
+        if reason == "LIQUIDATED":
+            net_pnl = -(pos.margin + exit_fee)
+            net_pnl_pct = -100.0
+            gross_pnl_pct = -100.0
+        
+        # Update balance (exit fee deducted; entry fee was already deducted at open)
+        self.balance += gross_pnl - exit_fee
+        self.total_pnl += net_pnl
+        self.total_gross_pnl += gross_pnl
+        self.total_fees += exit_fee
         self.total_trades += 1
         
-        if pnl > 0:
+        if net_pnl > 0:
             self.winning_trades += 1
         else:
             self.losing_trades += 1
@@ -431,8 +467,8 @@ class PaperTrader:
         if self.balance > self.peak_balance:
             self.peak_balance = self.balance
         
-        # Update Kelly statistics
-        self._update_kelly_stats(pnl, pos.size_usd)
+        # Update Kelly statistics (use net PnL for realistic sizing)
+        self._update_kelly_stats(net_pnl, pos.size_usd)
         
         # Build trade record
         hold_secs = (datetime.now() - pos.entry_time).total_seconds()
@@ -445,8 +481,12 @@ class PaperTrader:
             'size_usd': pos.size_usd,
             'margin': pos.margin,
             'leverage': pos.leverage,
-            'pnl_usd': round(pnl, 2),
-            'pnl_pct': round(pnl_pct, 2),
+            'gross_pnl_usd': round(gross_pnl, 2),
+            'pnl_usd': round(net_pnl, 2),          # net PnL (after fees)
+            'pnl_pct': round(net_pnl_pct, 2),       # net PnL % of margin
+            'entry_fee': round(entry_fee, 4),
+            'exit_fee': round(exit_fee, 4),
+            'total_fee': round(total_fee, 4),
             'confidence': pos.confidence,
             'regime': pos.regime,
             'close_reason': reason,
@@ -462,9 +502,9 @@ class PaperTrader:
             'confidence': pos.confidence,
             'regime': pos.regime,
             'hurst': getattr(pos, 'hurst', 0.5),
-            'pnl_usd': round(pnl, 2),
-            'pnl_pct': round(pnl_pct, 2),
-            'won': pnl > 0,
+            'pnl_usd': round(net_pnl, 2),
+            'pnl_pct': round(net_pnl_pct, 2),
+            'won': net_pnl > 0,
             'close_reason': reason,
             'hold_minutes': round(hold_secs / 60, 1),
             'trailing_sl_moved': getattr(pos, 'sl_price', 0) != getattr(pos, 'initial_sl', 0),
@@ -488,8 +528,8 @@ class PaperTrader:
         self.nlog.log_trade_close(trade_record)
         logging.info(
             f"CLOSED {pos.direction} @ ${current_price:,.2f} | "
-            f"Reason: {reason} | PnL: ${pnl:+,.2f} ({pnl_pct:+.1f}%) | "
-            f"Balance: ${self.balance:,.2f} | Open: {len(self.positions)}"
+            f"Reason: {reason} | Net: ${net_pnl:+,.2f} ({net_pnl_pct:+.1f}%) | "
+            f"Fees: ${total_fee:.2f} | Balance: ${self.balance:,.2f} | Open: {len(self.positions)}"
         )
         
         return trade_record
@@ -573,21 +613,42 @@ class PaperTrader:
                 trades_per_year = 8760 / avg_hours  # Hours in a year / avg trade duration
                 sharpe = np.mean(returns) / np.std(returns) * np.sqrt(trades_per_year)
         
-        # Profit factor
-        gross_wins = sum(t['pnl_usd'] for t in self.trade_history if t['pnl_usd'] > 0)
-        gross_losses = abs(sum(t['pnl_usd'] for t in self.trade_history if t['pnl_usd'] < 0))
-        profit_factor = gross_wins / gross_losses if gross_losses > 0 else float('inf')
+        # Profit factor (on net PnL)
+        net_wins = sum(t['pnl_usd'] for t in self.trade_history if t['pnl_usd'] > 0)
+        net_losses = abs(sum(t['pnl_usd'] for t in self.trade_history if t['pnl_usd'] < 0))
+        profit_factor = net_wins / net_losses if net_losses > 0 else float('inf')
+        
+        # Net Sharpe (based on pnl_pct which is now net of fees)
+        net_sharpe = 0
+        if len(self.trade_history) > 2:
+            net_returns = [t['pnl_pct'] for t in self.trade_history]
+            if np.std(net_returns) > 0:
+                durations_net = []
+                for t in self.trade_history:
+                    try:
+                        t_open = pd.to_datetime(t.get('timestamp_open', t.get('timestamp', datetime.now())))
+                        t_close = pd.to_datetime(t.get('timestamp_close', t.get('timestamp', datetime.now())))
+                        dur_h = max(1/60, (t_close - t_open).total_seconds() / 3600)
+                        durations_net.append(dur_h)
+                    except Exception:
+                        durations_net.append(1.0)
+                avg_h_net = np.mean(durations_net) if durations_net else 1.0
+                tpy_net = 8760 / avg_h_net
+                net_sharpe = np.mean(net_returns) / np.std(net_returns) * np.sqrt(tpy_net)
         
         return {
             'balance': self.balance,
             'starting_balance': self.starting_balance,
             'total_pnl': self.total_pnl,
+            'total_gross_pnl': self.total_gross_pnl,
+            'total_fees': self.total_fees,
             'total_pnl_pct': (self.balance / self.starting_balance - 1) * 100,
             'total_trades': self.total_trades,
             'winning_trades': self.winning_trades,
             'losing_trades': self.losing_trades,
             'win_rate': win_rate,
             'sharpe_ratio': sharpe,
+            'net_sharpe_ratio': net_sharpe,
             'max_drawdown_pct': drawdown,
             'profit_factor': profit_factor,
             'kelly_fraction': self.kelly_fraction(),
@@ -649,12 +710,20 @@ class PaperTrader:
                 self.losing_trades = len(df[df['pnl_usd'] <= 0])
                 self.total_pnl = df['pnl_usd'].sum()
                 
+                # Restore fee accumulators from history
+                if 'total_fee' in df.columns:
+                    self.total_fees = df['total_fee'].sum()
+                if 'gross_pnl_usd' in df.columns:
+                    self.total_gross_pnl = df['gross_pnl_usd'].sum()
+                else:
+                    self.total_gross_pnl = self.total_pnl  # legacy fallback
+                
                 if 'balance_after' in df.columns and len(df) > 0:
                     self.balance = df['balance_after'].iloc[-1]
                     self.peak_balance = max(self.starting_balance, df['balance_after'].max())
                 
                 self._update_kelly_stats(0, 0)
-                logging.info(f"Loaded {self.total_trades} historical trades, balance: ${self.balance:,.2f}")
+                logging.info(f"Loaded {self.total_trades} historical trades, balance: ${self.balance:,.2f}, fees: ${self.total_fees:,.2f}")
             except Exception as e:
                 logging.warning(f"Could not load trade history: {e}")
     
@@ -677,6 +746,8 @@ class PaperTrader:
         self.winning_trades = 0
         self.losing_trades = 0
         self.total_pnl = 0.0
+        self.total_gross_pnl = 0.0
+        self.total_fees = 0.0
         self.trade_history = []
         self.equity_history = []
         self._win_rate = 0.52
@@ -737,6 +808,8 @@ class PaperTrader:
                 pos.entry_time = datetime.fromisoformat(p_data['entry_time'])
                 pos.initial_sl = p_data.get('initial_sl', p_data['sl_price'])
                 pos.best_price = p_data.get('best_price', p_data['entry_price'])
+                if 'entry_fee' in p_data:
+                    pos.entry_fee = p_data['entry_fee']
                 self.positions.append(pos)
             
             self.position = self.positions[0] if self.positions else None

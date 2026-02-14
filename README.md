@@ -261,13 +261,14 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 - Transformer must earn inclusion before contributing
 - **Champion-Challenger deployment gate** — new models must match or beat production model on logloss + accuracy before promotion (with configurable grace period for cold start)
 - **Drift monitoring** — 3-channel detection: feature PSI, prediction distribution shift, and calibration drift (Brier score + ECE); runs every 30 min with `OK / WARNING / CRITICAL` severity levels
+- **Fee-adjusted net-PnL** — Binance taker (0.04%) + slippage (0.01%) deducted at both open and close; trade records include gross/net/fee breakdown; stats expose total_fees and net Sharpe
 
 ---
 
 ## ❌ Known Gaps (Ranked by Impact)
 1) ~~No **champion–challenger** deployment~~ → ✅ **Implemented v6.2.0**
 2) ~~No **drift monitoring**~~ → ✅ **Implemented v6.2.0** (feature PSI + prediction drift + calibration Brier/ECE)
-3) No fee-adjusted **net-PnL accounting** inside paper fills
+3) ~~No fee-adjusted **net-PnL accounting**~~ → ✅ **Implemented v6.2.0** (taker 0.04% + slippage 0.01% per fill)
 4) No rolling **walk-forward evaluation** inside the live retrain pipeline
 5) No **early stopping** for XGBoost (always builds 500 trees)
 6) No regime-specific models or regime-based trade gating
@@ -279,7 +280,7 @@ This repo includes backtest tooling (e.g. `run_backtest_parallel.py`). To reprod
 ## 🗺️ Roadmap (High-Impact Next Steps)
 - [x] Champion–Challenger + promotion rules (logloss + accuracy gate, configurable thresholds)
 - [x] Drift monitoring: PSI + calibration drift + prediction drift (3-channel `DriftMonitor`)
-- [ ] Fee/slippage-aware paper fills + net-PnL dashboards + turnover
+- [x] Fee/slippage-aware paper fills + net-PnL tracking + fee breakdown in trade records
 - [ ] Rolling walk-forward evaluation integrated into retraining loop
 - [ ] Early stopping + light hyperparameter sweeps
 - [ ] Regime gating or regime-specific models (router via HMM/Hurst/vol regime)

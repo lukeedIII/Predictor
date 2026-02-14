@@ -129,6 +129,11 @@ PAPER_MAX_DRAWDOWN = 0.20
 PAPER_COOLDOWN_SEC = 60
 PAPER_MAX_HOLD_SEC = 7200
 
+# ── Paper Trading Fees ────────────────────────────────
+PAPER_FEE_TAKER_PCT = 0.04     # Binance taker fee per side (0.04%)
+PAPER_FEE_MAKER_PCT = 0.02     # Binance maker fee per side (unused — paper uses taker)
+PAPER_SLIPPAGE_PCT = 0.01      # Estimated slippage per fill (0.01%)
+
 # ── News Sources ──────────────────────────────────────
 NEWS_SOURCES = [
     "https://cointelegraph.com/rss",
