@@ -210,10 +210,13 @@ class PaperTrader:
         """
         Kelly Criterion: f* = (p * b - q) / b
         Where p = win probability, q = 1-p, b = avg_win / avg_loss
+        
+        Default 15% per slot until enough data (3 slots × 15% = 45% max).
         Capped at 25% for safety (half-Kelly is standard practice).
+        Floor at 5% so positions stay meaningful.
         """
         if self._avg_loss == 0 or self.total_trades < 5:
-            return 0.02  # Default 2% until enough data
+            return 0.15  # Default 15% until enough data — meaningful position sizes
         
         p = self._win_rate
         q = 1 - p
@@ -224,8 +227,8 @@ class PaperTrader:
         # Half-Kelly (standard for real trading)
         half_kelly = kelly / 2
         
-        # Floor 1%, cap at 25%
-        return max(0.01, min(0.25, half_kelly))
+        # Floor 5%, cap at 25%
+        return max(0.05, min(0.25, half_kelly))
     
     def calculate_position_size(self) -> float:
         """Calculate position size in USD based on Kelly fraction and leverage."""
