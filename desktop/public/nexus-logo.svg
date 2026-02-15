@@ -1,0 +1,181 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <!-- Background gradient -->
+    <radialGradient id="bgGrad" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#1a1f35"/>
+      <stop offset="100%" stop-color="#080b12"/>
+    </radialGradient>
+    
+    <!-- Core glow gradient -->
+    <radialGradient id="coreGlow" cx="50%" cy="50%" r="40%">
+      <stop offset="0%" stop-color="#6366f1" stop-opacity="0.4"/>
+      <stop offset="60%" stop-color="#6366f1" stop-opacity="0.1"/>
+      <stop offset="100%" stop-color="#6366f1" stop-opacity="0"/>
+    </radialGradient>
+    
+    <!-- Gold accent gradient -->
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#f59e0b"/>
+      <stop offset="50%" stop-color="#fbbf24"/>
+      <stop offset="100%" stop-color="#f59e0b"/>
+    </linearGradient>
+    
+    <!-- Indigo accent gradient -->
+    <linearGradient id="indigoGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#818cf8"/>
+      <stop offset="50%" stop-color="#6366f1"/>
+      <stop offset="100%" stop-color="#4f46e5"/>
+    </linearGradient>
+    
+    <!-- Outer ring gradient -->
+    <linearGradient id="ringGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#6366f1"/>
+      <stop offset="25%" stop-color="#818cf8"/>
+      <stop offset="50%" stop-color="#f59e0b"/>
+      <stop offset="75%" stop-color="#818cf8"/>
+      <stop offset="100%" stop-color="#6366f1"/>
+    </linearGradient>
+
+    <!-- Drop shadow filter -->
+    <filter id="glow">
+      <feGaussianBlur stdDeviation="4" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+    
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="8" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  
+  <!-- Background circle -->
+  <circle cx="256" cy="256" r="256" fill="url(#bgGrad)"/>
+  
+  <!-- Core ambient glow -->
+  <circle cx="256" cy="256" r="200" fill="url(#coreGlow)"/>
+  
+  <!-- Outer ring -->
+  <circle cx="256" cy="256" r="230" fill="none" stroke="url(#ringGrad)" stroke-width="2.5" opacity="0.6"/>
+  <circle cx="256" cy="256" r="210" fill="none" stroke="#6366f1" stroke-width="0.8" opacity="0.3"/>
+  
+  <!-- Neural network nodes - outer ring -->
+  <!-- Top -->
+  <circle cx="256" cy="76" r="6" fill="#818cf8" filter="url(#glow)" opacity="0.8"/>
+  <!-- Top-right -->
+  <circle cx="383" cy="129" r="5" fill="#818cf8" filter="url(#glow)" opacity="0.7"/>
+  <!-- Right -->
+  <circle cx="436" cy="256" r="6" fill="#818cf8" filter="url(#glow)" opacity="0.8"/>
+  <!-- Bottom-right -->
+  <circle cx="383" cy="383" r="5" fill="#818cf8" filter="url(#glow)" opacity="0.7"/>
+  <!-- Bottom -->
+  <circle cx="256" cy="436" r="6" fill="#818cf8" filter="url(#glow)" opacity="0.8"/>
+  <!-- Bottom-left -->
+  <circle cx="129" cy="383" r="5" fill="#818cf8" filter="url(#glow)" opacity="0.7"/>
+  <!-- Left -->
+  <circle cx="76" cy="256" r="6" fill="#818cf8" filter="url(#glow)" opacity="0.8"/>
+  <!-- Top-left -->
+  <circle cx="129" cy="129" r="5" fill="#818cf8" filter="url(#glow)" opacity="0.7"/>
+  
+  <!-- Neural connections from outer to inner -->
+  <g stroke="#6366f1" stroke-width="0.8" opacity="0.25">
+    <!-- Connections to center hexagon -->
+    <line x1="256" y1="76" x2="256" y2="170"/>
+    <line x1="383" y1="129" x2="330" y2="190"/>
+    <line x1="436" y1="256" x2="342" y2="256"/>
+    <line x1="383" y1="383" x2="330" y2="322"/>
+    <line x1="256" y1="436" x2="256" y2="342"/>
+    <line x1="129" y1="383" x2="182" y2="322"/>
+    <line x1="76" y1="256" x2="170" y2="256"/>
+    <line x1="129" y1="129" x2="182" y2="190"/>
+    
+    <!-- Cross connections -->
+    <line x1="256" y1="76" x2="383" y2="129"/>
+    <line x1="383" y1="129" x2="436" y2="256"/>
+    <line x1="436" y1="256" x2="383" y2="383"/>
+    <line x1="383" y1="383" x2="256" y2="436"/>
+    <line x1="256" y1="436" x2="129" y2="383"/>
+    <line x1="129" y1="383" x2="76" y2="256"/>
+    <line x1="76" y1="256" x2="129" y2="129"/>
+    <line x1="129" y1="129" x2="256" y2="76"/>
+  </g>
+  
+  <!-- Inner hexagonal structure -->
+  <polygon 
+    points="256,170 330,213 330,299 256,342 182,299 182,213" 
+    fill="none" 
+    stroke="url(#indigoGrad)" 
+    stroke-width="2"
+    opacity="0.5"
+  />
+  
+  <!-- Inner nodes -->
+  <circle cx="256" cy="170" r="4" fill="#a5b4fc" opacity="0.6"/>
+  <circle cx="330" cy="213" r="4" fill="#a5b4fc" opacity="0.6"/>
+  <circle cx="330" cy="299" r="4" fill="#a5b4fc" opacity="0.6"/>
+  <circle cx="256" cy="342" r="4" fill="#a5b4fc" opacity="0.6"/>
+  <circle cx="182" cy="299" r="4" fill="#a5b4fc" opacity="0.6"/>
+  <circle cx="182" cy="213" r="4" fill="#a5b4fc" opacity="0.6"/>
+  
+  <!-- Central "N" monogram -->
+  <g filter="url(#softGlow)">
+    <!-- "N" letter in gold -->
+    <text 
+      x="256" y="275" 
+      font-family="'Segoe UI', 'SF Pro Display', 'Helvetica Neue', sans-serif" 
+      font-size="100" 
+      font-weight="700" 
+      fill="url(#goldGrad)" 
+      text-anchor="middle" 
+      dominant-baseline="central"
+      letter-spacing="-2"
+    >N</text>
+  </g>
+  
+  <!-- Small decorative dots around the N -->
+  <circle cx="210" cy="220" r="2" fill="#fbbf24" opacity="0.6"/>
+  <circle cx="302" cy="220" r="2" fill="#fbbf24" opacity="0.6"/>
+  <circle cx="210" cy="292" r="2" fill="#fbbf24" opacity="0.6"/>
+  <circle cx="302" cy="292" r="2" fill="#fbbf24" opacity="0.6"/>
+  
+  <!-- Subtle candlestick chart motif at bottom -->
+  <g transform="translate(256, 390)" opacity="0.3">
+    <!-- Candle wicks -->
+    <line x1="-30" y1="-15" x2="-30" y2="15" stroke="#22c55e" stroke-width="1.5"/>
+    <line x1="-15" y1="-12" x2="-15" y2="18" stroke="#ef4444" stroke-width="1.5"/>
+    <line x1="0" y1="-20" x2="0" y2="10" stroke="#22c55e" stroke-width="1.5"/>
+    <line x1="15" y1="-8" x2="15" y2="16" stroke="#22c55e" stroke-width="1.5"/>
+    <line x1="30" y1="-18" x2="30" y2="8" stroke="#ef4444" stroke-width="1.5"/>
+    
+    <!-- Candle bodies -->
+    <rect x="-34" y="-8" width="8" height="12" rx="1" fill="#22c55e" opacity="0.7"/>
+    <rect x="-19" y="-4" width="8" height="14" rx="1" fill="#ef4444" opacity="0.7"/>
+    <rect x="-4" y="-12" width="8" height="14" rx="1" fill="#22c55e" opacity="0.7"/>
+    <rect x="11" y="-2" width="8" height="10" rx="1" fill="#22c55e" opacity="0.7"/>
+    <rect x="26" y="-10" width="8" height="12" rx="1" fill="#ef4444" opacity="0.7"/>
+  </g>
+  
+  <!-- Thin outer decorative ring with tick marks -->
+  <circle cx="256" cy="256" r="245" fill="none" stroke="#6366f1" stroke-width="0.5" opacity="0.2"/>
+  
+  <!-- Tick marks every 30 degrees -->
+  <g stroke="#818cf8" stroke-width="1" opacity="0.3">
+    <line x1="256" y1="14" x2="256" y2="24"/>
+    <line x1="377" y1="57" x2="372" y2="66"/>
+    <line x1="455" y1="135" x2="446" y2="140"/>
+    <line x1="498" y1="256" x2="488" y2="256"/>
+    <line x1="455" y1="377" x2="446" y2="372"/>
+    <line x1="377" y1="455" x2="372" y2="446"/>
+    <line x1="256" y1="498" x2="256" y2="488"/>
+    <line x1="135" y1="455" x2="140" y2="446"/>
+    <line x1="57" y1="377" x2="66" y2="372"/>
+    <line x1="14" y1="256" x2="24" y2="256"/>
+    <line x1="57" y1="135" x2="66" y2="140"/>
+    <line x1="135" y1="57" x2="140" y2="66"/>
+  </g>
+</svg>

@@ -1,7 +1,7 @@
 {
   "name": "nexus-shadow-quant",
   "productName": "Nexus Shadow-Quant",
-  "version": "6.2.0",
+  "version": "6.4.2",
   "description": "Institutional Crypto Intelligence Platform",
   "main": "electron/main.js",
   "private": true,
@@ -34,13 +34,19 @@
     "win": {
       "target": [
         "nsis"
-      ]
+      ],
+      "icon": "build/icon.ico"
     },
+    "icon": "build/icon.png",
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
+      "shortcutName": "Nexus Shadow-Quant",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "installerHeaderIcon": "build/icon.ico",
       "license": "public/DISCLAIMER.txt"
     }
   },
