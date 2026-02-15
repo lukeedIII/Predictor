@@ -238,6 +238,20 @@ class NexusPredictor:
         self.alt_data = FreeDataAggregator() if ALT_DATA_AVAILABLE else None
         self.last_alt_signals = {}
         
+        # Derivatives features (from DerivativesFeed — pushed by api_server background loop)
+        self._live_derivs_features: dict = {}
+        # Feature names for Phase 4 meta-stacker integration
+        self.derivatives_feature_names = [
+            'funding_rate', 'funding_rate_ema_1d', 'funding_rate_ema_7d',
+            'funding_rate_z_7d', 'funding_regime',
+            'mark_index_spread_bps', 'spread_z_1d', 'spread_z_7d',
+            'time_to_funding_min',
+            'oi_value', 'oi_chg_5m', 'oi_chg_15m', 'oi_chg_1h',
+            'oi_chg_4h', 'oi_z_7d', 'oi_price_divergence',
+            'basis_rate', 'basis_chg_1h', 'basis_z_7d',
+            'derivs_quality', 'oi_is_stale', 'premium_is_stale',
+        ]
+        
         # Concurrency: protect model object during retrain vs inference
         self._model_lock = threading.RLock()
         

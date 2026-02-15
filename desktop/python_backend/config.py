@@ -167,6 +167,12 @@ PREDICTION_THRESHOLD = 0.001   # Symmetric UP/DOWN threshold (0.1%)
                                # Previous: 0.003 (0.3%) caused 120:1 class imbalance
 PREDICTION_MIN_CLASS_RATIO = 0.15  # Min fraction of minority class (skip training if below)
 
+# ── Derivatives Data (Binance Futures) ────────────────
+DERIVATIVES_ENABLED = True                # Enable funding/OI/basis collection
+DERIVATIVES_DIR = os.path.join(DATA_DIR, "derivatives")
+DERIVATIVES_COLLECT_INTERVAL = 60         # Snapshot every 60s
+DERIVATIVES_HISTORY_INTERVAL = 300        # OI/basis history every 5 min
+
 # ── News Sources ──────────────────────────────────────
 NEWS_SOURCES = [
     "https://cointelegraph.com/rss",

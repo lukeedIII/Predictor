@@ -34,6 +34,7 @@ from math_core import MathCore
 import nexus_agent
 from binance_ws import BinanceWSClient
 from gpu_game import GpuGame
+from derivatives_feed import DerivativesFeed
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -46,6 +47,7 @@ trader: Optional[PaperTrader] = None
 collector: Optional[DataCollector] = None
 math_core: Optional[MathCore] = None
 binance_ws: Optional[BinanceWSClient] = None
+derivs_feed: Optional[DerivativesFeed] = None
 
 boot_status = {"stage": "starting", "progress": 0, "message": "Initializing..."}
 _auto_trade_thread: Optional[threading.Thread] = None
@@ -119,7 +121,7 @@ def _check_system_requirements():
 
 def _init_engines():
     """Initialize all engines in order, updating boot status."""
-    global predictor, trader, collector, math_core, binance_ws, boot_status, gpu_game
+    global predictor, trader, collector, math_core, binance_ws, boot_status, gpu_game, derivs_feed
     
     try:
         # ── System Requirements Check ──
@@ -143,6 +145,18 @@ def _init_engines():
         
         boot_status = {"stage": "data", "progress": 40, "message": "Loading market data..."}
         collector.collect_and_save(limit=100)
+        
+        # ── Derivatives Feed (funding, OI, basis) ──
+        if getattr(config, 'DERIVATIVES_ENABLED', False):
+            boot_status = {"stage": "derivatives", "progress": 48, "message": "Backfilling derivatives data..."}
+            try:
+                derivs_feed = DerivativesFeed()
+                derivs_feed.backfill_history()
+                derivs_feed.collect_snapshot()
+                logging.info("[BOOT] Derivatives feed initialized")
+            except Exception as e:
+                logging.warning(f"[BOOT] Derivatives feed failed (non-fatal): {e}")
+                derivs_feed = None
         
         boot_status = {"stage": "predictor", "progress": 55, "message": "Initializing AI predictor..."}
         predictor = NexusPredictor()
@@ -226,6 +240,21 @@ def _continuous_data_collect():
             
             if candles_saved % 60 == 0 and candles_saved > 0:  # Log every hour
                 logging.info(f"[DATA-COLLECTOR] {candles_saved} cycles complete, micro file: {os.path.exists(micro_path)}")
+            
+            # ── 3. Derivatives snapshot (funding, OI, basis) ──
+            if derivs_feed is not None:
+                try:
+                    derivs_feed.collect_snapshot()
+                    # Push features to predictor for live use
+                    if predictor is not None:
+                        predictor._live_derivs_features = derivs_feed.get_features()
+                    
+                    # Periodic history update (every 5 minutes)
+                    hist_interval = getattr(config, 'DERIVATIVES_HISTORY_INTERVAL', 300)
+                    if candles_saved % (hist_interval // 60) == 0 and candles_saved > 0:
+                        derivs_feed.collect_periodic_history()
+                except Exception as e:
+                    logging.debug(f"[DATA-COLLECTOR] Derivatives error: {e}")
                 
         except Exception as e:
             logging.warning(f"[DATA-COLLECTOR] Collection error: {e}")
@@ -565,6 +594,9 @@ def _prediction_refresh_loop():
                     "training_accuracy": training_acc,
                     "quant": _sanitize_for_json(quant),
                     "alt_signals": _sanitize_for_json(alt),
+                    "derivatives": _sanitize_for_json(
+                        derivs_feed.get_snapshot_dict() if derivs_feed else {}
+                    ),
                 }
 
                 with _cached_prediction_lock:
@@ -2469,6 +2501,28 @@ async def shutdown():
     # Schedule hard exit after giving the response time to flush
     asyncio.get_event_loop().call_later(0.5, lambda: os._exit(0))
     return {"status": "shutting_down"}
+
+
+# ============================================================
+#  DERIVATIVES DATA
+# ============================================================
+
+@app.get("/api/derivatives")
+async def get_derivatives():
+    """Real-time derivatives data: funding rate, OI, basis, mark-index spread."""
+    if derivs_feed is None:
+        return {
+            "enabled": False,
+            "message": "Derivatives feed not initialized",
+            "snapshot": {},
+            "features": {},
+        }
+    return {
+        "enabled": True,
+        "snapshot": derivs_feed.get_snapshot_dict(),
+        "features": derivs_feed.get_features(),
+        "feature_names": derivs_feed.get_feature_names(),
+    }
 
 
 # ============================================================
