@@ -468,41 +468,16 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     pos_weight = neg_count / max(pos_count, 1)
     add_log(f"   Train: {len(X_train):,} | Val: {len(X_val):,} | Pos weight: {pos_weight:.2f}")
 
-    # Auto batch size based on FREE VRAM (not total — other apps may use GPU memory)
-    if batch_size is None:
-        if device == 'cuda':
-            # Clear stale cache first so we get accurate free measurement
-            torch.cuda.empty_cache()
-            vram_free = (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)) / 1e9
-            add_log(f"   Free VRAM: {vram_free:.1f} GB")
-            if vram_free >= 18:
-                batch_size = 4096
-            elif vram_free >= 10:
-                batch_size = 2048
-            elif vram_free >= 6:
-                batch_size = 1024
-            elif vram_free >= 3:
-                batch_size = 512
-            else:
-                batch_size = 256
-        else:
-            batch_size = 256
-    add_log(f"   Batch size: {batch_size}")
-
-    # Tensors
+    # Tensors (CPU-resident — DataLoader pins+moves batches to GPU on demand)
     X_train_t = torch.tensor(X_train)
     y_train_t = torch.tensor(y_train).unsqueeze(1)
     X_val_t = torch.tensor(X_val)
     y_val_t = torch.tensor(y_val).unsqueeze(1)
 
     train_ds = torch.utils.data.TensorDataset(X_train_t, y_train_t)
-    train_loader = torch.utils.data.DataLoader(train_ds, batch_size=batch_size, shuffle=True, 
-                                                num_workers=0, pin_memory=(device == 'cuda'))
     val_ds = torch.utils.data.TensorDataset(X_val_t, y_val_t)
-    val_loader = torch.utils.data.DataLoader(val_ds, batch_size=batch_size * 2, num_workers=0,
-                                              pin_memory=(device == 'cuda'))
 
-    # Model
+    # Model — loaded BEFORE batch sizing so VRAM measurement is accurate
     ModelClass = ARCHITECTURES[arch_name]
     model = ModelClass(input_size=len(feature_cols)).to(device)
     add_log(f"🧠 Model: {arch_name} | {model.num_parameters:,} params ({model.size_mb:.1f} MB)")
@@ -518,6 +493,37 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
         except Exception as e:
             add_log(f"⚠️ Could not load checkpoint: {e} — training from scratch")
             start_epoch = 0
+
+    # ── Auto batch size based on FREE VRAM *after* model is loaded ──
+    # Previous bug: measured free VRAM before model load → batch too high → OOM
+    if batch_size is None:
+        if device == 'cuda':
+            torch.cuda.empty_cache()
+            vram_free = (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)) / 1e9
+            add_log(f"   Free VRAM (post-model): {vram_free:.1f} GB")
+            if vram_free >= 18:
+                batch_size = 4096
+            elif vram_free >= 10:
+                batch_size = 2048
+            elif vram_free >= 6:
+                batch_size = 1024
+            elif vram_free >= 3:
+                batch_size = 512
+            else:
+                batch_size = 256
+        else:
+            batch_size = 256
+    add_log(f"   Batch size: {batch_size}")
+
+    # ── Build DataLoaders (may be rebuilt if OOM triggers batch halving) ──
+    def build_loaders(bs):
+        tl = torch.utils.data.DataLoader(train_ds, batch_size=bs, shuffle=True,
+                                          num_workers=0, pin_memory=(device == 'cuda'))
+        vl = torch.utils.data.DataLoader(val_ds, batch_size=bs * 2, num_workers=0,
+                                          pin_memory=(device == 'cuda'))
+        return tl, vl
+
+    train_loader, val_loader = build_loaders(batch_size)
 
     # Optimizer & scheduler
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
@@ -566,21 +572,36 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
 
             optimizer.zero_grad(set_to_none=True)
 
-            if scaler:
-                with autocast('cuda'):
+            # ── OOM-safe forward pass: auto-halves batch size on CUDA OOM ──
+            try:
+                if scaler:
+                    with autocast('cuda'):
+                        logits = model(xb, return_logits=True)
+                        loss = criterion(logits, yb)
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
                     logits = model(xb, return_logits=True)
                     loss = criterion(logits, yb)
-                scaler.scale(loss).backward()
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                scaler.step(optimizer)
-                scaler.update()
-            else:
-                logits = model(xb, return_logits=True)
-                loss = criterion(logits, yb)
-                loss.backward()
-                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                optimizer.step()
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                    optimizer.step()
+            except torch.cuda.OutOfMemoryError:
+                # Free everything and halve batch size — retry from this epoch
+                torch.cuda.empty_cache()
+                import gc; gc.collect()
+                new_bs = max(batch_size // 2, 64)
+                if new_bs == batch_size:
+                    add_log(f"❌ OOM at minimum batch size ({batch_size}) — cannot train this architecture")
+                    return False
+                add_log(f"⚠️ OOM detected! Auto-halving batch: {batch_size} → {new_bs}")
+                batch_size = new_bs
+                train_loader, val_loader = build_loaders(batch_size)
+                batch_count = len(train_loader)
+                break  # Restart this epoch with smaller batch
 
             epoch_loss += loss.item() * xb.size(0)
             preds = (torch.sigmoid(logits) > 0.5).float()
