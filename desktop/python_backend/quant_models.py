@@ -2332,10 +2332,15 @@ class QuantEngine:
         vol = a.get('volatility', {}) or {}
         heston = a.get('heston', {}) or {}
         rough = a.get('rough_vol', {}) or {}
+        garch_current = float(vol.get('current', 0))
+        garch_forecast = float(vol.get('forecast', 0))
+        # If current is 0 (GARCH conditional vol unavailable), use forecast
+        if garch_current == 0 and garch_forecast > 0:
+            garch_current = garch_forecast
         summary['volatility'] = {
-            'garch_forecast': float(vol.get('forecast', 0)),
+            'garch_forecast': garch_forecast,
             'garch_asymmetry': float(vol.get('asymmetry', 0)),
-            'garch_current': float(vol.get('current', 0)),
+            'garch_current': garch_current,
             'heston_current_vol': float(heston.get('current_vol', 0)),
             'heston_mean_vol': float(heston.get('mean_vol', 0)),
             'heston_leverage': float(heston.get('leverage_effect', -0.7)),
@@ -2386,13 +2391,24 @@ class QuantEngine:
         # ── Fractal Intelligence ──
         mf = a.get('multifractal', {}) or {}
         tda = a.get('tda', {}) or {}
+        # Handle NOT_COMPUTED status from MF-DFA
+        mf_status = mf.get('status', '')
+        if mf_status == 'NOT_COMPUTED' or mf.get('multifractality', 0) == 0:
+            mf_interp = 'INSUFFICIENT_DATA'
+            mf_delta_h = 0
+        else:
+            mf_interp = mf.get('interpretation', 'UNKNOWN')
+            mf_delta_h = float(mf.get('delta_h', 0))
+        # TDA: use avg_persistence or max_persistence
+        tda_persistence = float(tda.get('max_persistence', tda.get('avg_persistence', 0)))
+        tda_complexity = tda.get('complexity', tda.get('interpretation', 'UNKNOWN'))
         summary['fractals'] = {
-            'multifractal_delta_h': float(mf.get('delta_h', 0)),
-            'multifractal_interpretation': mf.get('interpretation', 'UNKNOWN'),
+            'multifractal_delta_h': mf_delta_h,
+            'multifractal_interpretation': mf_interp,
             'multifractal_width': float(mf.get('spectrum_width', 0)),
-            'tda_n_features': int(tda.get('n_features', 0)),
-            'tda_persistence': float(tda.get('max_persistence', 0)),
-            'tda_complexity': tda.get('complexity', 'UNKNOWN'),
+            'tda_n_features': int(tda.get('n_features', tda.get('betti_0_initial', 0))),
+            'tda_persistence': tda_persistence,
+            'tda_complexity': tda_complexity,
         }
 
         # ── RQA (Pattern Detection) ──

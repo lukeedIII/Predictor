@@ -258,7 +258,7 @@ export default function QuantPanel() {
 
             {/* ── Volatility Suite ── */}
             <Section title="Volatility Suite" open={sections.volatility} toggle={() => toggle('volatility')}
-                badge={`${(garchCurrent * 100).toFixed(1)}%`} badgeColor="var(--warning)">
+                badge={`${((garchCurrent || garchForecast) * 100).toFixed(1)}%`} badgeColor="var(--warning)">
                 <MiniGauge label="GARCH Forecast" value={garchForecast} max={0.1}
                     fmt={v => `${(v * 100).toFixed(2)}%`} color="var(--warning)" compact />
                 <MiniGauge label="Leverage (γ)" value={garchAsymmetry} max={0.5}
@@ -317,7 +317,11 @@ export default function QuantPanel() {
             {/* ── Cycle Analysis ── */}
             <Section title="Cycle Analysis (EMD + HHT)" open={sections.cycles} toggle={() => toggle('cycles')}
                 badge={hhtPeriod > 0 ? `${hhtPeriod.toFixed(0)}m` : undefined} badgeColor="#06B6D4">
-                {cycleStrengths.map((s: number, i: number) => (
+                {cycleStrengths.every((s: number) => s === 0) ? (
+                    <div style={{ fontSize: 10, color: 'var(--text-2)', fontStyle: 'italic', padding: '4px 0' }}>
+                        No dominant cycles detected in current window
+                    </div>
+                ) : cycleStrengths.map((s: number, i: number) => (
                     <MiniGauge key={i} label={`Cycle ${i + 1}`} value={s} max={1}
                         fmt={v => v.toFixed(3)} color="#06B6D4" compact />
                 ))}
@@ -344,13 +348,21 @@ export default function QuantPanel() {
 
             {/* ── Fractal Intelligence ── */}
             <Section title="Fractal Intelligence" open={sections.fractals} toggle={() => toggle('fractals')}
-                badge={mfInterp} badgeColor="#EC4899">
-                <MiniGauge label="Multifractal ΔH" value={mfDeltaH} max={1}
-                    fmt={v => v.toFixed(4)} color="#EC4899" compact />
-                <div className="flex justify-between" style={{ fontSize: 10, color: 'var(--text-1)', marginBottom: 3 }}>
-                    <span>Market Structure</span>
-                    <span className="mono" style={{ color: '#EC4899' }}>{mfInterp}</span>
-                </div>
+                badge={mfInterp === 'INSUFFICIENT_DATA' ? 'N/A' : mfInterp} badgeColor="#EC4899">
+                {mfInterp === 'INSUFFICIENT_DATA' ? (
+                    <div style={{ fontSize: 10, color: 'var(--text-2)', fontStyle: 'italic', padding: '4px 0' }}>
+                        MF-DFA needs more data for multifractal analysis
+                    </div>
+                ) : (
+                    <>
+                        <MiniGauge label="Multifractal ΔH" value={mfDeltaH} max={1}
+                            fmt={v => v.toFixed(4)} color="#EC4899" compact />
+                        <div className="flex justify-between" style={{ fontSize: 10, color: 'var(--text-1)', marginBottom: 3 }}>
+                            <span>Market Structure</span>
+                            <span className="mono" style={{ color: '#EC4899' }}>{mfInterp}</span>
+                        </div>
+                    </>
+                )}
                 <div className="flex justify-between" style={{ fontSize: 10, color: 'var(--text-1)', marginBottom: 3 }}>
                     <span>TDA Complexity</span>
                     <span className="mono">{tdaComplexity}</span>
