@@ -258,7 +258,7 @@ export default function QuantPanel() {
 
             {/* ── Volatility Suite ── */}
             <Section title="Volatility Suite" open={sections.volatility} toggle={() => toggle('volatility')}
-                badge={`${((garchCurrent || garchForecast) * 100).toFixed(1)}%`} badgeColor="var(--warning)">
+                badge={`${((garchCurrent || garchForecast) * 100).toFixed(2)}%`} badgeColor="var(--warning)">
                 <MiniGauge label="GARCH Forecast" value={garchForecast} max={0.1}
                     fmt={v => `${(v * 100).toFixed(2)}%`} color="var(--warning)" compact />
                 <MiniGauge label="Leverage (γ)" value={garchAsymmetry} max={0.5}
