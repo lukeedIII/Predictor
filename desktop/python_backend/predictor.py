@@ -46,6 +46,58 @@ except ImportError:
 # ========== DEEP MODEL SEQUENCE LENGTH ==========
 DEEP_SEQ_LEN = 30  # 30 timesteps per sample — Transformer processes temporal windows
 
+# ========== MULTI-ARCHITECTURE SUPPORT ==========
+# Import right-sized model classes from pretrain_multi_arch.py
+try:
+    from pretrain_multi_arch import SmallTransformer, MediumTransformer, MidLargeTransformer
+    MULTI_ARCH_AVAILABLE = True
+except ImportError:
+    MULTI_ARCH_AVAILABLE = False
+    logging.warning("Multi-architecture models not available (pretrain_multi_arch.py missing)")
+
+# Model class registry — maps config key → nn.Module class
+MODEL_CLASS_REGISTRY = {
+    "nexus_transformer": lambda input_size: NexusTransformer(input_size=input_size),
+}
+if MULTI_ARCH_AVAILABLE:
+    MODEL_CLASS_REGISTRY.update({
+        "small_transformer": lambda input_size: SmallTransformer(input_size=input_size),
+        "medium_transformer": lambda input_size: MediumTransformer(input_size=input_size),
+        "midlarge_transformer": lambda input_size: MidLargeTransformer(input_size=input_size),
+    })
+
+
+def _get_model_arch_from_settings() -> str:
+    """Read the user's selected model architecture from settings.json."""
+    try:
+        if os.path.exists(config.SETTINGS_PATH):
+            with open(config.SETTINGS_PATH, 'r') as f:
+                settings = json.load(f)
+            # Only use model selector if beta feature is enabled
+            beta = settings.get('beta_features', {})
+            if beta.get('model_selector', False):
+                arch = settings.get('model_arch', config.DEFAULT_MODEL_ARCH)
+                if arch in MODEL_CLASS_REGISTRY:
+                    return arch
+                logging.warning(f"Unknown model_arch '{arch}' in settings, using default")
+    except Exception as e:
+        logging.warning(f"Failed to read model_arch from settings: {e}")
+    return config.DEFAULT_MODEL_ARCH
+
+
+def _check_vram_available(required_gb: float) -> tuple:
+    """Check if enough VRAM is available. Returns (ok, free_gb, total_gb)."""
+    if not torch.cuda.is_available():
+        return True, 0, 0  # CPU mode — no VRAM check needed
+    try:
+        free_bytes = torch.cuda.get_device_properties(0).total_mem - torch.cuda.memory_allocated(0)
+        total_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
+        free_gb = free_bytes / 1e9
+        # Use total_mem for available check (most VRAM is free at model load time)
+        return free_gb >= required_gb, round(free_gb, 1), round(total_gb, 1)
+    except Exception:
+        return True, 0, 0
+
 
 class NexusTransformer(nn.Module):
     """Production-grade Transformer Encoder for temporal sequence classification.
@@ -159,14 +211,22 @@ class NexusLSTM(NexusTransformer):
 class NexusPredictor:
     def __init__(self):
         self.model_path = os.path.join(config.MODEL_DIR, "predictor_v3.joblib")
-        self.deep_model_path = os.path.join(config.MODEL_DIR, "nexus_transformer_v1.pth")
-        self.pretrained_path = os.path.join(config.MODEL_DIR, "nexus_transformer_pretrained.pth")
+        
+        # Resolve model architecture from settings (beta feature)
+        self.active_arch = _get_model_arch_from_settings()
+        arch_info = config.MODEL_ARCHITECTURES.get(self.active_arch, {})
+        
+        # Set model paths based on selected architecture
+        self.deep_model_path = os.path.join(config.MODEL_DIR, arch_info.get("model_file", "nexus_transformer_v1.pth"))
+        self.pretrained_path = os.path.join(config.MODEL_DIR, arch_info.get("pretrained_file", "nexus_transformer_pretrained.pth"))
         # Legacy alias for backward compat with code that references lstm_path
         self.lstm_path = self.deep_model_path
         self.scaler_path = os.path.join(config.MODEL_DIR, "feature_scaler_v3.pkl")
         self.ensemble_state_path = os.path.join(config.MODEL_DIR, "ensemble_state_v3.pkl")
         self.math = MathCore()
         self.device = self.math.device
+        
+        logging.info(f"Model architecture: {self.active_arch} ({arch_info.get('label', 'Unknown')})")
         
         # ===== CLEAN FEATURE SET (v6 — microstructure upgrade) =====
         # All features are scale-invariant (returns/ratios, not raw prices)
@@ -343,7 +403,28 @@ class NexusPredictor:
         
         # === Transformer: user model > base model > pretrained > fresh ===
         self.lstm_device = self.device  # kept name for API compat
-        self.lstm = NexusTransformer(input_size=len(self.features)).to(self.lstm_device)
+        
+        # VRAM check before loading model
+        arch_info = config.MODEL_ARCHITECTURES.get(self.active_arch, {})
+        vram_required = arch_info.get('vram_gb', 0)
+        vram_ok, vram_free, vram_total = _check_vram_available(vram_required)
+        if not vram_ok:
+            logging.warning(
+                f"⚠️ Insufficient VRAM for {self.active_arch}: needs {vram_required} GB, "
+                f"only {vram_free} GB free of {vram_total} GB total. "
+                f"Falling back to small_transformer."
+            )
+            self.active_arch = 'small_transformer'
+        
+        # Instantiate the correct model class
+        if self.active_arch in MODEL_CLASS_REGISTRY:
+            self.lstm = MODEL_CLASS_REGISTRY[self.active_arch](input_size=len(self.features)).to(self.lstm_device)
+            logging.info(f"🧠 Using architecture: {self.active_arch} ({self.lstm.num_parameters/1e6:.1f}M params, {self.lstm.size_mb:.0f} MB)")
+        else:
+            self.lstm = NexusTransformer(input_size=len(self.features)).to(self.lstm_device)
+            logging.warning(f"Unknown arch '{self.active_arch}', falling back to NexusTransformer")
+            self.active_arch = 'nexus_transformer'
+        
         lstm_loaded = False
         load_candidates = [
             (self.deep_model_path, "user"),
@@ -360,7 +441,11 @@ class NexusPredictor:
                         logging.info("   ↳ Using pretrained weights — will fine-tune on live data")
                 except RuntimeError as e:
                     logging.warning(f"Transformer load failed ({label}, shape mismatch? will retrain): {e}")
-                    self.lstm = NexusTransformer(input_size=len(self.features)).to(self.lstm_device)
+                    # Re-instantiate fresh model of the same architecture
+                    if self.active_arch in MODEL_CLASS_REGISTRY:
+                        self.lstm = MODEL_CLASS_REGISTRY[self.active_arch](input_size=len(self.features)).to(self.lstm_device)
+                    else:
+                        self.lstm = NexusTransformer(input_size=len(self.features)).to(self.lstm_device)
                     self.lstm_weight = 0.0
         
         # === Scaler: user > base ===

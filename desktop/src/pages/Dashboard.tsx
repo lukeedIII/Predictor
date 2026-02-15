@@ -2,6 +2,8 @@ import { useRef, useState, useEffect, useCallback } from 'react';
 import ReactGridLayout, { type LayoutItem, verticalCompactor } from 'react-grid-layout';
 import 'react-grid-layout/css/styles.css';
 import 'react-resizable/css/styles.css';
+import HardwareMonitor from '../components/HardwareMonitor';
+import PaperStats from '../components/PaperStats';
 
 import { PriceCard, VolumeCard } from '../components/MetricCard';
 import { SignalBadge, AccuracyCard } from '../components/SignalBadge';
@@ -15,7 +17,7 @@ import WorldClock from '../components/WorldClock';
 import { IconRefresh } from '../components/Icons';
 
 // ── Constants ────────────────────────────────────────────────
-const STORAGE_KEY = 'nexus-dashboard-layout-v6';
+const STORAGE_KEY = 'nexus-dashboard-layout-v7';
 const PRESETS_KEY = 'nexus-dashboard-presets-v2';
 const ACTIVE_SLOT_KEY = 'nexus-dashboard-active-slot';
 const COLS = 12;
@@ -29,6 +31,8 @@ const MINS: Record<string, { minW: number; minH: number }> = {
     chart: { minW: 4, minH: 8 }, quant: { minW: 3, minH: 8 },
     news: { minW: 3, minH: 6 }, health: { minW: 3, minH: 6 },
     training: { minW: 3, minH: 6 },
+    hardware: { minW: 3, minH: 8 },
+    paper: { minW: 4, minH: 10 },
 };
 
 function applyMins(layout: LayoutItem[]): LayoutItem[] {
@@ -44,13 +48,15 @@ const DEFAULT_LAYOUT: LayoutItem[] = applyMins([
     { i: 'signal', x: 2, y: 0, w: 2, h: 5 },
     { i: 'accuracy', x: 4, y: 0, w: 2, h: 5 },
     { i: 'volume', x: 6, y: 0, w: 2, h: 5 },
-    { i: 'weather', x: 8, y: 0, w: 2, h: 4 },
-    { i: 'clock', x: 10, y: 0, w: 2, h: 4 },
-    { i: 'chart', x: 0, y: 5, w: 8, h: 16 },
-    { i: 'quant', x: 8, y: 5, w: 4, h: 16 },
-    { i: 'news', x: 0, y: 21, w: 4, h: 12 },
-    { i: 'health', x: 4, y: 21, w: 4, h: 12 },
-    { i: 'training', x: 8, y: 21, w: 4, h: 12 },
+    { i: 'weather', x: 8, y: 0, w: 2, h: 5 },
+    { i: 'clock', x: 10, y: 0, w: 2, h: 5 },
+    { i: 'chart', x: 0, y: 5, w: 8, h: 20 },
+    { i: 'quant', x: 8, y: 5, w: 4, h: 20 },
+    { i: 'news', x: 0, y: 25, w: 4, h: 10 },
+    { i: 'health', x: 4, y: 25, w: 4, h: 10 },
+    { i: 'training', x: 8, y: 25, w: 4, h: 10 },
+    { i: 'hardware', x: 0, y: 35, w: 4, h: 12 },
+    { i: 'paper', x: 4, y: 35, w: 8, h: 14 },
 ]);
 
 // ── Preset 1: Trading Focus (hardcoded from user's screenshot) ──
@@ -67,6 +73,8 @@ const PRESET_1: LayoutItem[] = applyMins([
     { i: 'news', x: 0, y: 25, w: 4, h: 10 },
     { i: 'health', x: 4, y: 25, w: 4, h: 10 },
     { i: 'training', x: 8, y: 25, w: 4, h: 10 },
+    { i: 'hardware', x: 0, y: 35, w: 4, h: 12 },
+    { i: 'paper', x: 4, y: 35, w: 8, h: 14 },
 ]);
 
 // ── Persistence ──────────────────────────────────────────────
@@ -323,6 +331,16 @@ export default function Dashboard() {
                 <div key="training">
                     <GridCard title="Training Log">
                         <TrainingLog />
+                    </GridCard>
+                </div>
+                <div key="hardware">
+                    <GridCard title="Hardware Monitor">
+                        <HardwareMonitor />
+                    </GridCard>
+                </div>
+                <div key="paper">
+                    <GridCard title="Paper Trading">
+                        <PaperStats />
                     </GridCard>
                 </div>
             </ReactGridLayout>

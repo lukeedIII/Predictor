@@ -1167,6 +1167,177 @@ kbd {
     padding: 0;
 }
 
+/* ── Rich Markdown inside Agent Bubbles ──────── */
+
+/* Headers */
+.chat-bubble.agent h1,
+.chat-bubble.agent h2,
+.chat-bubble.agent h3,
+.chat-bubble.agent h4 {
+    color: var(--text-0);
+    margin: 0;
+    line-height: 1.3;
+}
+
+.chat-bubble.agent h1 {
+    font-size: 15px;
+    font-weight: 700;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+    border-bottom: 2px solid var(--accent, #3b82f6);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.chat-bubble.agent h2 {
+    font-size: 13px;
+    font-weight: 700;
+    margin-top: 14px;
+    margin-bottom: 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    color: var(--accent, #3b82f6);
+    letter-spacing: 0.2px;
+}
+
+.chat-bubble.agent h3 {
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 10px;
+    margin-bottom: 4px;
+    color: var(--text-1);
+}
+
+/* Paragraphs */
+.chat-bubble.agent p {
+    margin: 6px 0;
+    line-height: 1.65;
+}
+
+.chat-bubble.agent p:first-child {
+    margin-top: 0;
+}
+
+.chat-bubble.agent p:last-child {
+    margin-bottom: 0;
+}
+
+/* Lists */
+.chat-bubble.agent ul,
+.chat-bubble.agent ol {
+    margin: 6px 0;
+    padding-left: 18px;
+}
+
+.chat-bubble.agent li {
+    margin: 3px 0;
+    line-height: 1.55;
+}
+
+.chat-bubble.agent li::marker {
+    color: var(--accent, #3b82f6);
+}
+
+/* Tables — premium dark glassmorphism style */
+.chat-bubble.agent table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 10px 0;
+    font-size: 12px;
+    font-family: var(--font-mono);
+    border-radius: var(--radius-sm);
+    overflow: hidden;
+}
+
+.chat-bubble.agent thead {
+    background: rgba(59, 130, 246, 0.08);
+}
+
+.chat-bubble.agent th {
+    padding: 7px 10px;
+    text-align: left;
+    font-size: 10px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--accent, #3b82f6);
+    border-bottom: 1px solid rgba(59, 130, 246, 0.15);
+    white-space: nowrap;
+}
+
+.chat-bubble.agent td {
+    padding: 6px 10px;
+    color: var(--text-1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.chat-bubble.agent tbody tr:nth-child(even) {
+    background: rgba(255, 255, 255, 0.015);
+}
+
+.chat-bubble.agent tbody tr:hover {
+    background: rgba(59, 130, 246, 0.04);
+}
+
+/* Blockquotes — key takeaway style */
+.chat-bubble.agent blockquote {
+    margin: 10px 0;
+    padding: 10px 14px;
+    border-left: 3px solid var(--accent, #3b82f6);
+    background: rgba(59, 130, 246, 0.05);
+    border-radius: 0 var(--radius-sm) var(--radius-sm) 0;
+    font-size: 12px;
+    color: var(--text-1);
+}
+
+.chat-bubble.agent blockquote p {
+    margin: 2px 0;
+}
+
+/* Horizontal rules — section dividers */
+.chat-bubble.agent hr {
+    border: none;
+    height: 1px;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+    margin: 12px 0;
+}
+
+/* Inline code */
+.chat-bubble.agent :not(pre)>code {
+    background: var(--bg-0);
+    padding: 1px 5px;
+    border-radius: 3px;
+    font-family: var(--font-mono);
+    font-size: 11.5px;
+    color: #6ee7b7;
+}
+
+/* Bold and emphasis */
+.chat-bubble.agent strong {
+    color: var(--text-0);
+    font-weight: 700;
+}
+
+.chat-bubble.agent em {
+    color: var(--text-1);
+    font-style: italic;
+}
+
+/* Provider badge — shows which LLM answered */
+.provider-badge {
+    margin-top: 8px;
+    padding-top: 6px;
+    border-top: 1px solid rgba(255, 255, 255, 0.04);
+    font-size: 10px;
+    font-weight: 500;
+    color: var(--text-3);
+    letter-spacing: 0.3px;
+    text-align: right;
+    font-family: var(--font-mono);
+    opacity: 0.7;
+}
+
 .chat-input-row {
     display: flex;
     gap: 8px;

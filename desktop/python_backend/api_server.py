@@ -734,6 +734,26 @@ def get_settings_json():
         pass
     json_settings["data_root"] = config.DATA_ROOT
     json_settings["version"] = config.VERSION
+    
+    # Beta features status
+    user_beta = json_settings.get('beta_features', {})
+    json_settings["beta_features_available"] = {
+        k: {
+            "label": v["label"],
+            "description": v["description"],
+            "enabled": user_beta.get(k, v["default"]),
+        }
+        for k, v in config.BETA_FEATURES.items()
+    }
+    
+    # Active model architecture
+    json_settings["model_arch"] = json_settings.get("model_arch", config.DEFAULT_MODEL_ARCH)
+    try:
+        if predictor:
+            json_settings["running_model_arch"] = getattr(predictor, 'active_arch', config.DEFAULT_MODEL_ARCH)
+    except Exception:
+        pass
+    
     return json_settings
 
 
@@ -782,6 +802,473 @@ def get_key_status(env_key: str):
     """Check if an environment variable / API key is configured."""
     value = os.environ.get(env_key, "")
     return {"key": env_key, "is_set": bool(value), "masked": f"{'*' * 8}…{value[-4:]}" if len(value) > 4 else ""}
+
+
+# ========================= BETA FEATURES =========================
+
+@app.get("/api/beta-features")
+def get_beta_features():
+    """Return available beta features and their current status."""
+    settings = _load_settings()
+    user_beta = settings.get('beta_features', {})
+    result = {}
+    for key, feat in config.BETA_FEATURES.items():
+        result[key] = {
+            "label": feat["label"],
+            "description": feat["description"],
+            "enabled": user_beta.get(key, feat["default"]),
+        }
+    return result
+
+
+@app.post("/api/beta-features")
+def post_beta_features(body: dict):
+    """Toggle beta features. Body: {"feature_key": true/false}."""
+    settings = _load_settings()
+    beta = settings.get('beta_features', {})
+    for key, value in body.items():
+        if key in config.BETA_FEATURES:
+            beta[key] = bool(value)
+    settings['beta_features'] = beta
+    _save_settings(settings)
+    return {"status": "ok", "beta_features": beta}
+
+
+# ========================= MODEL SELECTOR =========================
+
+@app.get("/api/models")
+def get_models():
+    """List available model architectures with VRAM requirements and availability."""
+    import torch
+    settings = _load_settings()
+    active_arch = settings.get('model_arch', config.DEFAULT_MODEL_ARCH)
+    beta_enabled = settings.get('beta_features', {}).get('model_selector', False)
+    
+    # VRAM info
+    vram_total = 0
+    vram_free = 0
+    gpu_name = "N/A"
+    if torch.cuda.is_available():
+        try:
+            gpu_name = torch.cuda.get_device_name(0)
+            vram_total = round(torch.cuda.get_device_properties(0).total_mem / 1e9, 1)
+            vram_free = round((torch.cuda.get_device_properties(0).total_mem - torch.cuda.memory_allocated(0)) / 1e9, 1)
+        except Exception:
+            pass
+    
+    models = []
+    for key, info in config.MODEL_ARCHITECTURES.items():
+        # Check if pretrained weights exist on disk
+        model_file = os.path.join(config.MODEL_DIR, info.get("model_file", ""))
+        pretrained_file = os.path.join(config.MODEL_DIR, info.get("pretrained_file", ""))
+        has_weights = os.path.exists(model_file) or os.path.exists(pretrained_file)
+        
+        # File size on disk
+        file_size_mb = 0
+        for f in [model_file, pretrained_file]:
+            if os.path.exists(f):
+                file_size_mb = round(os.path.getsize(f) / 1e6)
+                break
+        
+        models.append({
+            "key": key,
+            "label": info["label"],
+            "params": info["params"],
+            "vram_gb": info["vram_gb"],
+            "description": info["description"],
+            "has_weights": has_weights,
+            "file_size_mb": file_size_mb,
+            "vram_ok": vram_free >= info["vram_gb"],
+            "is_active": key == active_arch,
+        })
+    
+    # Also report the currently running architecture from the predictor
+    running_arch = None
+    try:
+        if predictor:
+            running_arch = getattr(predictor, 'active_arch', config.DEFAULT_MODEL_ARCH)
+    except Exception:
+        pass
+    
+    return {
+        "models": models,
+        "active_arch": active_arch,
+        "running_arch": running_arch,
+        "beta_enabled": beta_enabled,
+        "gpu": {
+            "name": gpu_name,
+            "vram_total_gb": vram_total,
+            "vram_free_gb": vram_free,
+        },
+    }
+
+
+@app.post("/api/models/select")
+def select_model(body: dict):
+    """Select a model architecture. Requires restart to take effect.
+    Body: {"arch": "small_transformer"}
+    """
+    arch = body.get("arch", "")
+    if arch not in config.MODEL_ARCHITECTURES:
+        raise HTTPException(status_code=400, detail=f"Unknown architecture: {arch}. Available: {list(config.MODEL_ARCHITECTURES.keys())}")
+    
+    # Check VRAM
+    import torch
+    required_vram = config.MODEL_ARCHITECTURES[arch]["vram_gb"]
+    if torch.cuda.is_available():
+        try:
+            free = (torch.cuda.get_device_properties(0).total_mem - torch.cuda.memory_allocated(0)) / 1e9
+            if free < required_vram:
+                return {
+                    "status": "warning",
+                    "message": f"⚠️ {arch} needs {required_vram} GB VRAM but only {free:.1f} GB free. Model will auto-fallback to small_transformer at startup.",
+                    "arch": arch,
+                }
+        except Exception:
+            pass
+    
+    # Check if weights exist
+    info = config.MODEL_ARCHITECTURES[arch]
+    model_file = os.path.join(config.MODEL_DIR, info.get("model_file", ""))
+    pretrained_file = os.path.join(config.MODEL_DIR, info.get("pretrained_file", ""))
+    has_weights = os.path.exists(model_file) or os.path.exists(pretrained_file)
+    
+    # Save to settings
+    settings = _load_settings()
+    settings['model_arch'] = arch
+    # Also auto-enable the beta feature
+    beta = settings.get('beta_features', {})
+    beta['model_selector'] = True
+    settings['beta_features'] = beta
+    _save_settings(settings)
+    
+    logging.info(f"🔄 Model architecture changed to: {arch} (restart required)")
+    
+    return {
+        "status": "ok",
+        "arch": arch,
+        "label": info["label"],
+        "has_weights": has_weights,
+        "requires_restart": True,
+        "message": f"Model set to {info['label']}. Restart the server to apply.",
+    }
+
+
+@app.post("/api/models/hf-search")
+def hf_search_models(body: dict):
+    """Search HuggingFace Hub for compatible financial/time-series models.
+    Body: {"query": "bitcoin prediction transformer"}
+    """
+    import requests as req
+    query = body.get("query", "bitcoin prediction transformer")
+    
+    try:
+        # Search HuggingFace API for relevant models
+        params = {
+            "search": query,
+            "filter": "pytorch",
+            "sort": "downloads",
+            "direction": "-1",
+            "limit": 12,
+        }
+        r = req.get("https://huggingface.co/api/models", params=params, timeout=15)
+        r.raise_for_status()
+        raw_models = r.json()
+        
+        models = []
+        for m in raw_models:
+            model_id = m.get("id", "")
+            # Filter for finance/crypto/time-series related models
+            tags = m.get("tags", [])
+            pipeline_tag = m.get("pipeline_tag", "")
+            
+            # Include models that are relevant to financial prediction
+            relevance_keywords = [
+                "finance", "crypto", "bitcoin", "stock", "trading", "forecast",
+                "time-series", "timeseries", "prediction", "price", "quant",
+                "transformer", "lstm", "regression", "tabular",
+            ]
+            model_text = f"{model_id} {' '.join(tags)} {pipeline_tag} {m.get('cardData', {}).get('license', '')}".lower()
+            
+            # Either matches relevance keywords or the user explicitly searched for it
+            is_relevant = any(kw in model_text for kw in relevance_keywords) or any(kw in query.lower() for kw in model_id.lower().split("/"))
+            
+            if not is_relevant and len(models) >= 5:
+                continue  # Skip irrelevant results once we have enough relevant ones
+            
+            author = m.get("author", model_id.split("/")[0] if "/" in model_id else "unknown")
+            
+            # Get description from card data
+            description = ""
+            card_data = m.get("cardData", {})
+            if isinstance(card_data, dict):
+                description = card_data.get("description", "") or card_data.get("summary", "")
+            if not description:
+                description = pipeline_tag or "PyTorch model"
+            
+            models.append({
+                "id": model_id,
+                "author": author,
+                "downloads": m.get("downloads", 0),
+                "likes": m.get("likes", 0),
+                "description": str(description)[:200],
+                "tags": tags[:8],
+            })
+        
+        return {"models": models[:10]}
+    
+    except Exception as e:
+        logging.error(f"HuggingFace search error: {e}")
+        raise HTTPException(status_code=502, detail=f"HuggingFace search failed: {str(e)}")
+
+
+@app.post("/api/models/hf-download")
+def hf_download_model(body: dict):
+    """Download a model from HuggingFace Hub.
+    Body: {"model_id": "author/model-name"}
+    """
+    import requests as req
+    model_id = body.get("model_id", "")
+    if not model_id or "/" not in model_id:
+        raise HTTPException(status_code=400, detail="Invalid model_id. Use format: author/model-name")
+    
+    safe_name = model_id.replace("/", "_").replace(".", "_")
+    download_dir = os.path.join(config.MODEL_DIR, "hf_models", safe_name)
+    os.makedirs(download_dir, exist_ok=True)
+    
+    try:
+        # List files in the model repo
+        r = req.get(f"https://huggingface.co/api/models/{model_id}", timeout=15)
+        r.raise_for_status()
+        model_info = r.json()
+        
+        siblings = model_info.get("siblings", [])
+        
+        # Find downloadable model files (weights, config, etc.)
+        target_files = []
+        for f in siblings:
+            fname = f.get("rfilename", "")
+            # Download model weights, config, and tokenizer files
+            if any(fname.endswith(ext) for ext in [".bin", ".pt", ".pth", ".safetensors", ".json", ".txt"]):
+                if any(fname.endswith(ext) for ext in [".bin", ".pt", ".pth", ".safetensors"]):
+                    target_files.insert(0, fname)  # Weights first
+                else:
+                    target_files.append(fname)
+        
+        if not target_files:
+            raise HTTPException(status_code=404, detail=f"No downloadable model files found for {model_id}")
+        
+        # Only download the main weight file + config (not everything)
+        weight_files = [f for f in target_files if any(f.endswith(e) for e in [".bin", ".pt", ".pth", ".safetensors"])]
+        config_files = [f for f in target_files if f.endswith(".json")]
+        
+        files_to_download = (weight_files[:2] + config_files[:2])  # Max 4 files
+        
+        downloaded = []
+        total_size = 0
+        for fname in files_to_download:
+            url = f"https://huggingface.co/{model_id}/resolve/main/{fname}"
+            local_path = os.path.join(download_dir, fname.replace("/", "_"))
+            
+            logging.info(f"📥 Downloading: {url}")
+            dr = req.get(url, stream=True, timeout=120)
+            dr.raise_for_status()
+            
+            with open(local_path, "wb") as out:
+                for chunk in dr.iter_content(chunk_size=8192):
+                    out.write(chunk)
+                    total_size += len(chunk)
+            
+            downloaded.append(fname)
+            logging.info(f"  ✅ Saved: {local_path} ({os.path.getsize(local_path) / 1e6:.1f} MB)")
+        
+        # Register as a custom architecture in settings
+        settings = _load_settings()
+        hf_models = settings.get("hf_models", {})
+        hf_models[safe_name] = {
+            "model_id": model_id,
+            "download_dir": download_dir,
+            "files": downloaded,
+            "total_size_mb": round(total_size / 1e6, 1),
+            "downloaded_at": __import__("datetime").datetime.now().isoformat(),
+        }
+        settings["hf_models"] = hf_models
+        _save_settings(settings)
+        
+        logging.info(f"✅ HuggingFace model downloaded: {model_id} ({total_size / 1e6:.1f} MB)")
+        
+        return {
+            "status": "ok",
+            "model_id": model_id,
+            "files": downloaded,
+            "total_size_mb": round(total_size / 1e6, 1),
+            "download_dir": download_dir,
+            "message": f"✅ Downloaded {model_id} ({total_size / 1e6:.1f} MB). Model saved to {download_dir}. Integration with predictor coming soon.",
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logging.error(f"HuggingFace download error for {model_id}: {e}")
+        raise HTTPException(status_code=502, detail=f"Download failed: {str(e)}")
+
+
+# ========================= HARDWARE MONITOR =========================
+
+@app.get("/api/hardware")
+def get_hardware_stats():
+    """Real-time hardware stats: CPU, RAM, GPU temp/util/VRAM, disk."""
+    import psutil
+
+    stats: dict = {}
+
+    # ── CPU ──────────────────────────────────────────────
+    stats["cpu"] = {
+        "percent": psutil.cpu_percent(interval=0.3),
+        "per_core": psutil.cpu_percent(interval=0, percpu=True),
+        "cores_physical": psutil.cpu_count(logical=False),
+        "cores_logical": psutil.cpu_count(logical=True),
+        "freq_mhz": round(psutil.cpu_freq().current) if psutil.cpu_freq() else 0,
+    }
+
+    # CPU temp (Windows: may need Open Hardware Monitor / LibreHardwareMonitor)
+    try:
+        temps = psutil.sensors_temperatures()
+        if temps:
+            # Try common sensor names
+            for name in ['coretemp', 'k10temp', 'cpu_thermal', 'acpitz']:
+                if name in temps and temps[name]:
+                    stats["cpu"]["temp_c"] = round(temps[name][0].current, 1)
+                    break
+            # Fallback: first available sensor
+            if "temp_c" not in stats["cpu"] and temps:
+                first_key = list(temps.keys())[0]
+                if temps[first_key]:
+                    stats["cpu"]["temp_c"] = round(temps[first_key][0].current, 1)
+    except Exception:
+        pass
+
+    # ── RAM (split: this app vs others) ───────────────────
+    mem = psutil.virtual_memory()
+    try:
+        proc = psutil.Process(os.getpid())
+        app_rss = proc.memory_info().rss
+        # Include child processes (training workers, etc.)
+        for child in proc.children(recursive=True):
+            try:
+                app_rss += child.memory_info().rss
+            except (psutil.NoSuchProcess, psutil.AccessDenied):
+                pass
+    except Exception:
+        app_rss = 0
+    others_used = max(0, mem.used - app_rss)
+    stats["ram"] = {
+        "total_gb": round(mem.total / 1e9, 1),
+        "used_gb": round(mem.used / 1e9, 1),
+        "app_used_gb": round(app_rss / 1e9, 2),
+        "others_used_gb": round(others_used / 1e9, 1),
+        "available_gb": round(mem.available / 1e9, 1),
+        "percent": mem.percent,
+    }
+
+    # ── GPU (NVIDIA via pynvml for REAL VRAM) ────────────
+    gpu = {"available": False}
+    try:
+        from pynvml import (
+            nvmlInit, nvmlDeviceGetHandleByIndex,
+            nvmlDeviceGetName, nvmlDeviceGetMemoryInfo,
+            nvmlDeviceGetTemperature, nvmlDeviceGetUtilizationRates,
+            nvmlDeviceGetFanSpeed, nvmlDeviceGetPowerUsage,
+            nvmlDeviceGetEnforcedPowerLimit,
+            NVML_TEMPERATURE_GPU,
+        )
+        nvmlInit()
+        handle = nvmlDeviceGetHandleByIndex(0)
+        gpu["available"] = True
+
+        # Name
+        raw_name = nvmlDeviceGetName(handle)
+        gpu["name"] = raw_name.decode('utf-8') if isinstance(raw_name, bytes) else raw_name
+
+        # VRAM — real dedicated GPU memory (not shared / not torch tensor-only)
+        mem_info = nvmlDeviceGetMemoryInfo(handle)
+        gpu["vram_total_gb"] = round(mem_info.total / 1e9, 1)
+        gpu["vram_used_gb"] = round(mem_info.used / 1e9, 2)
+        gpu["vram_free_gb"] = round(mem_info.free / 1e9, 2)
+        gpu["vram_percent"] = round(mem_info.used / max(mem_info.total, 1) * 100, 1)
+
+        # Temp, utilization
+        gpu["temp_c"] = nvmlDeviceGetTemperature(handle, NVML_TEMPERATURE_GPU)
+        rates = nvmlDeviceGetUtilizationRates(handle)
+        gpu["utilization_percent"] = rates.gpu
+        gpu["memory_utilization_percent"] = rates.memory
+
+        # Fan
+        try:
+            gpu["fan_speed_percent"] = nvmlDeviceGetFanSpeed(handle)
+        except Exception:
+            pass
+
+        # Power
+        try:
+            gpu["power_draw_w"] = round(nvmlDeviceGetPowerUsage(handle) / 1000, 1)
+            gpu["power_limit_w"] = round(nvmlDeviceGetEnforcedPowerLimit(handle) / 1000, 1)
+        except Exception:
+            pass
+
+    except ImportError:
+        # Fallback to torch if pynvml not available
+        try:
+            import torch
+            if torch.cuda.is_available():
+                gpu["available"] = True
+                gpu["name"] = torch.cuda.get_device_name(0)
+                props = torch.cuda.get_device_properties(0)
+                total = getattr(props, 'total_memory', None) or getattr(props, 'total_mem', 0)
+                gpu["vram_total_gb"] = round(total / 1e9, 1)
+                gpu["vram_used_gb"] = round(torch.cuda.memory_reserved(0) / 1e9, 2)
+                gpu["vram_percent"] = round(torch.cuda.memory_reserved(0) / max(total, 1) * 100, 1)
+        except Exception:
+            pass
+    except Exception:
+        pass
+    stats["gpu"] = gpu
+
+    # ── Disk ─────────────────────────────────────────────
+    try:
+        disk = psutil.disk_usage('/')
+        stats["disk"] = {
+            "total_gb": round(disk.total / 1e9, 1),
+            "used_gb": round(disk.used / 1e9, 1),
+            "free_gb": round(disk.free / 1e9, 1),
+            "percent": disk.percent,
+        }
+    except Exception:
+        # Windows: try the drive where the app is located
+        try:
+            drive = os.path.splitdrive(config.DATA_ROOT)[0] + '\\'
+            disk = psutil.disk_usage(drive)
+            stats["disk"] = {
+                "total_gb": round(disk.total / 1e9, 1),
+                "used_gb": round(disk.used / 1e9, 1),
+                "free_gb": round(disk.free / 1e9, 1),
+                "percent": disk.percent,
+            }
+        except Exception:
+            stats["disk"] = {"total_gb": 0, "used_gb": 0, "free_gb": 0, "percent": 0}
+
+    # ── System uptime ────────────────────────────────────
+    try:
+        boot_time = psutil.boot_time()
+        uptime_sec = time.time() - boot_time
+        days = int(uptime_sec // 86400)
+        hours = int((uptime_sec % 86400) // 3600)
+        mins = int((uptime_sec % 3600) // 60)
+        stats["uptime"] = f"{days}d {hours}h {mins}m" if days > 0 else f"{hours}h {mins}m"
+    except Exception:
+        stats["uptime"] = "N/A"
+
+    return stats
 
 
 # ========================= TELEGRAM =========================
@@ -1701,7 +2188,7 @@ class SettingsUpdate(BaseModel):
     binance_secret_key: Optional[str] = None
 
 
-@app.post("/api/settings")
+@app.post("/api/settings/keys-legacy")
 def update_settings(body: SettingsUpdate):
     """Save API keys to .env file."""
     updates = {}
@@ -1719,10 +2206,19 @@ def update_settings(body: SettingsUpdate):
     
     _save_env_keys(updates)
     
-    # Update config module
+    # Update config module + os.environ so all modules see the new keys immediately
     for k, v in updates.items():
         if hasattr(config, k):
             setattr(config, k, v)
+        os.environ[k] = v
+    
+    # Also update nexus_agent's cached key if OpenAI key changed
+    if "OPENAI_API_KEY" in updates:
+        try:
+            import nexus_agent
+            nexus_agent._OPENAI_API_KEY = updates["OPENAI_API_KEY"]
+        except Exception:
+            pass
     
     return {"saved": True, "keys_updated": list(updates.keys())}
 
@@ -2061,10 +2557,29 @@ def agent_chat(req: AgentChatRequest):
                 if gemini_key: providers.append(('gemini', gemini_key))
                 if ollama_model: providers.append(('ollama', ollama_model))
                 if openai_key: providers.append(('openai', openai_key))
+            elif preferred == 'embedded':
+                try:
+                    import embedded_llm
+                    if embedded_llm.is_available():
+                        providers.append(('embedded', None))
+                except ImportError:
+                    pass
+                if ollama_model: providers.append(('ollama', ollama_model))
+                if openai_key: providers.append(('openai', openai_key))
+                if gemini_key: providers.append(('gemini', gemini_key))
             else:
                 if ollama_model: providers.append(('ollama', ollama_model))
                 if openai_key: providers.append(('openai', openai_key))
                 if gemini_key: providers.append(('gemini', gemini_key))
+
+            # Add embedded LLM as last-resort fallback (if not already preferred)
+            if preferred != 'embedded':
+                try:
+                    import embedded_llm
+                    if embedded_llm.is_available():
+                        providers.append(('embedded', None))
+                except ImportError:
+                    pass
 
             if not providers:
                 yield f"data: {json.dumps({'content': '⚠️ No LLM available. Install Ollama, or add an OpenAI/Gemini API key in Settings.'})}\n\n"
@@ -2108,9 +2623,33 @@ def agent_chat(req: AgentChatRequest):
                             chunk = word + (' ' if i < len(words) - 1 else '')
                             yield f"data: {json.dumps({'content': chunk})}\n\n"
                         provider_label = f"gemini-2.0-flash"
+
+                    elif provider_name == 'embedded':
+                        import embedded_llm
+                        embedded_prompt = (
+                            "You are Dr. Nexus, a quantitative trading AI analyst. "
+                            "Analyze the live state data below and answer the user's question. "
+                            "Use markdown: headers (##), bold (**), tables, bullet points. "
+                            "Start analytical responses with: # 🔮 Dr. Nexus | [Title]\n\n"
+                            f"[LIVE STATE]\n```json\n{state_json}\n```"
+                        )
+                        full_reply = embedded_llm.generate(
+                            system_prompt=embedded_prompt,
+                            user_message=req.message,
+                            conversation_history=conv_history,
+                            max_new_tokens=800,
+                            temperature=0.7,
+                        )
+                        words = full_reply.split(' ')
+                        for i, word in enumerate(words):
+                            chunk = word + (' ' if i < len(words) - 1 else '')
+                            yield f"data: {json.dumps({'content': chunk})}\n\n"
+                        provider_label = f"embedded:{embedded_llm.MODEL_LABEL}"
+
                     else:
                         continue
 
+                    yield f"data: {json.dumps({'meta': {'provider': provider_label}})}\n\n"
                     yield "data: [DONE]\n\n"
 
                     # Save full reply to memory

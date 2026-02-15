@@ -8,7 +8,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-6.3.0-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
+[![Version](https://img.shields.io/badge/version-6.4.0-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 [![Electron](https://img.shields.io/badge/Electron-40-47848F?style=flat-square&logo=electron&logoColor=white)](https://electronjs.org)
@@ -33,6 +33,7 @@
 - **Real-time:** WebSocket push for price, predictions, positions, and quant data (~1s latency)
 - **16-model Quant Intelligence:** HMM regime, GJR-GARCH, Heston, Rough Vol, Merton Jump, Bates SVJ, EMD, HHT, Wavelets, MF-DFA, RQA, TDA, PPO RL, Almgren-Chriss, OFI
 - **Everything local:** Electron + React + FastAPI (localhost) + Python quant/ML core
+- **Dr. Nexus AI:** branded analytical reports with rich markdown, multi-provider LLM (OpenAI → Gemini → Ollama → embedded fallback)
 - **Trading:** paper-only simulation (long/short, configurable leverage) with confidence gating + risk controls
 
 ---
@@ -97,6 +98,8 @@ All results are streamed to the UI via WebSocket in real-time.
 - **Swiss Weather:** live conditions for Zürich
 - **TradingView chart:** live BTC/USDT with multiple timeframes + indicators
 - **16-model Quant Intelligence panel:** collapsible sections with gauges, badges, active signals
+- **Hardware Monitor:** live GPU/CPU utilization, VRAM, temperature
+- **Paper Trading Stats:** equity curve, win/loss, PnL breakdown
 
 ### 6) Paper Trader (simulation)
 - Confidence gate (default `PAPER_MIN_CONFIDENCE = 30`)
@@ -133,7 +136,7 @@ All results are streamed to the UI via WebSocket in real-time.
 
 Everything runs locally. External calls:
 - Binance public market data endpoints (REST + WebSocket)
-- OpenAI API only if Dr. Nexus is enabled (optional)
+- OpenAI / Gemini API for Dr. Nexus AI chat (optional — embedded Qwen 0.5B fallback included)
 
 ---
 
@@ -389,6 +392,11 @@ python run_backtest.py             # single-threaded
 - **Swiss Weather widget** — live conditions for Zürich (temperature, wind, precipitation)
 - **WebSocket real-time push** — price, predictions, positions, accuracy, quant data pushed every ~1s; REST used for larger payloads
 - **Quant data integrity fixes** — GARCH current vol falls back to forecast; MF-DFA NOT_COMPUTED handled gracefully; TDA/Bates SVJ key mappings corrected
+- **Dr. Nexus branded output** — dual-mode system prompt: Analysis Card format (`# 🔮 Dr. Nexus | [Title]`) for market questions, conversational for casual chat; rich markdown rendering via react-markdown + remark-gfm
+- **Provider badge** — every Dr. Nexus response shows which LLM generated it (`via gpt-4.1-mini`, `via embedded:qwen2.5-0.5b`, etc.) for full transparency
+- **Embedded fallback LLM** — built-in Qwen2.5-0.5B-Instruct (~1GB) as last-resort provider; lazy-loaded, GPU/CPU auto-detect, selectable in Settings
+- **Hardware Monitor widget** — live GPU/CPU metrics (utilization, VRAM, temperature) from nvidia-smi
+- **Paper Trading Stats widget** — equity curve, win/loss ratio, cumulative PnL breakdown
 
 ---
 
@@ -429,6 +437,6 @@ Nexus Shadow-Quant is an educational and research tool. It is not financial advi
 
 <div align="center">
 
-**v6.3.0 Beta Stable** · Built locally with ⚡ by **G-luc**
+**v6.4.0 Beta Stable** · Built locally with ⚡ by **G-luc**
 
 </div>

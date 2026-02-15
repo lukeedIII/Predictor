@@ -54,5 +54,61 @@
     "hold_minutes": 48.1,
     "trailing_sl_moved": false,
     "best_price_seen": 69417.98
+  },
+  {
+    "ts": "2026-02-15T01:52:49.177233",
+    "direction": "SHORT",
+    "confidence": 87.48,
+    "regime": "SIDEWAYS",
+    "hurst": 0.6334897991779962,
+    "pnl_usd": 7.46,
+    "pnl_pct": 3.73,
+    "won": true,
+    "close_reason": "MAX_HOLD_TIME",
+    "hold_minutes": 110.1,
+    "trailing_sl_moved": true,
+    "best_price_seen": 69668.42
+  },
+  {
+    "ts": "2026-02-15T02:43:00.087686",
+    "direction": "SHORT",
+    "confidence": 78.51,
+    "regime": "BULL",
+    "hurst": 0.6836301899872828,
+    "pnl_usd": 5.91,
+    "pnl_pct": 0.94,
+    "won": true,
+    "close_reason": "TRAILING_STOP",
+    "hold_minutes": 46.1,
+    "trailing_sl_moved": true,
+    "best_price_seen": 69505.93
+  },
+  {
+    "ts": "2026-02-15T02:51:12.387663",
+    "direction": "SHORT",
+    "confidence": 75.39,
+    "regime": "BULL",
+    "hurst": 0.6441315573562636,
+    "pnl_usd": 8.44,
+    "pnl_pct": 1.22,
+    "won": true,
+    "close_reason": "TRAILING_STOP",
+    "hold_minutes": 58.4,
+    "trailing_sl_moved": true,
+    "best_price_seen": 69407.22
+  },
+  {
+    "ts": "2026-02-15T07:11:32.049010",
+    "direction": "SHORT",
+    "confidence": 78.0,
+    "regime": "BULL",
+    "hurst": 0.6025823848676757,
+    "pnl_usd": -55.1,
+    "pnl_pct": -8.18,
+    "won": false,
+    "close_reason": "MAX_HOLD_TIME",
+    "hold_minutes": 316.7,
+    "trailing_sl_moved": true,
+    "best_price_seen": 69407.22
   }
 ]

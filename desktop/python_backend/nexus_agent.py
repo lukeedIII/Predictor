@@ -78,50 +78,61 @@ CRITICAL BEHAVIOR
 
 DEFAULT RESPONSE STRUCTURE (use these headers when applicable)
 
-## Snapshot
+IMPORTANT — OUTPUT MODES:
+You have two output modes depending on the user's intent:
+
+MODE 1: ANALYSIS CARD (for market questions, predictions, technical analysis, trade plans, system status, GPU Farm, or any data-driven question)
+Always use this branded card format:
+
+# 🔮 Dr. Nexus | [Brief Title]
+
+## 📊 Snapshot
 - Price, short-term returns, volatility proxy, volume/spread (if present)
 - Current signal: direction, confidence, horizon, threshold (if present)
 
-## Signal Attribution
+## 🧠 Signal Attribution
 Explain which components are contributing (ONLY if present in JSON):
 - Ensemble components / weights (XGBoost vs LSTM)
 - Regime + Hurst alignment
 - Cross-asset confirmation
 - Feedback loop / threshold adjustments
 
-## Risk & Trade Plan (paper trading style)
+## ⚖️ Risk & Trade Plan
 - 2–3 scenarios: bullish / bearish / no-trade
 - Invalidation logic using available TP/SL/trailing/max-hold/drawdown rules
 - Position sizing guidance only if sizing rules exist in JSON; otherwise keep generic
 
-## Positions (only if any are open)
+## 📋 Positions (only if any are open)
 Provide a markdown table:
 | Side | Entry | Current | Size | PnL | TP | SL | Age | Notes |
 Then comment on R/R, trailing stop status, max-hold risk, and circuit breaker proximity.
 
-## System Status (only if asked or if it affects reliability)
+## ⚙️ System Status (only if asked or if it affects reliability)
 - uptime, retrain_count, next_retrain_countdown, is_retraining_now
 - retrain_history metrics only if present
 
-## GPU Farm (only if asked)
-Use user-facing naming:
-- "GPU Farm" for the tab
-- "GPU Credits" for the token
+## 🖥️ GPU Farm (only if asked)
+Use user-facing naming ("GPU Farm" for the tab, "GPU Credits" for the token).
 Give practical strategy using only gpu_farm fields.
 
-## 📊 Summary
-3–6 bullets: bias, confidence vs threshold, key drivers, top risk, recommended action (trade / wait).
+---
 
-FORMATTING
+> **Key Takeaway:** [1–2 sentence summary: bias + confidence + recommended action]
+
+⚠️ *Educational research tool — not financial advice.*
+
+MODE 2: CONVERSATIONAL (for greetings, general questions, explanations about how the system works, or anything NOT requiring live data analysis)
+Just respond naturally. Be helpful, concise, professional. No card structure needed. Still use markdown formatting (bold, code, lists) when helpful. If the user asks something that could benefit from data, offer to switch to analysis mode.
+
+FORMATTING RULES (both modes)
 - Use markdown tables for structured data.
 - Use **bold** for conclusions and ⚠️ for major risks.
 - Use `code blocks` for raw numbers and technical values.
 - Use bullet points for lists.
 - Use > blockquotes for key takeaways.
 - Use --- horizontal rules between major sections.
-
-DISCLAIMERS (keep short)
-End with: "Educational research tool — not financial advice.\""""
+- Use emojis in section headers for visual scanning.
+- Omit any section that has no relevant data — do NOT show empty or placeholder sections."""
 
 
 # ── Layer 3: REFERENCE DOC — Algorithm Stack (our specific numbers) ──
@@ -924,6 +935,20 @@ def chat(user_message: str, predictor=None, trader=None, collector=None,
             providers.append(('ollama', ollama_model))
         if openai_key:
             providers.append(('openai', openai_key))
+    elif preferred == 'embedded':
+        # Embedded first, then fallback to others
+        try:
+            import embedded_llm
+            if embedded_llm.is_available():
+                providers.append(('embedded', None))
+        except ImportError:
+            pass
+        if ollama_model:
+            providers.append(('ollama', ollama_model))
+        if openai_key:
+            providers.append(('openai', openai_key))
+        if gemini_key:
+            providers.append(('gemini', gemini_key))
     else:
         # Unknown preference — default order
         if ollama_model:
@@ -932,6 +957,15 @@ def chat(user_message: str, predictor=None, trader=None, collector=None,
             providers.append(('openai', openai_key))
         if gemini_key:
             providers.append(('gemini', gemini_key))
+
+    # Add embedded LLM as last-resort fallback (if not already preferred)
+    if preferred != 'embedded':
+        try:
+            import embedded_llm
+            if embedded_llm.is_available():
+                providers.append(('embedded', None))
+        except ImportError:
+            pass
 
     if not providers:
         return {
@@ -956,6 +990,24 @@ def chat(user_message: str, predictor=None, trader=None, collector=None,
                 reply = _call_gemini(full_prompt, user_message, credential,
                                      conversation_history=conv_history)
                 provider_label = "gemini-2.0-flash"
+            elif provider_name == 'embedded':
+                import embedded_llm
+                # Condensed prompt: identity + formatting + FULL state JSON
+                embedded_prompt = (
+                    "You are Dr. Nexus, a quantitative trading AI analyst. "
+                    "Analyze the live state data below and answer the user's question. "
+                    "Use markdown: headers (##), bold (**), tables, bullet points. "
+                    "Start analytical responses with: # 🔮 Dr. Nexus | [Title]\n\n"
+                    f"[LIVE STATE]\n```json\n{state_json}\n```"
+                )
+                reply = embedded_llm.generate(
+                    system_prompt=embedded_prompt,
+                    user_message=user_message,
+                    conversation_history=conv_history,
+                    max_new_tokens=800,
+                    temperature=0.7,
+                )
+                provider_label = f"embedded:{embedded_llm.MODEL_LABEL}"
             else:
                 continue
 

@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect, useCallback, type FormEvent } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { IconSend, IconPlus, IconTrash, IconChatBubble, IconChevronLeft, IconTrend, IconTrendDown } from '../components/Icons';
 import { useLivePrice, useLiveChangePct, useLivePrediction, useLivePositions } from '../stores/liveStore';
 
 const API = 'http://127.0.0.1:8420';
 
 /* ── Types ─────────────────────────────────────────── */
-type Message = { role: 'user' | 'agent'; content: string };
+type Message = { role: 'user' | 'agent'; content: string; provider?: string };
 type Session = {
     session_id: string;
     title: string;
@@ -193,6 +195,7 @@ export default function NexusAgent() {
                 const reader = res.body?.getReader();
                 const decoder = new TextDecoder();
                 let agentText = '';
+                let providerLabel = '';
                 setMessages(prev => [...prev, { role: 'agent', content: '' }]);
 
                 if (reader) {
@@ -207,7 +210,11 @@ export default function NexusAgent() {
                                 if (data === '[DONE]') continue;
                                 try {
                                     const parsed = JSON.parse(data);
-                                    agentText += parsed.content ?? parsed.text ?? '';
+                                    if (parsed.meta?.provider) {
+                                        providerLabel = parsed.meta.provider;
+                                    } else {
+                                        agentText += parsed.content ?? parsed.text ?? '';
+                                    }
                                 } catch {
                                     agentText += data;
                                 }
@@ -215,7 +222,7 @@ export default function NexusAgent() {
                         }
                         setMessages(prev => {
                             const copy = [...prev];
-                            copy[copy.length - 1] = { role: 'agent', content: agentText };
+                            copy[copy.length - 1] = { role: 'agent', content: agentText, provider: providerLabel || undefined };
                             return copy;
                         });
                     }
@@ -243,21 +250,13 @@ export default function NexusAgent() {
         }
     };
 
-    /* ── Markdown-ish rendering ──────────────────── */
+    /* ── Rich markdown rendering ────────────────── */
     const renderContent = (content: string) => {
-        const parts = content.split(/(`[^`]+`)/g);
-        return parts.map((part, i) => {
-            if (part.startsWith('`') && part.endsWith('`')) {
-                return <code key={i}>{part.slice(1, -1)}</code>;
-            }
-            const boldParts = part.split(/(\*\*[^*]+\*\*)/g);
-            return boldParts.map((bp, j) => {
-                if (bp.startsWith('**') && bp.endsWith('**')) {
-                    return <strong key={`${i}-${j}`}>{bp.slice(2, -2)}</strong>;
-                }
-                return <span key={`${i}-${j}`}>{bp}</span>;
-            });
-        });
+        return (
+            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                {content}
+            </ReactMarkdown>
+        );
     };
 
     const quickActions = [
@@ -334,8 +333,11 @@ export default function NexusAgent() {
                     {messages.map((msg, i) => (
                         <div key={i} className={`chat-bubble ${msg.role} animate-in`}>
                             {msg.role === 'agent' ? (
-                                <div style={{ whiteSpace: 'pre-wrap' }}>{renderContent(msg.content)}</div>
+                                <div className="nexus-md">{renderContent(msg.content)}</div>
                             ) : msg.content}
+                            {msg.role === 'agent' && msg.provider && (
+                                <div className="provider-badge">via {msg.provider}</div>
+                            )}
                         </div>
                     ))}
                     {streaming && messages.length > 0 && messages[messages.length - 1].content === '' && (
