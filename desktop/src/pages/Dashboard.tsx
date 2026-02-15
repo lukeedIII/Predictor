@@ -14,10 +14,11 @@ import TrainingLog from '../components/TrainingLog';
 import TradingViewChart from '../components/TradingViewChart';
 import SwissWeather from '../components/SwissWeather';
 import WorldClock from '../components/WorldClock';
+import { ModelRegistry } from '../components/ModelRegistry';
 import { IconRefresh } from '../components/Icons';
 
 // ── Constants ────────────────────────────────────────────────
-const STORAGE_KEY = 'nexus-dashboard-layout-v7';
+const STORAGE_KEY = 'nexus-dashboard-layout-v8';
 const PRESETS_KEY = 'nexus-dashboard-presets-v2';
 const ACTIVE_SLOT_KEY = 'nexus-dashboard-active-slot';
 const COLS = 12;
@@ -33,6 +34,7 @@ const MINS: Record<string, { minW: number; minH: number }> = {
     training: { minW: 3, minH: 6 },
     hardware: { minW: 3, minH: 8 },
     paper: { minW: 4, minH: 10 },
+    models: { minW: 3, minH: 8 },
 };
 
 function applyMins(layout: LayoutItem[]): LayoutItem[] {
@@ -56,7 +58,8 @@ const DEFAULT_LAYOUT: LayoutItem[] = applyMins([
     { i: 'health', x: 4, y: 25, w: 4, h: 10 },
     { i: 'training', x: 8, y: 25, w: 4, h: 10 },
     { i: 'hardware', x: 0, y: 35, w: 4, h: 12 },
-    { i: 'paper', x: 4, y: 35, w: 8, h: 14 },
+    { i: 'models', x: 4, y: 35, w: 4, h: 12 },
+    { i: 'paper', x: 8, y: 35, w: 4, h: 14 },
 ]);
 
 // ── Preset 1: Trading Focus (hardcoded from user's screenshot) ──
@@ -74,7 +77,8 @@ const PRESET_1: LayoutItem[] = applyMins([
     { i: 'health', x: 4, y: 25, w: 4, h: 10 },
     { i: 'training', x: 8, y: 25, w: 4, h: 10 },
     { i: 'hardware', x: 0, y: 35, w: 4, h: 12 },
-    { i: 'paper', x: 4, y: 35, w: 8, h: 14 },
+    { i: 'models', x: 4, y: 35, w: 4, h: 12 },
+    { i: 'paper', x: 8, y: 35, w: 4, h: 14 },
 ]);
 
 // ── Persistence ──────────────────────────────────────────────
@@ -336,6 +340,11 @@ export default function Dashboard() {
                 <div key="hardware">
                     <GridCard title="Hardware Monitor">
                         <HardwareMonitor />
+                    </GridCard>
+                </div>
+                <div key="models">
+                    <GridCard title="Model Registry">
+                        <ModelRegistry />
                     </GridCard>
                 </div>
                 <div key="paper">

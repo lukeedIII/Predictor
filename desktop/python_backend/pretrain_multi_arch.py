@@ -517,8 +517,13 @@ def get_model(arch_name: str, input_size: int = 42) -> nn.Module:
 # TRAINING LOOP (shared by all architectures)
 # ═══════════════════════════════════════════════════════════════════════════
 def pretrain(df: pd.DataFrame, feature_cols: list, arch_name: str,
-             epochs: int = 10, lr: float = 3e-4, output_name: str = None):
-    """Train any architecture on the full dataset with mixed precision."""
+             epochs: int = 10, lr: float = 3e-4, output_name: str = None,
+             accuracy_target: float = None):
+    """Train any architecture on the full dataset with mixed precision.
+    
+    Args:
+        accuracy_target: Stop early if val accuracy reaches this threshold (e.g. 0.80 for 80%).
+    """
 
     device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
     log.info(f"Device: {device}")
@@ -606,7 +611,10 @@ def pretrain(df: pd.DataFrame, feature_cols: list, arch_name: str,
     best_val_acc = 0.0
     global_step = 0
     patience_counter = 0
-    patience_limit = 3  # Early stop if val loss doesn't improve for 3 epochs
+    patience_limit = 5  # Early stop if val loss doesn't improve for 5 epochs
+
+    if accuracy_target:
+        log.info(f"🎯 Accuracy target: {accuracy_target:.0%} — will stop early if reached")
 
     for epoch in range(epochs):
         model.train()
@@ -737,6 +745,14 @@ def pretrain(df: pd.DataFrame, feature_cols: list, arch_name: str,
                 log.info(f"🛑 Early stopping triggered at epoch {epoch + 1}")
                 break
 
+        # Check accuracy target
+        if accuracy_target and val_acc >= accuracy_target:
+            log.info(f"🎯🎉 ACCURACY TARGET REACHED! Val acc {val_acc:.1%} >= {accuracy_target:.0%}")
+            log.info(f"   Stopping training at epoch {epoch + 1}")
+            torch.save(model.state_dict(), pretrained_path)
+            log.info(f"🏆 Target model saved to {pretrained_path}")
+            break
+
     # Final summary
     file_size = pretrained_path.stat().st_size / 1e6 if pretrained_path.exists() else 0
     log.info(f"\n{'=' * 60}")
@@ -764,6 +780,8 @@ def main():
     parser.add_argument('--quick', action='store_true', help='Quick test: 1 epoch, first 100K rows')
     parser.add_argument('--output', type=str, default=None,
                         help='Output filename (default: nexus_{arch}_pretrained.pth)')
+    parser.add_argument('--target-acc', type=float, default=None,
+                        help='Stop early when val accuracy reaches this (e.g. 0.80 for 80%%)')
     args = parser.parse_args()
 
     log.info("=" * 60)
@@ -814,7 +832,8 @@ def main():
 
     # Step 4: Pretrain
     model = pretrain(df, feature_cols, arch_name=args.arch,
-                     epochs=args.epochs, lr=args.lr, output_name=args.output)
+                     epochs=args.epochs, lr=args.lr, output_name=args.output,
+                     accuracy_target=args.target_acc)
 
     log.info(f"\n🎉 Done! {args.arch} model ready.")
     log.info(f"Next: try other architectures or meta-ensemble all models.")

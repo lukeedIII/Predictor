@@ -853,8 +853,9 @@ def post_beta_features(body: dict):
 
 @app.get("/api/models")
 def get_models():
-    """List available model architectures with VRAM requirements and availability."""
+    """List available model architectures with VRAM requirements, availability, and real checkpoint accuracies."""
     import torch
+    import re
     settings = _load_settings()
     active_arch = settings.get('model_arch', config.DEFAULT_MODEL_ARCH)
     beta_enabled = settings.get('beta_features', {}).get('model_selector', False)
@@ -871,6 +872,38 @@ def get_models():
         except Exception:
             pass
     
+    # ── Scan checkpoint dir for real accuracy data ──
+    checkpoint_dir = os.path.join(config.MODEL_DIR, "checkpoints")
+    checkpoint_data = {}  # arch_name -> {best_acc, epochs, count, checkpoints[]}
+    if os.path.isdir(checkpoint_dir):
+        # Pattern: {arch}_epoch_{N}_acc{F}.pth
+        ckpt_re = re.compile(r'^(.+?)_epoch_(\d+)_acc([\d.]+)\.pth$')
+        for fname in os.listdir(checkpoint_dir):
+            m = ckpt_re.match(fname)
+            if m:
+                arch_key = m.group(1)
+                epoch_num = int(m.group(2))
+                acc_val = float(m.group(3))
+                if arch_key not in checkpoint_data:
+                    checkpoint_data[arch_key] = {
+                        "best_acc": 0.0,
+                        "max_epoch": 0,
+                        "count": 0,
+                        "checkpoints": [],
+                    }
+                cd = checkpoint_data[arch_key]
+                cd["best_acc"] = max(cd["best_acc"], acc_val)
+                cd["max_epoch"] = max(cd["max_epoch"], epoch_num)
+                cd["count"] += 1
+                cd["checkpoints"].append({
+                    "epoch": epoch_num,
+                    "accuracy": round(acc_val * 100, 1),
+                    "filename": fname,
+                })
+        # Sort checkpoints by epoch
+        for cd in checkpoint_data.values():
+            cd["checkpoints"].sort(key=lambda x: x["epoch"])
+    
     models = []
     for key, info in config.MODEL_ARCHITECTURES.items():
         # Check if pretrained weights exist on disk
@@ -885,6 +918,13 @@ def get_models():
                 file_size_mb = round(os.path.getsize(f) / 1e6)
                 break
         
+        # Real checkpoint accuracy data
+        ckpt = checkpoint_data.get(key, {})
+        best_acc = round(ckpt.get("best_acc", 0) * 100, 1) if ckpt else None
+        epochs_trained = ckpt.get("max_epoch", 0) if ckpt else 0
+        checkpoint_count = ckpt.get("count", 0) if ckpt else 0
+        checkpoints = ckpt.get("checkpoints", []) if ckpt else []
+        
         models.append({
             "key": key,
             "label": info["label"],
@@ -895,6 +935,11 @@ def get_models():
             "file_size_mb": file_size_mb,
             "vram_ok": vram_free >= info["vram_gb"],
             "is_active": key == active_arch,
+            # Real checkpoint data
+            "best_checkpoint_acc": best_acc,
+            "epochs_trained": epochs_trained,
+            "checkpoint_count": checkpoint_count,
+            "checkpoints": checkpoints,
         })
     
     # Also report the currently running architecture from the predictor
