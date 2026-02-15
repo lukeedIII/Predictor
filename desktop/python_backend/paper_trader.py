@@ -282,6 +282,11 @@ class PaperTrader:
         if drawdown >= config.PAPER_MAX_DRAWDOWN:
             self.circuit_breaker_active = True
             logging.warning(f"CIRCUIT BREAKER: Drawdown {drawdown:.1%} exceeds {config.PAPER_MAX_DRAWDOWN:.0%} limit!")
+            # Telegram alert
+            telegram.notify_circuit_breaker(
+                balance=self.balance, peak=self.peak_balance,
+                drawdown_pct=drawdown * 100
+            )
             return True
         return False
     
@@ -886,6 +891,22 @@ class PaperTrader:
                 tpy_net = 8760 / avg_h_net
                 net_sharpe = np.mean(net_returns) / np.std(net_returns) * np.sqrt(tpy_net)
         
+        # Current win/loss streak
+        current_streak = 0
+        for t in reversed(self.trade_history):
+            if not current_streak:
+                current_streak = 1 if t['pnl_usd'] > 0 else -1
+            elif (t['pnl_usd'] > 0 and current_streak > 0):
+                current_streak += 1
+            elif (t['pnl_usd'] <= 0 and current_streak < 0):
+                current_streak -= 1
+            else:
+                break
+        
+        # Best/worst trades
+        best_trade = max((t['pnl_usd'] for t in self.trade_history), default=0)
+        worst_trade = min((t['pnl_usd'] for t in self.trade_history), default=0)
+        
         # Margin locked in open positions
         margin_in_use = sum(pos.margin for pos in self.positions)
         
@@ -912,7 +933,10 @@ class PaperTrader:
             'position_open': len(self.positions) > 0,
             'positions_count': len(self.positions),
             'max_concurrent': self.MAX_CONCURRENT,
-            'leverage': self.leverage
+            'leverage': self.leverage,
+            'current_streak': current_streak,
+            'best_trade_pnl': best_trade,
+            'worst_trade_pnl': worst_trade,
         }
     
     # ========== INTERNAL HELPERS ==========
