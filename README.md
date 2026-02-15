@@ -48,19 +48,6 @@
 
 </div>
 
-<details>
-<summary><strong>🖼️ Click to see more screenshots</strong></summary>
-
-<br>
-
-| | |
-|:---:|:---:|
-| <img src="assets/screenshots/dr-nexus-chat.png" width="100%"> | <img src="assets/screenshots/quant-intelligence.png" width="100%"> |
-| **Dr. Nexus AI Chat** — branded analysis cards with provider badge | **Quant Intelligence** — 16-model diagnostic panel |
-| <img src="assets/screenshots/trading-view.png" width="100%"> | <img src="assets/screenshots/settings.png" width="100%"> |
-| **Trading View** — live chart with positions overlay | **Settings** — API keys, LLM provider, model architecture |
-
-</details>
 
 ---
 
