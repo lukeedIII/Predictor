@@ -5,52 +5,79 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Nexus Training Kit</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500;600&display=swap"
+        rel="stylesheet">
     <style>
         * {
             margin: 0;
             padding: 0;
-            box-sizing: border-box;
+            box-sizing: border-box
         }
 
         :root {
-            --bg: #0a0a0f;
-            --card: rgba(18, 18, 28, 0.85);
+            --bg: #06060b;
+            --bg-2: #0c0c14;
+            --card: rgba(14, 14, 22, 0.9);
+            --card-2: rgba(20, 20, 32, 0.85);
             --border: rgba(255, 255, 255, 0.06);
-            --text-1: #f0f0f5;
-            --text-2: #a0a0b8;
-            --text-3: #606075;
+            --border-h: rgba(124, 77, 255, 0.25);
+            --text-1: #ebebf5;
+            --text-2: #9898b0;
+            --text-3: #55556a;
             --accent: #7c4dff;
+            --accent-2: #b388ff;
             --green: #69F0AE;
+            --green-dim: rgba(105, 240, 174, 0.12);
             --red: #ff5252;
+            --red-dim: rgba(255, 82, 82, 0.12);
             --amber: #FFD740;
+            --amber-dim: rgba(255, 215, 64, 0.12);
             --blue: #448AFF;
-            --glass: rgba(124, 77, 255, 0.08);
+            --blue-dim: rgba(68, 138, 255, 0.12);
+            --glass: rgba(124, 77, 255, 0.07);
+            --glass-2: rgba(124, 77, 255, 0.04);
         }
 
         body {
             background: var(--bg);
             color: var(--text-1);
-            font-family: 'Segoe UI', -apple-system, sans-serif;
+            font-family: 'Inter', -apple-system, sans-serif;
             min-height: 100vh;
-            overflow-x: hidden;
+            overflow-x: hidden
         }
 
-        /* Background glow */
         body::before {
             content: '';
             position: fixed;
-            top: -30%;
-            left: -10%;
-            width: 60%;
-            height: 60%;
-            background: radial-gradient(circle, rgba(124, 77, 255, 0.06) 0%, transparent 70%);
+            top: -40%;
+            left: -20%;
+            width: 80%;
+            height: 80%;
+            background: radial-gradient(circle, rgba(124, 77, 255, 0.04) 0%, transparent 60%);
             pointer-events: none;
+            z-index: 0
         }
 
-        .container {
-            max-width: 1100px;
+        body::after {
+            content: '';
+            position: fixed;
+            bottom: -30%;
+            right: -15%;
+            width: 60%;
+            height: 60%;
+            background: radial-gradient(circle, rgba(105, 240, 174, 0.02) 0%, transparent 60%);
+            pointer-events: none;
+            z-index: 0
+        }
+
+        .app {
+            position: relative;
+            z-index: 1;
+            max-width: 1280px;
             margin: 0 auto;
-            padding: 24px 20px;
+            padding: 20px
         }
 
         /* Header */
@@ -58,45 +85,78 @@
             display: flex;
             align-items: center;
             justify-content: space-between;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
+            padding: 0 4px
+        }
+
+        .header-left {
+            display: flex;
+            align-items: center;
+            gap: 12px
         }
 
         .header h1 {
-            font-size: 22px;
-            font-weight: 700;
-            background: linear-gradient(135deg, var(--accent), #b388ff);
+            font-size: 20px;
+            font-weight: 800;
+            letter-spacing: -0.3px;
+            background: linear-gradient(135deg, var(--accent), var(--accent-2), var(--green));
             -webkit-background-clip: text;
-            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            -webkit-text-fill-color: transparent
+        }
+
+        .header .version {
+            font-size: 10px;
+            padding: 3px 8px;
+            border-radius: 6px;
+            background: var(--glass);
+            color: var(--accent-2);
+            font-weight: 600
         }
 
         .gpu-badge {
+            display: flex;
+            align-items: center;
+            gap: 8px;
             background: var(--card);
             border: 1px solid var(--border);
             padding: 6px 14px;
             border-radius: 20px;
-            font-size: 12px;
+            font-size: 11px;
             color: var(--text-2);
+            font-family: 'JetBrains Mono', monospace
         }
 
-        .gpu-badge .dot {
-            display: inline-block;
-            width: 7px;
-            height: 7px;
+        .gpu-dot {
+            width: 6px;
+            height: 6px;
             border-radius: 50%;
             background: var(--green);
-            margin-right: 6px;
-            animation: pulse 2s infinite;
+            animation: pulse 2s infinite
         }
 
         @keyframes pulse {
 
             0%,
             100% {
-                opacity: 1;
+                opacity: 1
             }
 
             50% {
-                opacity: 0.4;
+                opacity: 0.3
+            }
+        }
+
+        /* Grid */
+        .main-grid {
+            display: grid;
+            grid-template-columns: 340px 1fr;
+            gap: 16px
+        }
+
+        @media(max-width:900px) {
+            .main-grid {
+                grid-template-columns: 1fr
             }
         }
 
@@ -105,762 +165,1194 @@
             background: var(--card);
             border: 1px solid var(--border);
             border-radius: 14px;
-            padding: 20px;
-            margin-bottom: 16px;
-            backdrop-filter: blur(12px);
+            padding: 18px;
+            backdrop-filter: blur(16px);
+            transition: border-color 0.2s
+        }
+
+        .card:hover {
+            border-color: var(--border-h)
         }
 
         .card-title {
-            font-size: 11px;
+            font-size: 10px;
             text-transform: uppercase;
-            letter-spacing: 1.2px;
+            letter-spacing: 1.5px;
             color: var(--text-3);
             margin-bottom: 14px;
+            font-weight: 600
         }
 
-        /* Status bar */
-        .status-row {
+        /* Builder */
+        .builder {
+            display: flex;
+            flex-direction: column;
+            gap: 14px
+        }
+
+        .preset-list {
+            display: flex;
+            flex-direction: column;
+            gap: 6px
+        }
+
+        .preset {
             display: flex;
             align-items: center;
-            gap: 16px;
-            margin-bottom: 12px;
+            justify-content: space-between;
+            padding: 10px 12px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: var(--glass-2);
+            cursor: pointer;
+            transition: all 0.2s;
+            position: relative
         }
 
-        .status-badge {
-            padding: 4px 12px;
-            border-radius: 12px;
+        .preset:hover {
+            border-color: var(--accent);
+            background: var(--glass)
+        }
+
+        .preset.selected {
+            border-color: var(--accent);
+            background: var(--glass);
+            box-shadow: 0 0 12px rgba(124, 77, 255, 0.1)
+        }
+
+        .preset.selected::before {
+            content: '';
+            position: absolute;
+            left: 0;
+            top: 20%;
+            bottom: 20%;
+            width: 3px;
+            border-radius: 0 3px 3px 0;
+            background: var(--accent)
+        }
+
+        .preset-info h3 {
             font-size: 12px;
             font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            color: var(--text-1)
         }
 
-        .status-idle {
-            background: rgba(96, 96, 117, 0.2);
-            color: var(--text-3);
-        }
-
-        .status-downloading,
-        .status-preparing {
-            background: rgba(68, 138, 255, 0.15);
-            color: var(--blue);
-        }
-
-        .status-training {
-            background: rgba(105, 240, 174, 0.12);
-            color: var(--green);
-            animation: pulse 1.5s infinite;
-        }
-
-        .status-paused {
-            background: rgba(255, 215, 64, 0.12);
-            color: var(--amber);
-        }
-
-        .status-finished {
-            background: rgba(105, 240, 174, 0.15);
-            color: var(--green);
-        }
-
-        .status-error {
-            background: rgba(255, 82, 82, 0.12);
-            color: var(--red);
-        }
-
-        .arch-name {
-            font-size: 16px;
-            font-weight: 600;
-        }
-
-        /* Stats grid */
-        .stats-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
-            gap: 12px;
-            margin-bottom: 16px;
-        }
-
-        .stat-box {
-            background: rgba(255, 255, 255, 0.02);
-            border: 1px solid var(--border);
-            border-radius: 10px;
-            padding: 12px;
-            text-align: center;
-        }
-
-        .stat-label {
+        .preset-info .desc {
             font-size: 10px;
             color: var(--text-3);
-            text-transform: uppercase;
-            letter-spacing: 0.8px;
-            margin-bottom: 4px;
+            margin-top: 2px
         }
 
-        .stat-value {
-            font-size: 22px;
+        .preset-meta {
+            text-align: right;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--text-2)
+        }
+
+        .preset-meta .vram {
+            font-size: 9px;
+            color: var(--text-3)
+        }
+
+        /* Sliders */
+        .slider-group {
+            display: flex;
+            flex-direction: column;
+            gap: 10px
+        }
+
+        .slider-row {
+            display: flex;
+            align-items: center;
+            gap: 8px
+        }
+
+        .slider-row label {
+            font-size: 11px;
+            color: var(--text-2);
+            width: 75px;
+            flex-shrink: 0;
+            font-weight: 500
+        }
+
+        .slider-row input[type="range"] {
+            flex: 1;
+            height: 4px;
+            -webkit-appearance: none;
+            appearance: none;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 2px;
+            outline: none
+        }
+
+        .slider-row input[type="range"]::-webkit-slider-thumb {
+            -webkit-appearance: none;
+            width: 14px;
+            height: 14px;
+            border-radius: 50%;
+            background: var(--accent);
+            cursor: grab;
+            border: 2px solid var(--bg);
+            box-shadow: 0 0 6px rgba(124, 77, 255, 0.4)
+        }
+
+        .slider-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: var(--accent-2);
+            width: 50px;
+            text-align: right;
+            font-weight: 600
+        }
+
+        /* Estimate */
+        .estimate-bar {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 14px;
+            border-radius: 10px;
+            background: var(--glass);
+            border: 1px solid var(--border-h);
+            margin-top: 8px
+        }
+
+        .estimate-bar .params {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 16px;
             font-weight: 700;
-            font-family: 'Consolas', monospace;
+            color: var(--accent-2)
         }
 
-        .stat-value.green {
+        .estimate-bar .vram-est {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 12px;
             color: var(--green);
+            font-weight: 600
         }
 
-        .stat-value.blue {
-            color: var(--blue);
+        /* Buttons */
+        .btn-create {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, var(--accent), #9c7cff);
+            color: #fff;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 4px;
+            letter-spacing: 0.3px
         }
 
-        .stat-value.amber {
-            color: var(--amber);
+        .btn-create:hover {
+            filter: brightness(1.15);
+            transform: translateY(-1px)
         }
 
-        .stat-value.accent {
-            color: var(--accent);
-        }
-
-        /* Progress bar */
-        .progress-wrap {
+        .model-name-input {
+            width: 100%;
+            padding: 8px 12px;
+            border-radius: 8px;
             background: rgba(255, 255, 255, 0.04);
-            border-radius: 6px;
-            overflow: hidden;
-            height: 8px;
-            margin-bottom: 6px;
+            border: 1px solid var(--border);
+            color: var(--text-1);
+            font-size: 12px;
+            font-family: 'JetBrains Mono', monospace
         }
 
-        .progress-bar {
-            height: 100%;
-            background: linear-gradient(90deg, var(--accent), #b388ff);
-            border-radius: 6px;
-            transition: width 0.3s ease;
+        .model-name-input:focus {
+            outline: none;
+            border-color: var(--accent)
         }
 
-        .progress-text {
+        /* Right column */
+        .right-col {
+            display: flex;
+            flex-direction: column;
+            gap: 14px
+        }
+
+        .controls-bar {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            flex-wrap: wrap
+        }
+
+        .ctrl-group {
+            display: flex;
+            align-items: center;
+            gap: 6px
+        }
+
+        .ctrl-group label {
             font-size: 11px;
             color: var(--text-3);
-            text-align: right;
+            font-weight: 500
         }
 
-        /* Epoch chart */
-        .chart-area {
-            position: relative;
-            height: 160px;
-            margin: 12px 0;
+        .ctrl-input {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            color: var(--text-1);
+            font-size: 12px;
+            width: 70px;
+            text-align: center;
+            font-family: 'JetBrains Mono', monospace
         }
 
-        .chart-canvas {
-            width: 100%;
-            height: 100%;
-        }
-
-        /* Controls */
-        .controls {
-            display: flex;
-            gap: 10px;
-            flex-wrap: wrap;
-            margin-bottom: 16px;
+        .ctrl-input:focus {
+            outline: none;
+            border-color: var(--accent)
         }
 
         .btn {
-            padding: 10px 24px;
-            border-radius: 10px;
+            padding: 8px 20px;
+            border-radius: 8px;
             border: 1px solid var(--border);
             background: var(--card);
             color: var(--text-1);
-            font-size: 13px;
+            font-size: 12px;
             font-weight: 600;
             cursor: pointer;
             transition: all 0.2s;
+            font-family: 'Inter', sans-serif
         }
 
         .btn:hover {
             border-color: var(--accent);
-            background: var(--glass);
+            background: var(--glass)
         }
 
         .btn:disabled {
-            opacity: 0.3;
-            cursor: not-allowed;
+            opacity: 0.25;
+            cursor: not-allowed
         }
 
-        .btn-primary {
+        .btn-go {
             background: linear-gradient(135deg, var(--accent), #9c7cff);
             border-color: transparent;
-            color: #fff;
+            color: #fff
         }
 
-        .btn-primary:hover {
-            filter: brightness(1.15);
+        .btn-go:hover {
+            filter: brightness(1.1)
         }
 
-        .btn-danger {
-            border-color: rgba(255, 82, 82, 0.3);
-            color: var(--red);
+        .btn-stop {
+            border-color: rgba(255, 82, 82, 0.25);
+            color: var(--red)
         }
 
-        .btn-danger:hover {
-            background: rgba(255, 82, 82, 0.1);
+        .btn-stop:hover {
+            background: var(--red-dim)
         }
 
-        /* Architecture selector */
-        .arch-selector {
+        .btn-vram {
+            border-color: rgba(255, 215, 64, 0.25);
+            color: var(--amber);
+            font-size: 11px
+        }
+
+        .btn-vram:hover {
+            background: var(--amber-dim)
+        }
+
+        .btn-reset {
+            border-color: rgba(255, 82, 82, 0.2);
+            color: var(--text-3);
+            font-size: 11px
+        }
+
+        .btn-reset:hover {
+            background: var(--red-dim);
+            color: var(--red)
+        }
+
+        /* Status */
+        .status-row {
             display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            margin-bottom: 16px;
+            align-items: center;
+            gap: 12px
         }
 
-        .arch-chip {
-            padding: 6px 14px;
+        .status-badge {
+            padding: 4px 12px;
             border-radius: 8px;
-            border: 1px solid var(--border);
-            background: rgba(255, 255, 255, 0.02);
-            color: var(--text-2);
-            font-size: 12px;
-            cursor: pointer;
-            transition: all 0.2s;
+            font-size: 10px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.8px
         }
 
-        .arch-chip:hover {
-            border-color: var(--accent);
+        .badge-idle {
+            background: rgba(85, 85, 106, 0.2);
+            color: var(--text-3)
         }
 
-        .arch-chip.selected {
-            border-color: var(--accent);
-            background: var(--glass);
-            color: var(--text-1);
+        .badge-downloading,
+        .badge-preparing {
+            background: var(--blue-dim);
+            color: var(--blue)
         }
 
-        .arch-chip .params {
+        .badge-training {
+            background: var(--green-dim);
+            color: var(--green);
+            animation: pulse 1.5s infinite
+        }
+
+        .badge-paused {
+            background: var(--amber-dim);
+            color: var(--amber)
+        }
+
+        .badge-finished {
+            background: var(--green-dim);
+            color: var(--green)
+        }
+
+        .badge-error {
+            background: var(--red-dim);
+            color: var(--red)
+        }
+
+        .arch-label {
+            font-size: 14px;
+            font-weight: 700
+        }
+
+        .elapsed {
+            margin-left: auto;
+            font-size: 11px;
+            color: var(--text-3);
+            font-family: 'JetBrains Mono', monospace
+        }
+
+        /* Progress */
+        .progress-wrap {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 6px;
+            overflow: hidden;
+            height: 6px;
+            margin: 8px 0 4px
+        }
+
+        .progress-fill {
+            height: 100%;
+            border-radius: 6px;
+            background: linear-gradient(90deg, var(--accent), var(--accent-2), var(--green));
+            background-size: 200% 100%;
+            animation: shimmer 2s linear infinite;
+            transition: width 0.4s ease
+        }
+
+        @keyframes shimmer {
+            0% {
+                background-position: 200% 0
+            }
+
+            100% {
+                background-position: -200% 0
+            }
+        }
+
+        .progress-label {
             font-size: 10px;
             color: var(--text-3);
-            margin-left: 4px;
+            text-align: right;
+            font-family: 'JetBrains Mono', monospace
         }
 
-        /* Settings row */
-        .settings-row {
-            display: flex;
-            gap: 16px;
-            align-items: center;
-            margin-bottom: 12px;
-            flex-wrap: wrap;
+        /* Stats */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(5, 1fr);
+            gap: 8px;
+            margin: 10px 0
         }
 
-        .setting {
-            display: flex;
-            align-items: center;
-            gap: 6px;
+        @media(max-width:900px) {
+            .stats-grid {
+                grid-template-columns: repeat(3, 1fr)
+            }
         }
 
-        .setting label {
-            font-size: 12px;
-            color: var(--text-3);
-        }
-
-        .setting input {
-            background: rgba(255, 255, 255, 0.04);
-            border: 1px solid var(--border);
-            border-radius: 6px;
-            padding: 6px 10px;
-            color: var(--text-1);
-            font-size: 13px;
-            width: 80px;
-            text-align: center;
-            font-family: 'Consolas', monospace;
-        }
-
-        .setting input:focus {
-            outline: none;
-            border-color: var(--accent);
-        }
-
-        /* Log viewer */
-        .log-viewer {
-            background: rgba(0, 0, 0, 0.3);
+        .stat {
+            background: rgba(255, 255, 255, 0.015);
             border: 1px solid var(--border);
             border-radius: 10px;
-            padding: 12px;
-            max-height: 260px;
+            padding: 10px 8px;
+            text-align: center
+        }
+
+        .stat-lbl {
+            font-size: 9px;
+            color: var(--text-3);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 4px;
+            font-weight: 600
+        }
+
+        .stat-val {
+            font-size: 20px;
+            font-weight: 700;
+            font-family: 'JetBrains Mono', monospace
+        }
+
+        .c-green {
+            color: var(--green)
+        }
+
+        .c-blue {
+            color: var(--blue)
+        }
+
+        .c-amber {
+            color: var(--amber)
+        }
+
+        .c-accent {
+            color: var(--accent-2)
+        }
+
+        .c-red {
+            color: var(--red)
+        }
+
+        /* Chart */
+        .chart-wrap {
+            position: relative;
+            height: 180px;
+            margin: 6px 0
+        }
+
+        .chart-wrap canvas {
+            width: 100%;
+            height: 100%
+        }
+
+        /* Queue */
+        .queue-bar {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 6px;
+            margin-top: 6px
+        }
+
+        .q-item {
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 10px;
+            font-weight: 600
+        }
+
+        .q-done {
+            background: var(--green-dim);
+            color: var(--green);
+            text-decoration: line-through;
+            opacity: 0.5
+        }
+
+        .q-active {
+            background: var(--glass);
+            color: var(--accent-2)
+        }
+
+        .q-pending {
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-3)
+        }
+
+        /* Log */
+        .log-viewer {
+            background: rgba(0, 0, 0, 0.35);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 10px 12px;
+            max-height: 220px;
             overflow-y: auto;
-            font-family: 'Consolas', 'Courier New', monospace;
-            font-size: 11px;
-            line-height: 1.6;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 10.5px;
+            line-height: 1.7
         }
 
         .log-viewer::-webkit-scrollbar {
-            width: 4px;
+            width: 4px
         }
 
         .log-viewer::-webkit-scrollbar-track {
-            background: transparent;
+            background: transparent
         }
 
         .log-viewer::-webkit-scrollbar-thumb {
             background: var(--text-3);
-            border-radius: 2px;
+            border-radius: 2px
         }
 
         .log-line {
-            color: var(--text-2);
+            color: var(--text-2)
         }
 
         .log-time {
             color: var(--text-3);
-            margin-right: 8px;
+            margin-right: 8px
         }
 
-        /* Checkpoints list */
-        .ckpt-row {
-            display: flex;
-            align-items: center;
-            justify-content: space-between;
-            padding: 6px 10px;
-            border-bottom: 1px solid var(--border);
+        /* Push to App */
+        .push-card {
+            margin-top: 0
+        }
+
+        .model-select {
+            width: 100%;
+            padding: 8px 12px;
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border);
+            color: var(--text-1);
             font-size: 12px;
+            font-family: 'JetBrains Mono', monospace;
+            cursor: pointer
         }
 
-        .ckpt-row:last-child {
-            border-bottom: none;
+        .model-select:focus {
+            outline: none;
+            border-color: var(--accent)
         }
 
-        .ckpt-acc {
-            font-weight: 700;
-            font-family: monospace;
+        .model-select option {
+            background: var(--bg);
+            color: var(--text-1)
         }
 
-        /* Queue display */
-        .queue-item {
-            display: inline-block;
-            padding: 3px 10px;
-            border-radius: 6px;
+        .target-row {
+            display: flex;
+            gap: 8px;
+            margin-top: 8px;
+            align-items: center
+        }
+
+        .target-row label {
             font-size: 11px;
-            margin-right: 6px;
-            margin-bottom: 4px;
-        }
-
-        .queue-done {
-            background: rgba(105, 240, 174, 0.1);
-            color: var(--green);
-            text-decoration: line-through;
-            opacity: 0.6;
-        }
-
-        .queue-active {
-            background: var(--glass);
-            color: var(--accent);
-            font-weight: 600;
-        }
-
-        .queue-pending {
-            background: rgba(255, 255, 255, 0.03);
             color: var(--text-3);
+            white-space: nowrap;
+            font-weight: 500
         }
 
-        /* Responsive */
-        @media (max-width: 640px) {
-            .stats-grid {
-                grid-template-columns: repeat(2, 1fr);
-            }
+        .btn-push {
+            width: 100%;
+            padding: 10px;
+            border: none;
+            border-radius: 10px;
+            background: linear-gradient(135deg, #69F0AE, #00C853);
+            color: #000;
+            font-size: 12px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s;
+            margin-top: 10px;
+            letter-spacing: 0.3px
+        }
 
-            .controls {
-                flex-direction: column;
-            }
+        .btn-push:hover {
+            filter: brightness(1.1);
+            transform: translateY(-1px)
+        }
+
+        .btn-push:disabled {
+            opacity: 0.25;
+            cursor: not-allowed;
+            transform: none
+        }
+
+        .push-info {
+            font-size: 10px;
+            color: var(--text-3);
+            margin-top: 8px;
+            line-height: 1.5;
+            padding: 8px;
+            border-radius: 8px;
+            background: rgba(105, 240, 174, 0.04);
+            border: 1px solid rgba(105, 240, 174, 0.08)
+        }
+
+        /* Toast */
+        .toast {
+            position: fixed;
+            bottom: 24px;
+            right: 24px;
+            padding: 12px 20px;
+            border-radius: 10px;
+            background: var(--card);
+            border: 1px solid var(--green);
+            color: var(--green);
+            font-size: 12px;
+            font-weight: 600;
+            transform: translateY(100px);
+            opacity: 0;
+            transition: all 0.3s ease;
+            z-index: 100;
+            max-width: 400px
+        }
+
+        .toast.show {
+            transform: translateY(0);
+            opacity: 1
         }
     </style>
 </head>
 
 <body>
-
-    <div class="container">
-
+    <div class="app">
         <!-- Header -->
         <div class="header">
-            <h1>⚡ Nexus Training Kit</h1>
+            <div class="header-left">
+                <h1>&#9889; Nexus Training Kit</h1>
+                <span class="version">V2</span>
+            </div>
             <div class="gpu-badge">
-                <span class="dot" id="gpuDot"></span>
+                <div class="gpu-dot" id="gpuDot"></div>
                 <span id="gpuName">Detecting GPU...</span>
             </div>
         </div>
 
-        <!-- Controls Card -->
-        <div class="card">
-            <div class="card-title">Control Panel</div>
+        <!-- Main Grid -->
+        <div class="main-grid">
 
-            <div class="arch-selector" id="archSelector"></div>
-
-            <div class="settings-row">
-                <div class="setting">
-                    <label>Epochs</label>
-                    <input type="number" id="inputEpochs" value="50" min="1" max="500">
+            <!-- LEFT: Architecture Builder -->
+            <div class="builder">
+                <div class="card">
+                    <div class="card-title">&#9881; Architecture Presets</div>
+                    <div class="preset-list" id="presetList"></div>
                 </div>
-                <div class="setting">
-                    <label>Learning Rate</label>
-                    <input type="text" id="inputLR" value="0.0003">
+
+                <div class="card">
+                    <div class="card-title">&#127959; Custom Architecture Builder</div>
+                    <input type="text" class="model-name-input" id="customName" placeholder="my_custom_model"
+                        value="custom_v1">
+                    <div class="slider-group" style="margin-top:12px">
+                        <div class="slider-row"><label>d_model</label><input type="range" id="sl_d_model" min="64"
+                                max="1024" step="64" value="256"><span class="slider-val" id="sv_d_model">256</span>
+                        </div>
+                        <div class="slider-row"><label>Layers</label><input type="range" id="sl_num_layers" min="1"
+                                max="24" step="1" value="4"><span class="slider-val" id="sv_num_layers">4</span></div>
+                        <div class="slider-row"><label>Heads</label><input type="range" id="sl_nhead" min="1" max="16"
+                                step="1" value="8"><span class="slider-val" id="sv_nhead">8</span></div>
+                        <div class="slider-row"><label>FFN mult</label><input type="range" id="sl_ffn_mult" min="2"
+                                max="8" step="1" value="4"><span class="slider-val" id="sv_ffn_mult">4x</span></div>
+                        <div class="slider-row"><label>Dropout</label><input type="range" id="sl_dropout" min="0"
+                                max="50" step="5" value="15"><span class="slider-val" id="sv_dropout">0.15</span></div>
+                        <div class="slider-row"><label>Seq Length</label><input type="range" id="sl_seq_len" min="10"
+                                max="120" step="5" value="30"><span class="slider-val" id="sv_seq_len">30</span></div>
+                    </div>
+                    <div class="estimate-bar" id="estimateBar">
+                        <div>
+                            <div style="font-size:9px;color:var(--text-3);margin-bottom:2px">PARAMETERS</div>
+                            <div class="params" id="estParams">3.2M</div>
+                        </div>
+                        <div>
+                            <div style="font-size:9px;color:var(--text-3);margin-bottom:2px">VRAM</div>
+                            <div class="vram-est" id="estVRAM">0.01 GB</div>
+                        </div>
+                    </div>
+                    <div id="validationMsg" style="font-size:10px;color:var(--red);margin-top:6px;min-height:14px">
+                    </div>
+                    <button class="btn-create" id="btnCreate" onclick="createCustomArch()">+ Create &amp; Add to
+                        Queue</button>
                 </div>
             </div>
 
-            <div class="controls">
-                <button class="btn btn-primary" id="btnStart" onclick="startTraining()">▶ Start Training</button>
-                <button class="btn btn-danger" id="btnStop" onclick="stopTraining()" disabled>⏸ Pause</button>
-                <button class="btn" id="btnContinue" onclick="continueTraining()" disabled>▶ Continue</button>
-            </div>
+            <!-- RIGHT: Training Dashboard -->
+            <div class="right-col">
+                <!-- Controls -->
+                <div class="card">
+                    <div class="card-title">&#9654; Training Controls</div>
+                    <div class="controls-bar">
+                        <div class="ctrl-group"><label>Epochs</label><input type="number" class="ctrl-input"
+                                id="inputEpochs" value="50" min="1" max="500"></div>
+                        <div class="ctrl-group"><label>LR</label><input type="text" class="ctrl-input" id="inputLR"
+                                value="0.0003" style="width:80px"></div>
+                        <div style="flex:1"></div>
+                        <button class="btn btn-go" id="btnStart" onclick="startTraining()">&#9654; Start</button>
+                        <button class="btn btn-stop" id="btnStop" onclick="stopTraining()" disabled>&#9198;
+                            Pause</button>
+                        <button class="btn" id="btnContinue" onclick="continueTraining()" disabled>&#9654;
+                            Continue</button>
+                        <button class="btn btn-vram" id="btnClearVRAM" onclick="clearVRAM()">&#129529; Clear
+                            VRAM</button>
+                        <button class="btn btn-reset" id="btnReset" onclick="resetState()">&#128260; Reset</button>
+                    </div>
+                    <div class="queue-bar" id="queueBar"></div>
+                </div>
 
-            <!-- Queue -->
-            <div id="queueBar" style="margin-top: 8px;"></div>
+                <!-- Status + Stats -->
+                <div class="card">
+                    <div class="status-row">
+                        <span class="status-badge badge-idle" id="statusBadge">IDLE</span>
+                        <span class="arch-label" id="currentArch">&mdash;</span>
+                        <span class="elapsed" id="elapsedTime"></span>
+                    </div>
+                    <div class="progress-wrap">
+                        <div class="progress-fill" id="progressBar" style="width:0%"></div>
+                    </div>
+                    <div class="progress-label" id="progressText">&mdash;</div>
+                    <div class="stats-grid">
+                        <div class="stat">
+                            <div class="stat-lbl">Epoch</div>
+                            <div class="stat-val c-accent" id="sEpoch">0/0</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-lbl">Train Acc</div>
+                            <div class="stat-val c-blue" id="sTrainAcc">&mdash;</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-lbl">Val Acc</div>
+                            <div class="stat-val c-green" id="sValAcc">&mdash;</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-lbl">Best Val</div>
+                            <div class="stat-val c-green" id="sBestAcc">&mdash;</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-lbl">Loss</div>
+                            <div class="stat-val" id="sLoss">&mdash;</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-lbl">Speed</div>
+                            <div class="stat-val c-amber" id="sSpeed">&mdash;</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-lbl">VRAM</div>
+                            <div class="stat-val" id="sVRAM">&mdash;</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-lbl">LR</div>
+                            <div class="stat-val" id="sLR">&mdash;</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-lbl">ETA</div>
+                            <div class="stat-val" id="sETA">&mdash;</div>
+                        </div>
+                        <div class="stat">
+                            <div class="stat-lbl">Batch</div>
+                            <div class="stat-val c-accent" id="sBatch">&mdash;</div>
+                        </div>
+                    </div>
+                    <div class="chart-wrap"><canvas id="chartCanvas"></canvas></div>
+                </div>
+
+                <!-- Log -->
+                <div class="card">
+                    <div class="card-title">&#128203; Training Log</div>
+                    <div class="log-viewer" id="logViewer">
+                        <div class="log-line"><span class="log-time">--:--:--</span>Waiting to start...</div>
+                    </div>
+                </div>
+
+                <!-- Push to App -->
+                <div class="card push-card">
+                    <div class="card-title">&#128640; Push Model to App</div>
+                    <select class="model-select" id="pushModelSelect">
+                        <option value="">Loading trained models...</option>
+                    </select>
+                    <div class="target-row">
+                        <label>Save as:</label>
+                        <input type="text" class="model-name-input" id="pushTargetName"
+                            placeholder="e.g. nexus_small_transformer_v1.pth" style="flex:1">
+                    </div>
+                    <button class="btn-push" id="btnPush" onclick="pushToApp()" disabled>&#128640; Push as Main
+                        Model</button>
+                    <div class="push-info">
+                        &#128274; The old model will be backed up automatically before replacing.<br>
+                        &#128205; Destination: <code
+                            style="color:var(--accent-2)">%LOCALAPPDATA%\nexus-shadow-quant\models\</code>
+                    </div>
+                </div>
+            </div>
         </div>
-
-        <!-- Status + Stats -->
-        <div class="card" id="trainingCard">
-            <div class="status-row">
-                <span class="status-badge status-idle" id="statusBadge">IDLE</span>
-                <span class="arch-name" id="currentArch">—</span>
-                <span style="margin-left: auto; font-size: 12px; color: var(--text-3);" id="elapsedTime"></span>
-            </div>
-
-            <!-- Progress -->
-            <div class="progress-wrap">
-                <div class="progress-bar" id="progressBar" style="width: 0%"></div>
-            </div>
-            <div class="progress-text" id="progressText">—</div>
-
-            <!-- Stats grid -->
-            <div class="stats-grid">
-                <div class="stat-box">
-                    <div class="stat-label">Epoch</div>
-                    <div class="stat-value accent" id="statEpoch">0/0</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Train Acc</div>
-                    <div class="stat-value blue" id="statTrainAcc">—</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Val Acc</div>
-                    <div class="stat-value green" id="statValAcc">—</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Best Val Acc</div>
-                    <div class="stat-value green" id="statBestAcc">—</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Train Loss</div>
-                    <div class="stat-value" id="statTrainLoss">—</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Val Loss</div>
-                    <div class="stat-value" id="statValLoss">—</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">Speed</div>
-                    <div class="stat-value amber" id="statSpeed">—</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">VRAM</div>
-                    <div class="stat-value" id="statVRAM">—</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">LR</div>
-                    <div class="stat-value" id="statLR">—</div>
-                </div>
-                <div class="stat-box">
-                    <div class="stat-label">ETA</div>
-                    <div class="stat-value" id="statETA">—</div>
-                </div>
-            </div>
-
-            <!-- Accuracy chart -->
-            <div class="chart-area">
-                <canvas id="chartCanvas" class="chart-canvas"></canvas>
-            </div>
-        </div>
-
-        <!-- Log Viewer -->
-        <div class="card">
-            <div class="card-title">Training Log</div>
-            <div class="log-viewer" id="logViewer">
-                <div class="log-line"><span class="log-time">--:--:--</span>Waiting to start...</div>
-            </div>
-        </div>
-
     </div>
 
+    <div class="toast" id="toast"></div>
+
     <script>
-        // ═══════════════════════════════════════════════════
-        // STATE
-        // ═══════════════════════════════════════════════════
-
-        const ARCHS = {
-            'small_transformer': { label: 'SmallTransformer', params: '3.2M', vram: '0.2GB' },
-            'medium_transformer': { label: 'MediumTransformer', params: '19M', vram: '0.6GB' },
-            'midlarge_transformer': { label: 'MidLargeTransformer', params: '32M', vram: '1.5GB' },
-            'nexus_transformer': { label: 'NexusTransformer', params: '152M', vram: '2.5GB' },
-        };
-
-        let selectedArchs = new Set(Object.keys(ARCHS));
-        let polling = null;
+        // =================== STATE ===================
+        let archData = {};
+        let selectedArchs = new Set();
         let lastLogCount = 0;
+        let estimateTimeout = null;
 
-        // ═══════════════════════════════════════════════════
-        // INIT
-        // ═══════════════════════════════════════════════════
-
-        function init() {
-            // Build arch selector chips
-            const sel = document.getElementById('archSelector');
-            for (const [key, info] of Object.entries(ARCHS)) {
-                const chip = document.createElement('div');
-                chip.className = 'arch-chip selected';
-                chip.dataset.arch = key;
-                chip.innerHTML = `${info.label}<span class="params">${info.params} · ${info.vram}</span>`;
-                chip.onclick = () => {
-                    if (selectedArchs.has(key)) {
-                        selectedArchs.delete(key);
-                        chip.classList.remove('selected');
-                    } else {
-                        selectedArchs.add(key);
-                        chip.classList.add('selected');
-                    }
-                };
-                sel.appendChild(chip);
-            }
-
-            // Start polling
-            polling = setInterval(fetchState, 1000);
-            fetchState();
-        }
-
-        // ═══════════════════════════════════════════════════
-        // API CALLS
-        // ═══════════════════════════════════════════════════
-
-        async function fetchState() {
+        // =================== INIT ===================
+        async function init() {
             try {
-                const res = await fetch('/api/state');
-                const s = await res.json();
-                updateUI(s);
+                const res = await fetch('/api/architectures');
+                archData = await res.json();
             } catch (e) {
-                // Server unreachable
+                archData = {
+                    'small_transformer': { params: '3.2M', vram_gb: 0.2, desc: '4L, d256, 8H' },
+                    'medium_transformer': { params: '19M', vram_gb: 0.6, desc: '6L, d512, 8H' },
+                    'midlarge_transformer': { params: '32M', vram_gb: 1.5, desc: '8L, d768, 12H' },
+                    'nexus_transformer': { params: '152M', vram_gb: 2.5, desc: '12L, d1024, 16H' },
+                };
+            }
+            buildPresetList();
+            setupSliders();
+            setInterval(fetchState, 500);
+            fetchState();
+            updateEstimate();
+            loadTrainedModels();
+        }
+
+        function buildPresetList() {
+            const list = document.getElementById('presetList');
+            list.innerHTML = '';
+            for (const [key, info] of Object.entries(archData)) {
+                const el = document.createElement('div');
+                el.className = 'preset selected';
+                el.dataset.arch = key;
+                el.innerHTML = '<div class="preset-info"><h3>' + key.replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase() }) + (info.custom ? ' &#127959;' : '') + '</h3><div class="desc">' + info.desc + '</div></div><div class="preset-meta"><div>' + info.params + '</div><div class="vram">' + info.vram_gb + ' GB</div></div>';
+                el.onclick = function () { togglePreset(key, el); };
+                selectedArchs.add(key);
+                list.appendChild(el);
             }
         }
 
-        async function startTraining() {
-            const archs = Array.from(selectedArchs);
-            if (archs.length === 0) { alert('Select at least one architecture!'); return; }
+        function togglePreset(key, el) {
+            if (selectedArchs.has(key)) { selectedArchs.delete(key); el.classList.remove('selected'); }
+            else { selectedArchs.add(key); el.classList.add('selected'); }
+        }
 
-            const epochs = parseInt(document.getElementById('inputEpochs').value) || 50;
-            const lr = parseFloat(document.getElementById('inputLR').value) || 3e-4;
-
-            await fetch('/api/start', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ archs, epochs, lr }),
+        // =================== SLIDERS ===================
+        function setupSliders() {
+            ['d_model', 'num_layers', 'nhead', 'ffn_mult', 'dropout', 'seq_len'].forEach(function (name) {
+                document.getElementById('sl_' + name).addEventListener('input', function () {
+                    updateSliderDisplay(name);
+                    debouncedEstimate();
+                });
             });
         }
 
-        async function stopTraining() {
-            await fetch('/api/stop', { method: 'POST' });
+        function updateSliderDisplay(name) {
+            var slider = document.getElementById('sl_' + name);
+            var display = document.getElementById('sv_' + name);
+            var v = slider.value;
+            if (name === 'ffn_mult') display.textContent = v + 'x';
+            else if (name === 'dropout') display.textContent = (v / 100).toFixed(2);
+            else display.textContent = v;
+
+            var d = parseInt(document.getElementById('sl_d_model').value);
+            var h = parseInt(document.getElementById('sl_nhead').value);
+            var msg = document.getElementById('validationMsg');
+            if (d % h !== 0) {
+                msg.textContent = 'Warning: d_model (' + d + ') must be divisible by heads (' + h + ')';
+                document.getElementById('btnCreate').disabled = true;
+            } else { msg.textContent = ''; document.getElementById('btnCreate').disabled = false; }
         }
+
+        function debouncedEstimate() { clearTimeout(estimateTimeout); estimateTimeout = setTimeout(updateEstimate, 150); }
+
+        async function updateEstimate() {
+            var config = getBuilderConfig();
+            try {
+                var res = await fetch('/api/estimate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+                var est = await res.json();
+                document.getElementById('estParams').textContent = est.params_human;
+                document.getElementById('estVRAM').textContent = est.vram_gb + ' GB';
+                var vramEl = document.getElementById('estVRAM');
+                vramEl.style.color = est.vram_gb > 8 ? 'var(--red)' : est.vram_gb > 3 ? 'var(--amber)' : 'var(--green)';
+            } catch (e) { }
+        }
+
+        function getBuilderConfig() {
+            var d = parseInt(document.getElementById('sl_d_model').value);
+            return {
+                d_model: d,
+                num_layers: parseInt(document.getElementById('sl_num_layers').value),
+                nhead: parseInt(document.getElementById('sl_nhead').value),
+                dim_feedforward: d * parseInt(document.getElementById('sl_ffn_mult').value),
+                dropout: parseInt(document.getElementById('sl_dropout').value) / 100,
+                seq_len: parseInt(document.getElementById('sl_seq_len').value),
+            };
+        }
+
+        // =================== CUSTOM ARCH ===================
+        async function createCustomArch() {
+            var config = getBuilderConfig();
+            config.name = document.getElementById('customName').value.trim() || 'custom_v1';
+            try {
+                var res = await fetch('/api/custom_arch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(config) });
+                var data = await res.json();
+                if (data.error) { showToast('Error: ' + data.error, 'var(--red)'); return; }
+                var archRes = await fetch('/api/architectures');
+                archData = await archRes.json();
+                selectedArchs.clear();
+                Object.keys(archData).forEach(function (k) { selectedArchs.add(k); });
+                buildPresetList();
+                showToast('Created "' + config.name + '" (' + data.params_human + ')', 'var(--green)');
+            } catch (e) { showToast('Server error', 'var(--red)'); }
+        }
+
+        // =================== TRAINING ===================
+        async function startTraining() {
+            var archs = Array.from(selectedArchs);
+            if (archs.length === 0) { showToast('Select at least one architecture!', 'var(--amber)'); return; }
+            var epochs = parseInt(document.getElementById('inputEpochs').value) || 50;
+            var lr = parseFloat(document.getElementById('inputLR').value) || 3e-4;
+            await fetch('/api/start', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ archs: archs, epochs: epochs, lr: lr }) });
+        }
+
+        async function stopTraining() { await fetch('/api/stop', { method: 'POST' }); }
 
         async function continueTraining() {
-            const epochs = parseInt(document.getElementById('inputEpochs').value) || 50;
-            const lr = parseFloat(document.getElementById('inputLR').value) || 3e-4;
-
-            await fetch('/api/continue', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ epochs, lr }),
-            });
+            var epochs = parseInt(document.getElementById('inputEpochs').value) || 50;
+            var lr = parseFloat(document.getElementById('inputLR').value) || 3e-4;
+            await fetch('/api/continue', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ epochs: epochs, lr: lr }) });
         }
 
-        // ═══════════════════════════════════════════════════
-        // UI UPDATE
-        // ═══════════════════════════════════════════════════
+        async function clearVRAM() {
+            try {
+                var res = await fetch('/api/clear_vram', { method: 'POST' });
+                var data = await res.json();
+                if (data.error) showToast('Warning: ' + data.error, 'var(--amber)');
+                else showToast('VRAM freed: ' + data.freed_gb + ' GB (' + data.before_gb + ' -> ' + data.after_gb + ' GB)', 'var(--green)');
+            } catch (e) { showToast('Failed to clear VRAM', 'var(--red)'); }
+        }
+
+        async function resetState() {
+            if (!confirm('Reset all training state? This clears logs, stats, and history (checkpoints are kept).')) return;
+            try {
+                var res = await fetch('/api/reset_state', { method: 'POST' });
+                var data = await res.json();
+                if (data.error) { showToast('Warning: ' + data.error, 'var(--amber)'); return; }
+                lastLogCount = 0;
+                document.getElementById('logViewer').innerHTML = '<div class="log-line"><span class="log-time">--:--:--</span>State reset. Ready.</div>';
+                showToast('State reset to defaults', 'var(--green)');
+            } catch (e) { showToast('Failed to reset state', 'var(--red)'); }
+        }
+
+        // =================== PUSH TO APP ===================
+        async function loadTrainedModels() {
+            try {
+                var res = await fetch('/api/trained_models');
+                var models = await res.json();
+                var sel = document.getElementById('pushModelSelect');
+                sel.innerHTML = '';
+                if (models.length === 0) {
+                    sel.innerHTML = '<option value="">No trained models yet</option>';
+                    document.getElementById('btnPush').disabled = true;
+                    return;
+                }
+                models.forEach(function (m) {
+                    var opt = document.createElement('option');
+                    opt.value = m.filename;
+                    opt.textContent = m.filename + ' (' + m.size_mb + ' MB)';
+                    sel.appendChild(opt);
+                });
+                document.getElementById('btnPush').disabled = false;
+                // Auto-fill target name from selected
+                sel.addEventListener('change', function () {
+                    document.getElementById('pushTargetName').value = sel.value;
+                });
+                document.getElementById('pushTargetName').value = models[0].filename;
+            } catch (e) {
+                document.getElementById('pushModelSelect').innerHTML = '<option value="">Error loading models</option>';
+            }
+        }
+
+        async function pushToApp() {
+            var filename = document.getElementById('pushModelSelect').value;
+            var targetName = document.getElementById('pushTargetName').value.trim();
+            if (!filename) { showToast('Select a model first!', 'var(--amber)'); return; }
+            if (!confirm('Push "' + filename + '" to the main app as "' + (targetName || filename) + '"?\n\nThe old model will be backed up.')) return;
+            document.getElementById('btnPush').disabled = true;
+            try {
+                var res = await fetch('/api/push_to_app', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ filename: filename, target_name: targetName }) });
+                var data = await res.json();
+                if (data.error) { showToast('Error: ' + data.error, 'var(--red)'); }
+                else { showToast('Model pushed to app! (' + data.size_mb + ' MB)', 'var(--green)'); }
+            } catch (e) { showToast('Failed to push model', 'var(--red)'); }
+            document.getElementById('btnPush').disabled = false;
+        }
+
+        // =================== LIVE POLLING ===================
+        var lastStatus = '';
+        async function fetchState() {
+            try { var res = await fetch('/api/state'); updateUI(await res.json()); } catch (e) { }
+        }
 
         function updateUI(s) {
             // GPU
             if (s.gpu_name && s.gpu_name !== 'N/A') {
-                document.getElementById('gpuName').textContent = `${s.gpu_name} · ${s.vram_total_gb}GB`;
-                document.getElementById('gpuDot').style.background = 'var(--green)';
+                document.getElementById('gpuName').textContent = s.gpu_name + ' \u00b7 ' + s.vram_total_gb + 'GB';
+                document.getElementById('gpuDot').style.background = s.status === 'training' ? 'var(--green)' : 'var(--amber)';
             }
 
-            // Status badge
-            const badge = document.getElementById('statusBadge');
+            // Status
+            var badge = document.getElementById('statusBadge');
             badge.textContent = s.status.toUpperCase();
-            badge.className = `status-badge status-${s.status}`;
+            badge.className = 'status-badge badge-' + s.status;
 
-            // Arch name
-            document.getElementById('currentArch').textContent = s.current_arch
-                ? (ARCHS[s.current_arch]?.label || s.current_arch)
-                : '—';
-
-            // Elapsed
-            document.getElementById('elapsedTime').textContent = s.elapsed ? `⏱ ${s.elapsed}` : '';
+            document.getElementById('currentArch').textContent = s.current_arch ? s.current_arch.replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase() }) : '\u2014';
+            document.getElementById('elapsedTime').textContent = s.elapsed ? '\u23f1 ' + s.elapsed : '';
 
             // Progress
-            const epochProgress = s.total_epochs > 0 ? (s.epoch / s.total_epochs * 100) : 0;
-            const batchProgress = s.batch_progress || 0;
-            const totalProgress = s.total_epochs > 0
-                ? ((s.epoch - 1 + batchProgress / 100) / s.total_epochs * 100)
-                : 0;
-            document.getElementById('progressBar').style.width = `${Math.min(totalProgress, 100)}%`;
+            var pct = 0;
+            if (s.total_epochs > 0 && s.status === 'training') {
+                pct = ((Math.max(0, s.epoch - 1) + (s.batch_progress || 0) / 100) / s.total_epochs) * 100;
+            } else if (s.status === 'finished') pct = 100;
+            document.getElementById('progressBar').style.width = Math.min(pct, 100) + '%';
             document.getElementById('progressText').textContent =
-                s.status === 'training'
-                    ? `Epoch ${s.epoch}/${s.total_epochs} · Batch ${batchProgress}%`
-                    : (s.status === 'finished' ? 'Complete!' : '—');
+                s.status === 'training' ? 'Epoch ' + s.epoch + '/' + s.total_epochs + ' \u00b7 Batch ' + (s.batch_progress || 0).toFixed(0) + '%'
+                    : s.status === 'finished' ? '\u2705 Complete!' : '\u2014';
 
             // Stats
-            document.getElementById('statEpoch').textContent = `${s.epoch}/${s.total_epochs}`;
-            document.getElementById('statTrainAcc').textContent = s.train_acc ? `${s.train_acc}%` : '—';
-            document.getElementById('statValAcc').textContent = s.val_acc ? `${s.val_acc}%` : '—';
-            document.getElementById('statBestAcc').textContent = s.best_val_acc ? `${s.best_val_acc}%` : '—';
-            document.getElementById('statTrainLoss').textContent = s.train_loss ? s.train_loss.toFixed(4) : '—';
-            document.getElementById('statValLoss').textContent = s.val_loss ? s.val_loss.toFixed(4) : '—';
-            document.getElementById('statSpeed').textContent = s.speed ? `${s.speed}/s` : '—';
-            document.getElementById('statVRAM').textContent =
-                s.vram_used_gb ? `${s.vram_used_gb}/${s.vram_total_gb}GB` : '—';
-            document.getElementById('statLR').textContent = s.lr ? s.lr.toExponential(2) : '—';
-            document.getElementById('statETA').textContent = s.eta || '—';
+            document.getElementById('sEpoch').textContent = s.epoch + '/' + s.total_epochs;
+            document.getElementById('sTrainAcc').textContent = s.train_acc ? s.train_acc + '%' : '\u2014';
+            document.getElementById('sValAcc').textContent = s.val_acc ? s.val_acc + '%' : '\u2014';
+            document.getElementById('sBestAcc').textContent = s.best_val_acc ? s.best_val_acc + '%' : '\u2014';
+            document.getElementById('sLoss').textContent = s.train_loss ? s.train_loss.toFixed(4) : '\u2014';
+            document.getElementById('sSpeed').textContent = s.speed ? s.speed + '/s' : '\u2014';
+            document.getElementById('sVRAM').textContent = s.vram_used_gb ? s.vram_used_gb + '/' + s.vram_total_gb : '\u2014';
+            document.getElementById('sLR').textContent = s.lr ? s.lr.toExponential(1) : '\u2014';
+            document.getElementById('sETA').textContent = s.eta || '\u2014';
+            document.getElementById('sBatch').textContent = s.batch_progress ? s.batch_progress.toFixed(0) + '%' : '\u2014';
 
-            // Color code val acc
-            const valAccEl = document.getElementById('statValAcc');
-            const bestAccEl = document.getElementById('statBestAcc');
-            if (s.val_acc >= 75) { valAccEl.style.color = 'var(--green)'; }
-            else if (s.val_acc >= 60) { valAccEl.style.color = 'var(--amber)'; }
-            else { valAccEl.style.color = 'var(--text-2)'; }
+            var valEl = document.getElementById('sValAcc');
+            valEl.style.color = s.val_acc >= 75 ? 'var(--green)' : s.val_acc >= 60 ? 'var(--amber)' : 'var(--text-2)';
 
             // Buttons
-            const isActive = ['training', 'downloading', 'preparing'].includes(s.status);
+            var isActive = ['training', 'downloading', 'preparing'].indexOf(s.status) >= 0;
             document.getElementById('btnStart').disabled = isActive;
             document.getElementById('btnStop').disabled = !isActive;
             document.getElementById('btnContinue').disabled = isActive || s.status === 'idle';
+            document.getElementById('btnClearVRAM').disabled = isActive;
+            document.getElementById('btnReset').disabled = isActive;
 
-            // Queue
-            const queueBar = document.getElementById('queueBar');
-            const allArchs = [...(s.completed_archs || []), ...(s.current_arch && !s.completed_archs?.includes(s.current_arch) ? [s.current_arch] : []), ...(s.queue || [])];
-            queueBar.innerHTML = allArchs.map(a => {
-                let cls = 'queue-pending';
-                if (s.completed_archs?.includes(a)) cls = 'queue-done';
-                else if (a === s.current_arch) cls = 'queue-active';
-                return `<span class="queue-item ${cls}">${ARCHS[a]?.label || a}</span>`;
+            // Refresh model list when training finishes
+            if (lastStatus === 'training' && (s.status === 'finished' || s.status === 'paused')) {
+                loadTrainedModels();
+            }
+            lastStatus = s.status;
+
+            updateQueue(s);
+            updateLog(s);
+            if (s.epoch_history && s.epoch_history.length > 0) drawChart(s.epoch_history);
+        }
+
+        function updateQueue(s) {
+            var bar = document.getElementById('queueBar');
+            var completed = s.completed_archs || [];
+            var all = completed.slice();
+            if (s.current_arch && completed.indexOf(s.current_arch) < 0) all.push(s.current_arch);
+            (s.queue || []).forEach(function (a) { if (all.indexOf(a) < 0) all.push(a); });
+            if (all.length === 0) { bar.innerHTML = ''; return; }
+            bar.innerHTML = all.map(function (a) {
+                var cls = 'q-pending';
+                if (completed.indexOf(a) >= 0) cls = 'q-done';
+                else if (a === s.current_arch) cls = 'q-active';
+                return '<span class="q-item ' + cls + '">' + a.replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase() }) + '</span>';
             }).join('');
+        }
 
-            // Log
-            const logViewer = document.getElementById('logViewer');
+        function updateLog(s) {
+            var viewer = document.getElementById('logViewer');
             if (s.log_messages && s.log_messages.length > lastLogCount) {
-                const newMessages = s.log_messages.slice(lastLogCount);
-                for (const m of newMessages) {
-                    const div = document.createElement('div');
+                for (var i = lastLogCount; i < s.log_messages.length; i++) {
+                    var m = s.log_messages[i];
+                    var div = document.createElement('div');
                     div.className = 'log-line';
-                    div.innerHTML = `<span class="log-time">${m.time}</span>${escapeHtml(m.msg)}`;
-                    logViewer.appendChild(div);
+                    div.innerHTML = '<span class="log-time">' + m.time + '</span>' + escapeHtml(m.msg);
+                    viewer.appendChild(div);
                 }
                 lastLogCount = s.log_messages.length;
-                logViewer.scrollTop = logViewer.scrollHeight;
-            }
-
-            // Chart
-            if (s.epoch_history && s.epoch_history.length > 0) {
-                drawChart(s.epoch_history);
+                viewer.scrollTop = viewer.scrollHeight;
             }
         }
 
-        function escapeHtml(text) {
-            const div = document.createElement('div');
-            div.appendChild(document.createTextNode(text));
-            return div.innerHTML;
-        }
+        function escapeHtml(t) { var d = document.createElement('div'); d.appendChild(document.createTextNode(t)); return d.innerHTML; }
 
-        // ═══════════════════════════════════════════════════
-        // MINI CHART (Canvas)
-        // ═══════════════════════════════════════════════════
-
+        // =================== CHART ===================
         function drawChart(history) {
-            const canvas = document.getElementById('chartCanvas');
-            const ctx = canvas.getContext('2d');
-            const rect = canvas.getBoundingClientRect();
-            canvas.width = rect.width * 2;
-            canvas.height = rect.height * 2;
-            ctx.scale(2, 2);
+            var canvas = document.getElementById('chartCanvas');
+            var ctx = canvas.getContext('2d');
+            var rect = canvas.getBoundingClientRect();
+            var dpr = window.devicePixelRatio || 1;
+            canvas.width = rect.width * dpr;
+            canvas.height = rect.height * dpr;
+            ctx.scale(dpr, dpr);
 
-            const W = rect.width;
-            const H = rect.height;
-            const pad = { top: 20, right: 16, bottom: 24, left: 40 };
-            const plotW = W - pad.left - pad.right;
-            const plotH = H - pad.top - pad.bottom;
-
+            var W = rect.width, H = rect.height;
+            var pad = { top: 22, right: 16, bottom: 26, left: 44 };
+            var pW = W - pad.left - pad.right;
+            var pH = H - pad.top - pad.bottom;
             ctx.clearRect(0, 0, W, H);
+            if (history.length < 1) return;
 
-            if (history.length < 2) return;
+            var trainAcc = history.map(function (h) { return h.train_acc });
+            var valAcc = history.map(function (h) { return h.val_acc });
+            var epochs = history.map(function (h) { return h.epoch });
+            var allV = trainAcc.concat(valAcc);
+            var minY = Math.max(0, Math.min.apply(null, allV) - 5);
+            var maxY = Math.min(100, Math.max.apply(null, allV) + 5);
+            var xS = function (i) { return pad.left + (history.length === 1 ? pW / 2 : (i / (history.length - 1)) * pW); };
+            var yS = function (v) { return pad.top + pH - ((v - minY) / (maxY - minY || 1)) * pH; };
 
-            const epochs = history.map(h => h.epoch);
-            const trainAcc = history.map(h => h.train_acc);
-            const valAcc = history.map(h => h.val_acc);
-
-            const minY = Math.max(0, Math.min(...trainAcc, ...valAcc) - 5);
-            const maxY = Math.min(100, Math.max(...trainAcc, ...valAcc) + 5);
-
-            const xScale = (i) => pad.left + (i / (history.length - 1)) * plotW;
-            const yScale = (v) => pad.top + plotH - ((v - minY) / (maxY - minY)) * plotH;
-
-            // Grid lines
-            ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-            ctx.lineWidth = 0.5;
-            for (let y = Math.ceil(minY / 10) * 10; y <= maxY; y += 10) {
-                const py = yScale(y);
+            // Grid
+            ctx.strokeStyle = 'rgba(255,255,255,0.04)'; ctx.lineWidth = 0.5;
+            for (var y = Math.ceil(minY / 10) * 10; y <= maxY; y += 10) {
+                var py = yS(y);
                 ctx.beginPath(); ctx.moveTo(pad.left, py); ctx.lineTo(W - pad.right, py); ctx.stroke();
-                ctx.fillStyle = 'rgba(160,160,184,0.5)';
-                ctx.font = '9px Consolas';
-                ctx.textAlign = 'right';
-                ctx.fillText(`${y}%`, pad.left - 4, py + 3);
+                ctx.fillStyle = 'rgba(150,150,180,0.4)'; ctx.font = '9px JetBrains Mono'; ctx.textAlign = 'right';
+                ctx.fillText(y + '%', pad.left - 4, py + 3);
             }
-
-            // X axis labels
             ctx.textAlign = 'center';
-            const step = Math.max(1, Math.floor(history.length / 8));
-            for (let i = 0; i < history.length; i += step) {
-                ctx.fillStyle = 'rgba(160,160,184,0.5)';
-                ctx.fillText(`E${epochs[i]}`, xScale(i), H - 6);
+            var step = Math.max(1, Math.floor(history.length / 8));
+            for (var i = 0; i < history.length; i += step) {
+                ctx.fillStyle = 'rgba(150,150,180,0.4)'; ctx.fillText('E' + epochs[i], xS(i), H - 6);
             }
 
-            // Draw lines
             function drawLine(data, color) {
-                ctx.beginPath();
-                ctx.strokeStyle = color;
-                ctx.lineWidth = 1.5;
-                ctx.lineJoin = 'round';
-                for (let i = 0; i < data.length; i++) {
-                    const x = xScale(i);
-                    const y = yScale(data[i]);
-                    if (i === 0) ctx.moveTo(x, y);
-                    else ctx.lineTo(x, y);
-                }
+                ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.globalAlpha = 0.08;
+                for (var i = 0; i < data.length; i++) { i === 0 ? ctx.moveTo(xS(i), yS(data[i])) : ctx.lineTo(xS(i), yS(data[i])); }
+                ctx.stroke(); ctx.globalAlpha = 1;
+                ctx.beginPath(); ctx.strokeStyle = color; ctx.lineWidth = 2; ctx.lineJoin = 'round';
+                for (var i = 0; i < data.length; i++) { i === 0 ? ctx.moveTo(xS(i), yS(data[i])) : ctx.lineTo(xS(i), yS(data[i])); }
                 ctx.stroke();
-
-                // Last point dot
-                const lastX = xScale(data.length - 1);
-                const lastY = yScale(data[data.length - 1]);
-                ctx.beginPath();
-                ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
-                ctx.fillStyle = color;
-                ctx.fill();
+                var lx = xS(data.length - 1), ly = yS(data[data.length - 1]);
+                ctx.beginPath(); ctx.arc(lx, ly, 4, 0, Math.PI * 2); ctx.fillStyle = color; ctx.fill();
+                ctx.beginPath(); ctx.arc(lx, ly, 2, 0, Math.PI * 2); ctx.fillStyle = '#fff'; ctx.fill();
             }
 
-            drawLine(trainAcc, '#448AFF');   // Blue = train
-            drawLine(valAcc, '#69F0AE');     // Green = val
+            drawLine(trainAcc, '#448AFF');
+            drawLine(valAcc, '#69F0AE');
 
-            // Legend
-            ctx.font = '9px Segoe UI';
-            ctx.fillStyle = '#448AFF';
-            ctx.fillText('● Train', pad.left + 20, 12);
-            ctx.fillStyle = '#69F0AE';
-            ctx.fillText('● Val', pad.left + 70, 12);
+            ctx.font = '10px Inter'; ctx.textAlign = 'left';
+            ctx.fillStyle = '#448AFF'; ctx.fillText('\u25cf Train', pad.left + 10, 14);
+            ctx.fillStyle = '#69F0AE'; ctx.fillText('\u25cf Val', pad.left + 70, 14);
+            if (history.length > 0) {
+                var last = history[history.length - 1];
+                ctx.textAlign = 'right'; ctx.font = '10px JetBrains Mono';
+                ctx.fillStyle = '#448AFF'; ctx.fillText(last.train_acc + '%', W - pad.right, 14);
+                ctx.fillStyle = '#69F0AE'; ctx.fillText(last.val_acc + '%', W - pad.right - 60, 14);
+            }
         }
 
-        // ═══════════════════════════════════════════════════
-        // INIT
-        // ═══════════════════════════════════════════════════
+        // =================== TOAST ===================
+        function showToast(msg, color) {
+            var t = document.getElementById('toast');
+            t.textContent = msg; t.style.borderColor = color || 'var(--green)'; t.style.color = color || 'var(--green)';
+            t.classList.add('show'); setTimeout(function () { t.classList.remove('show'); }, 3000);
+        }
 
         document.addEventListener('DOMContentLoaded', init);
     </script>
-
 </body>
 
 </html>

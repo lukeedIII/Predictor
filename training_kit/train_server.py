@@ -25,6 +25,7 @@ import signal
 import logging
 import threading
 import re
+import shutil
 import argparse
 from pathlib import Path
 from datetime import datetime, timedelta
@@ -36,7 +37,7 @@ import torch.nn as nn
 from torch.amp import autocast, GradScaler
 from flask import Flask, render_template, jsonify, request
 
-from models import ARCHITECTURES, ARCH_INFO
+from models import ARCHITECTURES, ARCH_INFO, estimate_params, register_custom_arch
 
 # ── Paths ──
 SCRIPT_DIR = Path(__file__).parent
@@ -424,7 +425,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if device == 'cuda':
         gpu_name = torch.cuda.get_device_name(0)
-        vram_total = torch.cuda.get_device_properties(0).total_mem / 1e9
+        vram_total = torch.cuda.get_device_properties(0).total_memory / 1e9
         update_state(gpu_name=gpu_name, vram_total_gb=round(vram_total, 1))
         add_log(f"🖥️  GPU: {gpu_name} ({vram_total:.1f} GB VRAM)")
     else:
@@ -470,7 +471,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     # Auto batch size based on VRAM
     if batch_size is None:
         if device == 'cuda':
-            vram_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
+            vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
             if vram_gb >= 20:
                 batch_size = 4096
             elif vram_gb >= 12:
@@ -793,6 +794,8 @@ def continue_training():
 def list_checkpoints():
     """List all saved checkpoints."""
     results = {}
+    if not CHECKPOINT_DIR.exists():
+        return jsonify(results)
     ckpt_re = re.compile(r'^(.+?)_epoch_(\d+)_acc([\d.]+)\.pth$')
     for f in sorted(CHECKPOINT_DIR.iterdir()):
         m = ckpt_re.match(f.name)
@@ -821,6 +824,176 @@ def list_models():
             "size_mb": round(f.stat().st_size / 1e6, 1),
         })
     return jsonify(models)
+
+
+@app.route('/api/architectures')
+def get_architectures():
+    """Return all available architectures (built-in + custom)."""
+    result = {}
+    for key, info in ARCH_INFO.items():
+        result[key] = {
+            'params': info['params'],
+            'vram_gb': info['vram_gb'],
+            'desc': info['desc'],
+            'custom': info.get('custom', False),
+            'config': info.get('config', None),
+        }
+    return jsonify(result)
+
+
+@app.route('/api/estimate', methods=['POST'])
+def estimate_architecture():
+    """Estimate params/VRAM for a custom architecture config."""
+    data = request.get_json(silent=True) or {}
+    est = estimate_params(
+        d_model=data.get('d_model', 256),
+        nhead=data.get('nhead', 8),
+        num_layers=data.get('num_layers', 4),
+        dim_feedforward=data.get('dim_feedforward', 1024),
+        input_size=42,
+        seq_len=data.get('seq_len', 30),
+    )
+    return jsonify(est)
+
+
+@app.route('/api/custom_arch', methods=['POST'])
+def create_custom_architecture():
+    """Register a custom architecture from user-provided hyperparameters."""
+    data = request.get_json(silent=True) or {}
+    name = data.get('name', 'custom_model').strip().lower().replace(' ', '_')
+    d_model = int(data.get('d_model', 256))
+    nhead = int(data.get('nhead', 8))
+    num_layers = int(data.get('num_layers', 4))
+    dim_feedforward = int(data.get('dim_feedforward', 1024))
+    dropout = float(data.get('dropout', 0.15))
+    seq_len = int(data.get('seq_len', 30))
+
+    # Validate d_model divisible by nhead
+    if d_model % nhead != 0:
+        return jsonify({'error': f'd_model ({d_model}) must be divisible by nhead ({nhead})'}), 400
+
+    est = register_custom_arch(
+        name=name, d_model=d_model, nhead=nhead, num_layers=num_layers,
+        dim_feedforward=dim_feedforward, dropout=dropout, seq_len=seq_len,
+    )
+    add_log(f"🏗️ Created custom architecture: {name} ({est['params_human']} params, {est['vram_gb']} GB)")
+    return jsonify({'ok': True, 'name': name, **est})
+
+
+@app.route('/api/clear_vram', methods=['POST'])
+def clear_vram():
+    """Clear GPU VRAM cache — forces PyTorch to release cached memory."""
+    if not torch.cuda.is_available():
+        return jsonify({'error': 'No GPU available'}), 400
+
+    if state['status'] == 'training':
+        return jsonify({'error': 'Cannot clear VRAM while training is active'}), 400
+
+    before = torch.cuda.memory_allocated(0) / 1e9
+    torch.cuda.empty_cache()
+    torch.cuda.ipc_collect()
+    import gc
+    gc.collect()
+    after = torch.cuda.memory_allocated(0) / 1e9
+
+    freed = before - after
+    add_log(f"🧹 VRAM cleared: {before:.2f} GB → {after:.2f} GB (freed {freed:.2f} GB)")
+    update_state(vram_used_gb=round(after, 2))
+    return jsonify({'ok': True, 'before_gb': round(before, 2), 'after_gb': round(after, 2), 'freed_gb': round(freed, 2)})
+
+
+@app.route('/api/reset_state', methods=['POST'])
+def reset_state():
+    """Reset all training state to defaults — clears logs, stats, history."""
+    if state['status'] == 'training':
+        return jsonify({'error': 'Cannot reset while training is active'}), 400
+
+    with lock:
+        state.update({
+            'status': 'idle',
+            'current_arch': None,
+            'epoch': 0,
+            'total_epochs': 0,
+            'train_loss': 0.0,
+            'train_acc': 0.0,
+            'val_acc': 0.0,
+            'best_val_acc': 0.0,
+            'lr': 0.0,
+            'speed': 0,
+            'eta': '',
+            'elapsed': '',
+            'batch_progress': 0.0,
+            'val_loss': 0.0,
+            'vram_used_gb': 0.0,
+            'error_msg': '',
+            'queue': [],
+            'completed_archs': [],
+            'log_messages': [],
+            'epoch_history': [],
+        })
+    add_log("🔄 State reset to defaults")
+    return jsonify({'ok': True})
+
+
+@app.route('/api/trained_models')
+def list_trained_models():
+    """List all best-of models available for pushing to the main app."""
+    models = []
+    if not MODEL_DIR.exists():
+        return jsonify(models)
+    for f in sorted(MODEL_DIR.glob('*.pth')):
+        size_mb = round(f.stat().st_size / 1e6, 1)
+        models.append({
+            'filename': f.name,
+            'size_mb': size_mb,
+            'path': str(f),
+        })
+    return jsonify(models)
+
+
+@app.route('/api/push_to_app', methods=['POST'])
+def push_model_to_app():
+    """Copy a trained model to the main app's model directory, replacing the old one."""
+    data = request.get_json(silent=True) or {}
+    model_file = data.get('filename', '')
+    target_name = data.get('target_name', '')  # e.g. 'nexus_small_transformer_v1.pth'
+
+    if not model_file:
+        return jsonify({'error': 'No model filename specified'}), 400
+
+    # Source: training kit's models/ dir
+    src = MODEL_DIR / model_file
+    if not src.exists():
+        return jsonify({'error': f'Model not found: {model_file}'}), 404
+
+    # Destination: the main app's model directory
+    # Resolve the app's data root the same way config.py does
+    appdata = os.environ.get('LOCALAPPDATA', os.path.expanduser('~'))
+    app_model_dir = Path(appdata) / 'nexus-shadow-quant' / 'models'
+    app_model_dir.mkdir(parents=True, exist_ok=True)
+
+    dst_filename = target_name if target_name else model_file
+    dst = app_model_dir / dst_filename
+
+    # Backup old model if it exists
+    backup_path = None
+    if dst.exists():
+        backup_name = f'{dst.stem}_backup_{int(time.time())}{dst.suffix}'
+        backup_path = app_model_dir / backup_name
+        shutil.copy2(str(dst), str(backup_path))
+        add_log(f"📦 Backed up old model: {dst.name} → {backup_name}")
+
+    # Copy new model
+    shutil.copy2(str(src), str(dst))
+    add_log(f"🚀 Pushed model to app: {model_file} → {dst}")
+
+    return jsonify({
+        'ok': True,
+        'source': model_file,
+        'destination': str(dst),
+        'backup': str(backup_path) if backup_path else None,
+        'size_mb': round(src.stat().st_size / 1e6, 1),
+    })
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -856,7 +1029,7 @@ if __name__ == '__main__':
     # GPU check
     if torch.cuda.is_available():
         gpu = torch.cuda.get_device_name(0)
-        vram = torch.cuda.get_device_properties(0).total_mem / 1e9
+        vram = torch.cuda.get_device_properties(0).total_memory / 1e9
         log.info(f"🖥️  GPU: {gpu} ({vram:.1f} GB VRAM)")
         update_state(gpu_name=gpu, vram_total_gb=round(vram, 1))
     else:
