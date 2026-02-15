@@ -25,6 +25,7 @@ from typing import Dict, Optional, Tuple
 
 import config
 from nexus_logger import NexusLogger
+from telegram_notifier import telegram
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -224,6 +225,9 @@ class PaperTrader:
         
         self.nlog.log_system(f"PaperTrader initialized: ${self.balance:,.2f} balance, {self.leverage}x leverage")
         logging.info(f"PaperTrader initialized: ${self.balance:,.2f} balance, {self.leverage}x leverage")
+        
+        # Start Telegram hourly summary scheduler
+        telegram.start_hourly_loop(self.get_stats)
     
     # ========== RISK MANAGEMENT ==========
     
@@ -590,6 +594,13 @@ class PaperTrader:
             f"Liq: ${new_pos.liquidation_price:,.2f} | Regime: {regime}"
         )
         
+        # Telegram notification
+        telegram.notify_trade_open(
+            direction=direction, price=current_price, size_usd=size_usd,
+            leverage=trade_leverage, confidence=adj_conf, regime=regime,
+            tp=tp, sl=sl, tp1=new_pos.tp1_price
+        )
+        
         return True
     
     def close_position(self, current_price: float, reason: str = "MANUAL", pos: 'Position' = None) -> Dict:
@@ -706,6 +717,13 @@ class PaperTrader:
             f"Fees: ${total_fee:.2f} | Balance: ${self.balance:,.2f} | Open: {len(self.positions)}"
         )
         
+        # Telegram notification
+        telegram.notify_trade_close(
+            direction=pos.direction, entry_price=pos.entry_price,
+            exit_price=current_price, pnl_usd=net_pnl, pnl_pct=net_pnl_pct,
+            reason=reason, balance_after=self.balance, size_usd=pos.size_usd
+        )
+        
         return trade_record
     
     def partial_close(self, pos: Position, current_price: float, 
@@ -748,6 +766,12 @@ class PaperTrader:
             f"PARTIAL CLOSE {pos.direction} {fraction*100:.0f}% @ ${current_price:,.2f} | "
             f"Closed: ${close_size:,.2f} | PnL: ${net_pnl:+.2f} | "
             f"Remaining: ${pos.size_usd:,.2f} | Reason: {reason}"
+        )
+        
+        # Telegram notification
+        telegram.notify_partial_close(
+            direction=pos.direction, price=current_price,
+            closed_size=close_size, pnl=net_pnl, remaining=pos.size_usd
         )
     
     def update(self, current_price: float, prediction: Dict = None, 

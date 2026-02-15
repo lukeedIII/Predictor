@@ -16,6 +16,8 @@ const API_KEYS: KeyConfig[] = [
     { name: 'OpenAI API Key', envKey: 'OPENAI_API_KEY', placeholder: 'sk-…', description: 'For Nexus Agent (GPT-4o)' },
     { name: 'Gemini API Key', envKey: 'GEMINI_API_KEY', placeholder: 'AIza…', description: 'For Nexus Agent (Gemini 2.0 Flash)' },
     { name: 'News API Key', envKey: 'NEWS_API_KEY', placeholder: 'Enter News API key…', description: 'Optional — for news feed' },
+    { name: 'Telegram Bot Token', envKey: 'TELEGRAM_BOT_TOKEN', placeholder: '123456:ABC-DEF1234ghIkl-...…', description: 'From @BotFather — for trade alerts' },
+    { name: 'Telegram Chat ID', envKey: 'TELEGRAM_CHAT_ID', placeholder: '123456789', description: 'Your Telegram user/group chat ID' },
 ];
 
 const LLM_PROVIDERS = [
@@ -157,6 +159,55 @@ function LlmProviderSelector() {
     );
 }
 
+function TelegramSection() {
+    const [testing, setTesting] = useState(false);
+    const [result, setResult] = useState<{ ok: boolean; message?: string; error?: string } | null>(null);
+
+    const testConnection = async () => {
+        setTesting(true);
+        setResult(null);
+        try {
+            const r = await fetch('http://127.0.0.1:8420/api/telegram/test', { method: 'POST' });
+            const data = await r.json();
+            setResult(data);
+            if (data.ok) toast.success(data.message || 'Test message sent!');
+            else toast.error(data.error || 'Connection failed');
+        } catch (e: any) {
+            setResult({ ok: false, error: e.message });
+            toast.error('Failed to reach backend');
+        }
+        setTesting(false);
+    };
+
+    return (
+        <div className="card animate-in">
+            <div className="card-title" style={{ marginBottom: 8 }}>📱 Telegram Notifications</div>
+            <p style={{ fontSize: 11, color: 'var(--text-2)', marginBottom: 12 }}>
+                Get real-time trade alerts and hourly P&L summaries on your phone.
+                Save your Bot Token and Chat ID above, then test the connection.
+            </p>
+            <div className="flex items-center gap-10">
+                <button
+                    className={`btn btn-sm ${result?.ok ? 'btn-success' : 'btn-primary'}`}
+                    onClick={testConnection}
+                    disabled={testing}
+                    style={{ minWidth: 140 }}
+                >
+                    {testing ? '⏳ Sending...' : result?.ok ? '✅ Connected!' : '🔔 Test Connection'}
+                </button>
+                {result && !result.ok && (
+                    <span style={{ fontSize: 11, color: 'var(--negative)' }}>{result.error}</span>
+                )}
+            </div>
+            <div style={{ marginTop: 12, padding: '8px 12px', borderRadius: 8, background: 'rgba(99,102,241,0.08)', fontSize: 11, color: 'var(--text-2)' }}>
+                <b>Setup:</b> Message <code>@BotFather</code> on Telegram → <code>/newbot</code> → copy token.
+                Then send any message to your bot and visit
+                <code style={{ wordBreak: 'break-all' }}> https://api.telegram.org/bot&lt;TOKEN&gt;/getUpdates</code> to find your Chat ID.
+            </div>
+        </div>
+    );
+}
+
 export default function Settings() {
     return (
         <div className="flex-col gap-16">
@@ -175,6 +226,8 @@ export default function Settings() {
                     ))}
                 </div>
             </div>
+
+            <TelegramSection />
 
             <div className="card animate-in" style={{ maxWidth: 480 }}>
                 <div className="card-title" style={{ marginBottom: 12 }}>System Info</div>

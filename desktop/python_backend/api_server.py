@@ -752,6 +752,29 @@ def get_key_status(env_key: str):
     return {"key": env_key, "is_set": bool(value), "masked": f"{'*' * 8}…{value[-4:]}" if len(value) > 4 else ""}
 
 
+# ========================= TELEGRAM =========================
+
+@app.post("/api/telegram/test")
+def test_telegram():
+    """Send a test message via Telegram to verify bot configuration."""
+    try:
+        from telegram_notifier import telegram
+        result = telegram.test_connection()
+        return result
+    except Exception as e:
+        return {"ok": False, "error": str(e)}
+
+
+@app.get("/api/telegram/status")
+def telegram_status():
+    """Check if Telegram notifications are enabled."""
+    try:
+        from telegram_notifier import telegram
+        return {"enabled": telegram.is_enabled}
+    except Exception:
+        return {"enabled": False}
+
+
 @app.websocket("/ws/live")
 async def websocket_live(ws: WebSocket):
     """Real-time data push to frontend via WebSocket.
