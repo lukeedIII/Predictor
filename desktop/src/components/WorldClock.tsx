@@ -60,69 +60,64 @@ export default function WorldClock() {
         setIdx(prev => (prev + dir + CLOCKS.length) % CLOCKS.length);
     };
 
-    // Other clocks (not the selected one)
+    // Other clocks (not selected)
     const others = CLOCKS.map((c, i) => ({ ...c, data: data[i], i })).filter((_, i) => i !== idx);
 
     return (
-        <div style={{ padding: '8px 10px', height: '100%', display: 'flex', flexDirection: 'column' }}>
-            {/* Featured clock */}
-            <div className="stat-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+        <div style={{ padding: '6px 10px', height: '100%', display: 'flex', flexDirection: 'column', overflow: 'hidden' }}>
+            {/* Label */}
+            <div className="stat-label" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 2 }}>
                 <span>🕐 World Clock</span>
             </div>
+
             {d ? (
                 <>
+                    {/* Featured: flag + time + seconds + market dot — single compact line */}
                     <div className="stat-value" style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
-                        <span style={{ fontSize: 14 }}>{city.flag}</span>
+                        <span style={{ fontSize: 13 }}>{city.flag}</span>
                         <span className="mono" style={{ fontSize: 22, fontWeight: 700, color: 'var(--text-0)', letterSpacing: 1 }}>
                             {d.time}
                         </span>
-                        <span className="mono" style={{ fontSize: 12, color: 'var(--text-2)', opacity: 0.6 }}>
+                        <span className="mono" style={{ fontSize: 11, color: 'var(--text-2)', opacity: 0.6 }}>
                             :{d.seconds}
                         </span>
                         <span className={`clock-dot ${d.isOpen ? 'clock-open' : 'clock-closed'}`}
                             title={d.isOpen ? `${city.market} Open` : `${city.market} Closed`}
-                            style={{ marginLeft: 4 }} />
+                            style={{ marginLeft: 2 }} />
                     </div>
-                    <div className="stat-sub" style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                        <span style={{ fontWeight: 600 }}>{city.city}</span>
-                        <span style={{ opacity: 0.5 }}>·</span>
-                        <span style={{ color: d.isOpen ? '#34D399' : 'var(--text-2)' }}>
+
+                    {/* City + Market — inline with ◀ ▶ arrows */}
+                    <div className="stat-sub" style={{ display: 'flex', alignItems: 'center', gap: 4, marginBottom: 2 }}>
+                        <button onClick={() => cycleCity(-1)}
+                            style={{ all: 'unset', cursor: 'pointer', fontSize: 8, color: 'var(--text-2)', padding: 0, lineHeight: 1 }}
+                            title="Previous city">◀</button>
+                        <span style={{ fontWeight: 600, fontSize: 10.5 }}>{city.city}</span>
+                        <span style={{ opacity: 0.4, fontSize: 10 }}>·</span>
+                        <span style={{ color: d.isOpen ? '#34D399' : 'var(--text-2)', fontSize: 10 }}>
                             {city.market} {d.isOpen ? 'Open' : 'Closed'}
                         </span>
+                        <button onClick={() => cycleCity(1)}
+                            style={{ all: 'unset', cursor: 'pointer', fontSize: 8, color: 'var(--text-2)', padding: 0, lineHeight: 1 }}
+                            title="Next city">▶</button>
                     </div>
 
-                    {/* Other clocks ticker */}
-                    <div className="clock-others">
+                    {/* Other clocks — compact row with flags only */}
+                    <div className="clock-others" style={{ display: 'flex', gap: 3, flexWrap: 'wrap', marginTop: 'auto' }}>
                         {others.map(o => (
                             <button key={o.city} className="clock-other-btn" onClick={() => setIdx(o.i)}
-                                title={`Switch to ${o.city}`}>
-                                <span className="clock-flag">{o.flag}</span>
-                                <span className="clock-time mono">{o.data?.time || '--:--'}</span>
+                                title={`${o.city} — ${o.data?.time || '--:--'}`}
+                                style={{
+                                    all: 'unset', cursor: 'pointer', display: 'inline-flex',
+                                    alignItems: 'center', gap: 2, padding: '1px 5px',
+                                    borderRadius: 4, fontSize: 9,
+                                    background: 'var(--bg-3)', border: '1px solid var(--border)',
+                                }}>
+                                <span style={{ fontSize: 10 }}>{o.flag}</span>
+                                <span className="mono" style={{ color: 'var(--text-1)', fontSize: 9 }}>
+                                    {o.data?.time || '--:--'}
+                                </span>
                             </button>
                         ))}
-                    </div>
-
-                    {/* Dot selector */}
-                    <div style={{
-                        display: 'flex', gap: 4, marginTop: 4,
-                        alignItems: 'center', justifyContent: 'center',
-                    }}>
-                        <button onClick={() => cycleCity(-1)}
-                            style={{ all: 'unset', cursor: 'pointer', fontSize: 10, color: 'var(--text-2)', padding: '0 4px' }}
-                            title="Previous city">◀</button>
-                        {CLOCKS.map((_, i) => (
-                            <button key={i} onClick={() => setIdx(i)}
-                                style={{
-                                    all: 'unset', cursor: 'pointer',
-                                    width: i === idx ? 14 : 5, height: 5, borderRadius: 3,
-                                    background: i === idx ? 'var(--accent)' : 'rgba(255,255,255,0.15)',
-                                    transition: 'all 0.3s ease',
-                                }}
-                                title={CLOCKS[i].city} />
-                        ))}
-                        <button onClick={() => cycleCity(1)}
-                            style={{ all: 'unset', cursor: 'pointer', fontSize: 10, color: 'var(--text-2)', padding: '0 4px' }}
-                            title="Next city">▶</button>
                     </div>
                 </>
             ) : (
