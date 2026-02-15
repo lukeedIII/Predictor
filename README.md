@@ -42,9 +42,9 @@
 
 <div align="center">
 
-<img src="assets/screenshots/dashboard-main.png" alt="Dashboard" width="100%">
+<img src="assets/demo.gif" alt="Nexus Shadow-Quant Dashboard" width="100%">
 
-<p><em>Main Dashboard — drag-and-drop grid layout with live price, signals, quant intelligence, and hardware monitoring</em></p>
+<p><em>Platform Overview — Real-time BTC forecasting, 16-model Quant Intelligence, and Dr. Nexus AI Analyst</em></p>
 
 </div>
 
