@@ -2362,13 +2362,19 @@ class QuantEngine:
         jump = a.get('jump', {}) or {}
         jump_risk = a.get('jump_risk', {}) or {}
         bates = a.get('bates_svj', {}) or {}
+        # Bates returns nested dicts: model, heston{}, jumps{}, risk_score
+        bates_jumps = bates.get('jumps', {}) if isinstance(bates.get('jumps'), dict) else {}
+        bates_model = bates.get('model', bates.get('status', bates.get('regime', 'N/A')))
+        bates_intensity = float(bates_jumps.get('intensity', bates.get('jump_intensity', 0)))
+        bates_risk = int(bates.get('risk_score', 0))
         summary['jumps'] = {
             'detected': bool(jump.get('is_jump', False)),
             'probability': float(jump.get('probability', 0)),
             'direction': jump.get('direction', 'NONE'),
             'risk_level': jump_risk.get('risk_level', 'UNKNOWN'),
-            'bates_status': bates.get('status', bates.get('regime', 'N/A')),
-            'bates_jump_intensity': float(bates.get('jump_intensity', 0)),
+            'bates_status': bates_model,
+            'bates_jump_intensity': bates_intensity,
+            'bates_risk_score': bates_risk,
         }
 
         # ── Cycles ──
