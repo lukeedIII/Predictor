@@ -18,6 +18,8 @@ const API_KEYS: KeyConfig[] = [
     { name: 'News API Key', envKey: 'NEWS_API_KEY', placeholder: 'Enter News API key…', description: 'Optional — for news feed' },
     { name: 'Telegram Bot Token', envKey: 'TELEGRAM_BOT_TOKEN', placeholder: '123456:ABC-DEF1234ghIkl-...…', description: 'From @BotFather — for trade alerts' },
     { name: 'Telegram Chat ID', envKey: 'TELEGRAM_CHAT_ID', placeholder: '123456789', description: 'Your Telegram user/group chat ID' },
+    { name: 'Hugging Face Token', envKey: 'HUGGINGFACE_TOKEN', placeholder: 'hf_…', description: 'Required for model cloud sync' },
+    { name: 'HF Repo ID', envKey: 'HF_REPO_ID', placeholder: 'username/repo-name', description: 'Repository to store/pull models' },
 ];
 
 const LLM_PROVIDERS = [
@@ -155,6 +157,58 @@ function LlmProviderSelector() {
             <p style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 10, fontStyle: 'italic' }}>
                 Fallback order: if the primary provider fails, the system tries the remaining providers automatically.
             </p>
+        </div>
+    );
+}
+
+function HuggingFaceSync() {
+    const [syncing, setSyncing] = useState<'push' | 'pull' | null>(null);
+
+    const handleSync = async (mode: 'push' | 'pull') => {
+        setSyncing(mode);
+        try {
+            const res = await apiPost(`/api/settings/hf-sync/${mode}`, {}) as any;
+            if (res.success) {
+                toast.success(`Successfully ${mode === 'push' ? 'uploaded' : 'downloaded'} models to Hub`);
+            } else {
+                toast.error(res.error || 'Sync failed');
+            }
+        } catch (e: any) {
+            toast.error(e.message || 'Sync failed');
+        } finally {
+            setSyncing(null);
+        }
+    };
+
+    return (
+        <div className="card animate-in" style={{ animationDelay: '250ms' }}>
+            <div className="flex items-center gap-12 mb-16">
+                <div style={{ fontSize: 24 }}>🤗</div>
+                <div>
+                    <div style={{ fontSize: 13, fontWeight: 600 }}>Cloud Model Sync</div>
+                    <div style={{ fontSize: 11, color: 'var(--text-2)' }}>Backup or share your trained models on Hugging Face Hub</div>
+                </div>
+            </div>
+
+            <div className="flex gap-12">
+                <button
+                    className={`btn btn-sm btn-primary flex-1 ${syncing === 'push' ? 'loading' : ''}`}
+                    onClick={() => handleSync('push')}
+                    disabled={!!syncing}
+                >
+                    {syncing === 'push' ? 'Pushing...' : '⬆️ Push to Hub'}
+                </button>
+                <button
+                    className={`btn btn-sm btn-secondary flex-1 ${syncing === 'pull' ? 'loading' : ''}`}
+                    onClick={() => handleSync('pull')}
+                    disabled={!!syncing}
+                >
+                    {syncing === 'pull' ? 'Pulling...' : '⬇️ Pull from Hub'}
+                </button>
+            </div>
+            <div style={{ fontSize: 10, color: 'var(--text-3)', marginTop: 8, fontStyle: 'italic', textAlign: 'center' }}>
+                * Pulling will overwrite local models and re-initialize the predictor.
+            </div>
         </div>
     );
 }
@@ -658,7 +712,10 @@ export default function Settings() {
             {/* Model Selector — only visible when beta is enabled */}
             {betaEnabled && <ModelSelector />}
 
-            <LlmProviderSelector />
+            <div className="grid grid-cols-2 gap-16">
+                <LlmProviderSelector />
+                <HuggingFaceSync />
+            </div>
 
             <div>
                 <div className="card-title" style={{ marginBottom: 12 }}>API Keys</div>

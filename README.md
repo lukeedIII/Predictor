@@ -410,6 +410,7 @@ python run_backtest.py             # single-threaded
 - **Embedded fallback LLM** — built-in Qwen2.5-0.5B-Instruct (~1GB) as last-resort provider; lazy-loaded, GPU/CPU auto-detect, selectable in Settings
 - **Hardware Monitor widget** — live GPU/CPU metrics (utilization, VRAM, temperature) from nvidia-smi
 - **Paper Trading Stats widget** — equity curve, win/loss ratio, cumulative PnL breakdown
+- **Hugging Face Model Sync** — cloud backup/restore for models via `huggingface_hub`; allows new installs to skip the initial 6hr training phase; configurable in Settings
 
 ---
 
@@ -422,6 +423,7 @@ python run_backtest.py             # single-threaded
 6) ~~No regime-specific models or regime-based trade gating~~ → ✅ **Implemented v6.2.0** (3-layer gating: Hurst + vol-regime bounds + win-rate gate)
 7) ~~No explicit class-imbalance handling~~ → ✅ **Implemented v6.2.0** (dynamic `scale_pos_weight` = neg/pos ratio per training call)
 8) ~~Missing gap detection/quarantine~~ → ✅ **Implemented v6.2.0** (gaps > 5min detected, quarantine rows + 3-row buffer, excluded from training)
+9) ~~No model cloud sync~~ → ✅ **Implemented v6.4.2** (Hugging Face integration)
 
 ---
 
@@ -432,6 +434,7 @@ python run_backtest.py             # single-threaded
 - [x] Rolling walk-forward evaluation (K=5 folds, accuracy/logloss aggregates in retrain history)
 - [x] XGBoost early stopping (eval-set logloss, `early_stopping_rounds=30`, logs trees used)
 - [x] Regime-based trade gating (Hurst filter + vol-regime bounds + regime win-rate gate)
+- [x] Hugging Face Model Sync (cloud save/load to skip initial training)
 - [ ] Time-of-day / day-of-week features (optional)
 
 ---
@@ -439,7 +442,7 @@ python run_backtest.py             # single-threaded
 ## 🛡️ Security Notes
 - No secrets committed (loaded via `.env`)
 - Paper trading only (no real orders)
-- Everything local except Binance market data + optional OpenAI chat calls
+- Everything local except Binance market data + optional OpenAI chat calls + optional Hugging Face sync
 
 ---
 
@@ -450,6 +453,6 @@ Nexus Shadow-Quant is an educational and research tool. It is not financial advi
 
 <div align="center">
 
-**v6.4.0 Beta Stable** · Built locally with ⚡ by **G-luc**
+**v6.4.2 Beta Stable** · Built locally with ⚡ by **G-luc**
 
 </div>

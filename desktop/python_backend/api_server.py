@@ -35,6 +35,7 @@ import nexus_agent
 from binance_ws import BinanceWSClient
 from gpu_game import GpuGame
 from derivatives_feed import DerivativesFeed
+import hf_sync
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -163,8 +164,22 @@ def _init_engines():
         
         boot_status = {"stage": "training", "progress": 70, "message": "Checking model status..."}
         if not predictor.is_trained:
-            boot_status["message"] = "Training AI model (first run)..."
-            predictor.train()  # 3-tuple return ignored during boot
+            # ── HF AUTO-PULL CHECK ──
+            # If no local models, try pulling from Hub first to save 6 hours of training
+            if not hf_sync.has_models():
+                boot_status["message"] = "Checking Hugging Face for remote models..."
+                res = hf_sync.pull_from_hub()
+                if res.get("success"):
+                    logging.info(f"[BOOT] Successfully pulled models from HF: {res['path']}")
+                    boot_status["message"] = "Models pulled from Hub!"
+                    # Need to re-init predictor to pick up new files
+                    predictor = NexusPredictor()
+                else:
+                    logging.info(f"[BOOT] HF pull skipped/failed: {res.get('error')}")
+
+            if not predictor.is_trained:
+                boot_status["message"] = "Training AI model (first run)..."
+                predictor.train()  # 3-tuple return ignored during boot
         
         boot_status = {"stage": "trader", "progress": 85, "message": "Starting paper trader..."}
         trader = PaperTrader()
@@ -2221,6 +2236,28 @@ def update_settings(body: SettingsUpdate):
             pass
     
     return {"saved": True, "keys_updated": list(updates.keys())}
+
+
+# ── Hugging Face Sync Endpoints ──────────────────────
+@app.post("/api/settings/hf-sync/push")
+async def hf_sync_push():
+    """Manual push of local models to HF Hub."""
+    result = hf_sync.push_to_hub()
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    return result
+
+@app.post("/api/settings/hf-sync/pull")
+async def hf_sync_pull():
+    """Manual pull of latest models from HF Hub."""
+    result = hf_sync.pull_from_hub()
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=result.get("error"))
+    # Re-init predictor states after pull
+    global predictor
+    if predictor is not None:
+        predictor = NexusPredictor()
+    return result
 
 
 @app.post("/api/settings/validate")
