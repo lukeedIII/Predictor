@@ -38,6 +38,32 @@
 
 ---
 
+## 📸 Screenshots
+
+<div align="center">
+
+<img src="assets/screenshots/dashboard-main.png" alt="Dashboard" width="100%">
+
+<p><em>Main Dashboard — drag-and-drop grid layout with live price, signals, quant intelligence, and hardware monitoring</em></p>
+
+</div>
+
+<details>
+<summary><strong>🖼️ Click to see more screenshots</strong></summary>
+
+<br>
+
+| | |
+|:---:|:---:|
+| <img src="assets/screenshots/dr-nexus-chat.png" width="100%"> | <img src="assets/screenshots/quant-intelligence.png" width="100%"> |
+| **Dr. Nexus AI Chat** — branded analysis cards with provider badge | **Quant Intelligence** — 16-model diagnostic panel |
+| <img src="assets/screenshots/trading-view.png" width="100%"> | <img src="assets/screenshots/settings.png" width="100%"> |
+| **Trading View** — live chart with positions overlay | **Settings** — API keys, LLM provider, model architecture |
+
+</details>
+
+---
+
 ## 🧬 What This Actually Predicts (Important)
 
 This is **not** a naive "next candle UP/DOWN" model.
