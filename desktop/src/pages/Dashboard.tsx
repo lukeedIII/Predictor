@@ -15,7 +15,7 @@ import WorldClock from '../components/WorldClock';
 import { IconRefresh } from '../components/Icons';
 
 // ── Constants ────────────────────────────────────────────────
-const STORAGE_KEY = 'nexus-dashboard-layout-v5';
+const STORAGE_KEY = 'nexus-dashboard-layout-v6';
 const PRESETS_KEY = 'nexus-dashboard-presets-v2';
 const ACTIVE_SLOT_KEY = 'nexus-dashboard-active-slot';
 const COLS = 12;
@@ -25,7 +25,7 @@ const ROW_HEIGHT = 30;
 const MINS: Record<string, { minW: number; minH: number }> = {
     price: { minW: 2, minH: 4 }, signal: { minW: 2, minH: 4 },
     accuracy: { minW: 2, minH: 4 }, volume: { minW: 2, minH: 4 },
-    weather: { minW: 2, minH: 4 }, clock: { minW: 2, minH: 4 },
+    weather: { minW: 2, minH: 3 }, clock: { minW: 2, minH: 3 },
     chart: { minW: 4, minH: 8 }, quant: { minW: 3, minH: 8 },
     news: { minW: 3, minH: 6 }, health: { minW: 3, minH: 6 },
     training: { minW: 3, minH: 6 },
@@ -44,8 +44,8 @@ const DEFAULT_LAYOUT: LayoutItem[] = applyMins([
     { i: 'signal', x: 2, y: 0, w: 2, h: 5 },
     { i: 'accuracy', x: 4, y: 0, w: 2, h: 5 },
     { i: 'volume', x: 6, y: 0, w: 2, h: 5 },
-    { i: 'weather', x: 8, y: 0, w: 2, h: 5 },
-    { i: 'clock', x: 10, y: 0, w: 2, h: 5 },
+    { i: 'weather', x: 8, y: 0, w: 2, h: 4 },
+    { i: 'clock', x: 10, y: 0, w: 2, h: 4 },
     { i: 'chart', x: 0, y: 5, w: 8, h: 16 },
     { i: 'quant', x: 8, y: 5, w: 4, h: 16 },
     { i: 'news', x: 0, y: 21, w: 4, h: 12 },
