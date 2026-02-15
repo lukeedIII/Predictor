@@ -37,17 +37,26 @@ class Position:
                  tp_price: float, sl_price: float, hurst: float = 0.5):
         self.direction = direction          # "LONG" or "SHORT"
         self.entry_price = entry_price
-        self.size_usd = size_usd            # Notional value
+        self.size_usd = size_usd            # Notional value (may reduce after partial close)
+        self.original_size_usd = size_usd   # Original notional (never changes)
         self.margin = size_usd / leverage   # Actual capital used
         self.leverage = leverage
         self.confidence = confidence
         self.regime = regime
         self.hurst = hurst                  # Hurst at entry (for feedback)
-        self.tp_price = tp_price            # Take-profit
+        self.tp_price = tp_price            # Take-profit (full TP)
         self.sl_price = sl_price            # Stop-loss
         self.initial_sl = sl_price           # Original SL (before trailing)
         self.entry_time = datetime.now()
         self.liquidation_price = self._calc_liquidation()
+        
+        # TP1 — partial exit target (60% of TP distance)
+        tp_dist = abs(tp_price - entry_price)
+        if direction == "LONG":
+            self.tp1_price = entry_price + tp_dist * 0.6
+        else:
+            self.tp1_price = entry_price - tp_dist * 0.6
+        self.tp1_hit = False                # Whether partial exit was taken
         
         # Fee tracking — entry fee charged at open
         fee_pct = (getattr(config, 'PAPER_FEE_TAKER_PCT', 0.04)
@@ -127,17 +136,29 @@ class Position:
         else:
             return current_price >= self.sl_price
     
+    def should_tp1(self, current_price: float) -> bool:
+        """Check if TP1 (partial exit target) hit."""
+        if self.tp1_hit:
+            return False
+        if self.direction == "LONG":
+            return current_price >= self.tp1_price
+        else:
+            return current_price <= self.tp1_price
+    
     def to_dict(self) -> Dict:
         return {
             'direction': self.direction,
             'entry_price': self.entry_price,
             'size_usd': self.size_usd,
+            'original_size_usd': getattr(self, 'original_size_usd', self.size_usd),
             'margin': self.margin,
             'leverage': self.leverage,
             'confidence': self.confidence,
             'regime': self.regime,
             'hurst': self.hurst,
             'tp_price': self.tp_price,
+            'tp1_price': getattr(self, 'tp1_price', self.tp_price),
+            'tp1_hit': getattr(self, 'tp1_hit', False),
             'sl_price': self.sl_price,
             'initial_sl': self.initial_sl,
             'best_price': self.best_price,
@@ -230,12 +251,24 @@ class PaperTrader:
         # Floor 5%, cap at 25%
         return max(0.05, min(0.25, half_kelly))
     
-    def calculate_position_size(self) -> float:
-        """Calculate position size in USD based on Kelly fraction and leverage."""
+    def calculate_position_size(self, confidence: float = 50) -> float:
+        """
+        Confidence-scaled Kelly sizing.
+        Scale: conf 40% → 0.5x Kelly, conf 60% → 1.0x, conf 80%+ → 1.5x
+        This creates varied position sizes based on signal quality.
+        """
         fraction = self.kelly_fraction()
-        risk_amount = self.balance * fraction
+        
+        # Confidence multiplier: linear scale [0.5, 1.5] mapped to [40, 80]
+        conf_mult = np.clip((confidence - 40) / 40, 0, 1) * 1.0 + 0.5  # [0.5, 1.5]
+        adjusted_fraction = fraction * conf_mult
+        adjusted_fraction = min(adjusted_fraction, 0.30)  # Hard cap 30%
+        
+        used_margin = sum(p.margin for p in self.positions)
+        available = self.balance - used_margin
+        risk_amount = available * adjusted_fraction
         notional = risk_amount * self.leverage
-        return notional
+        return max(notional, 100)  # Min $100 position
     
     def check_circuit_breaker(self) -> bool:
         """Check if drawdown exceeds maximum allowed."""
@@ -256,14 +289,31 @@ class PaperTrader:
         return elapsed >= config.PAPER_COOLDOWN_SEC
     
     def calculate_tp_sl(self, entry_price: float, direction: str, 
-                        volatility: float = 0.005) -> Tuple[float, float]:
+                        volatility: float = 0.005, regime: str = 'UNKNOWN',
+                        confidence: float = 50) -> Tuple[float, float]:
         """
-        Calculate TP/SL with professional 2:1 reward-to-risk ratio.
-        Uses ATR-like volatility for dynamic levels.
+        Regime-adaptive TP/SL with dynamic reward:risk ratio.
+        Trending markets → let winners run (2.5:1)
+        Ranging markets → quick scalps (1:1)
+        High confidence → wider TP (let conviction trades breathe)
         """
-        # Risk = 1x volatility, Reward = 1.5x volatility (tighter scalp levels)
         risk_pct = max(volatility * 1.0, 0.002)   # Floor at 0.2%
-        reward_pct = risk_pct * 1.5               # 1.5:1 R:R
+        
+        # Regime-adaptive reward:risk ratio
+        if regime == 'BULL' and direction == 'LONG':
+            rr_ratio = 2.5     # Let longs run in bull
+        elif regime == 'BEAR' and direction == 'SHORT':
+            rr_ratio = 2.5     # Let shorts run in bear
+        elif regime == 'SIDEWAYS':
+            rr_ratio = 1.0     # Quick scalps in chop
+        else:
+            rr_ratio = 1.5     # Default (counter-trend or unknown)
+        
+        # High confidence → wider TP (conviction trades breathe more)
+        if confidence > 75:
+            rr_ratio *= 1.2
+        
+        reward_pct = risk_pct * rr_ratio
         
         if direction == "LONG":
             tp = entry_price * (1 + reward_pct)
@@ -276,17 +326,90 @@ class PaperTrader:
     
     # ========== TRADING LOGIC ==========
     
+    def _quant_adjusted_confidence(self, prediction: Dict) -> float:
+        """
+        Adjust raw confidence using the 16-model quant overlay.
+        OFI alignment, RQA determinism, and jump detection modify the score.
+        """
+        raw_conf = prediction.get('confidence', 50)
+        quant = prediction.get('quant', {})
+        bonus = 0
+        
+        # OFI alignment: if signal direction matches order flow, boost
+        ofi = 0
+        of_data = quant.get('order_flow', {})
+        if of_data:
+            ofi = of_data.get('normalized', 0)
+        direction = prediction.get('direction', 'NEUTRAL')
+        if (direction == 'UP' and ofi > 0.3) or (direction == 'DOWN' and ofi < -0.3):
+            bonus += 5  # OFI confirms signal
+            logging.debug(f"Quant boost +5: OFI {ofi:.2f} confirms {direction}")
+        elif (direction == 'UP' and ofi < -0.5) or (direction == 'DOWN' and ofi > 0.5):
+            bonus -= 5  # OFI contradicts signal
+            logging.debug(f"Quant penalty -5: OFI {ofi:.2f} contradicts {direction}")
+        
+        # RQA determinism: high determinism = more predictable = boost
+        rqa = quant.get('rqa', {})
+        det = rqa.get('determinism', 0)
+        if det > 0.8:
+            bonus += 3
+            logging.debug(f"Quant boost +3: RQA determinism {det:.3f}")
+        elif det < 0.3:
+            bonus -= 3
+            logging.debug(f"Quant penalty -3: Low RQA determinism {det:.3f}")
+        
+        # Jump detection: penalize if jumps detected (unpredictable)
+        jumps = quant.get('jumps', {})
+        if jumps.get('detected', False):
+            bonus -= 8
+            logging.debug(f"Quant penalty -8: Jump detected")
+        
+        # Regime confidence: high HMM confidence = stronger signal
+        regime_data = quant.get('regime', {})
+        regime_conf = regime_data.get('confidence', 0)
+        if regime_conf > 80:
+            bonus += 2
+        
+        adjusted = np.clip(raw_conf + bonus, 0, 99)
+        if bonus != 0:
+            logging.info(f"Quant overlay: {raw_conf:.1f}% → {adjusted:.1f}% (bonus={bonus:+d})")
+        return adjusted
+    
+    def _dynamic_leverage(self, prediction: Dict) -> int:
+        """
+        Adjust leverage based on regime and volatility.
+        Trending + low-vol → higher leverage (up to LEVERAGE_MAX)
+        High-vol or chaotic → lower leverage (down to LEVERAGE_MIN)
+        """
+        base = self.leverage  # Config default (10x)
+        regime = prediction.get('regime_label', 'UNKNOWN')
+        vol_regime = prediction.get('vol_regime', 1.0)
+        confidence = prediction.get('confidence', 50)
+        lev_min = getattr(config, 'PAPER_LEVERAGE_MIN', 3)
+        lev_max = getattr(config, 'PAPER_LEVERAGE_MAX', 20)
+        
+        if regime in ('BULL', 'BEAR') and vol_regime < 1.0 and confidence > 65:
+            return min(base + 5, lev_max)   # Up to 20x in clean trends
+        elif vol_regime > 2.0:
+            return max(base - 5, lev_min)   # Deleverage in chaos (min 3x)
+        elif regime == 'SIDEWAYS' and vol_regime < 0.5:
+            return max(base - 3, lev_min)   # Conservative in dead markets
+        return base
+    
     def evaluate_signal(self, prediction: Dict) -> Optional[str]:
         """
         Evaluate the AI prediction and decide whether to trade.
-        Uses signal confirmation: requires consecutive predictions in same
-        direction before committing capital.
+        v2.0: Tiered confirmation, pyramiding, quant-overlay confidence adjustment.
         Returns "LONG", "SHORT", or None.
         """
-        # Extract prediction data
-        confidence = prediction.get('confidence', 0)
+        # Apply quant overlay to adjust raw confidence
+        raw_confidence = prediction.get('confidence', 0)
+        confidence = self._quant_adjusted_confidence(prediction)
         direction = prediction.get('direction', 'NEUTRAL')
         hurst = prediction.get('hurst', 0.5)
+        
+        # Store adjusted confidence back for sizing use
+        prediction['_adjusted_confidence'] = confidence
         
         # Rule 0: NEUTRAL = no signal
         if direction == 'NEUTRAL':
@@ -337,7 +460,7 @@ class PaperTrader:
                     )
                     return None
         
-        # Rule 3: Signal confirmation — need 2+ consecutive predictions in same direction
+        # Rule 3: Tiered signal confirmation based on confidence
         wanted = 'LONG' if direction == 'UP' else 'SHORT'
         if not hasattr(self, '_signal_streak'):
             self._signal_streak = 0
@@ -349,9 +472,16 @@ class PaperTrader:
             self._signal_direction = wanted
             self._signal_streak = 1
         
-        min_confirms = 2  # Need 2 consecutive same-direction signals
+        # Tiered: strong signals need fewer confirmations
+        if confidence >= 75:
+            min_confirms = 1   # Instant entry for strong signals
+        elif confidence >= 55:
+            min_confirms = 2   # Standard confirmation
+        else:
+            min_confirms = 3   # Extra caution for weak signals
+        
         if self._signal_streak < min_confirms:
-            logging.debug(f"Skip: signal confirmation {self._signal_streak}/{min_confirms} for {wanted}")
+            logging.debug(f"Skip: signal confirmation {self._signal_streak}/{min_confirms} for {wanted} (conf={confidence:.0f}%)")
             return None
         
         # Rule 4: Cooldown period
@@ -377,54 +507,64 @@ class PaperTrader:
             logging.debug(f"Skip: max {self.MAX_CONCURRENT} concurrent positions reached")
             return None
         
-        # Rule 7: No stacking same direction — diversify exposure
-        open_dirs = [p.direction for p in self.positions]
-        if wanted in open_dirs:
-            logging.debug(f"Skip: already have {wanted} position open — no stacking")
+        # Rule 7: Pyramid limit — max N in same direction (replaces old no-stacking)
+        max_same = getattr(config, 'PAPER_MAX_SAME_DIRECTION', 3)
+        same_dir_count = sum(1 for p in self.positions if p.direction == wanted)
+        if same_dir_count >= max_same:
+            logging.debug(f"Skip: already {same_dir_count} {wanted} positions (pyramid limit {max_same})")
             return None
         
         # All checks passed — reset streak and trade
         self._signal_streak = 0
-        logging.info(f"SIGNAL CONFIRMED: {wanted} @ confidence={confidence:.1f}%, hurst={hurst:.3f}")
+        logging.info(
+            f"SIGNAL CONFIRMED: {wanted} @ raw={raw_confidence:.1f}% adjusted={confidence:.1f}% "
+            f"hurst={hurst:.3f} confirms={min_confirms}"
+        )
         return wanted
     
     def open_position(self, direction: str, current_price: float, 
                       prediction: Dict, volatility: float = 0.005):
-        """Open a new paper trading position (supports multiple concurrent)."""
+        """Open a new paper trading position with dynamic leverage and confidence-scaled sizing."""
         if len(self.positions) >= self.MAX_CONCURRENT:
             logging.warning(f"Cannot open: max {self.MAX_CONCURRENT} positions reached")
             return False
+        
+        # Dynamic leverage based on regime + volatility
+        trade_leverage = self._dynamic_leverage(prediction)
+        
+        # Confidence-scaled position sizing
+        adj_conf = prediction.get('_adjusted_confidence', prediction.get('confidence', 50))
+        size_usd = self.calculate_position_size(confidence=adj_conf)
+        
+        # Override leverage for this trade
+        margin = size_usd / trade_leverage
         
         # Calculate available margin (total balance minus margin used by open positions)
         used_margin = sum(p.margin for p in self.positions)
         available = self.balance - used_margin
         
-        # Position sizing via Kelly — fraction of AVAILABLE balance
-        fraction = self.kelly_fraction()
-        risk_amount = available * fraction
-        size_usd = risk_amount * self.leverage
-        margin = size_usd / self.leverage
-        
         # Ensure we have enough available margin
         if margin > available * 0.90:  # Keep 10% buffer per slot
             margin = available * 0.80
-            size_usd = margin * self.leverage
+            size_usd = margin * trade_leverage
         
         if margin < 10:  # Minimum $10 margin
             logging.warning(f"Not enough margin: ${available:.2f} available")
             return False
         
-        # Calculate TP/SL
-        tp, sl = self.calculate_tp_sl(current_price, direction, volatility)
+        # Regime-adaptive TP/SL
+        regime = prediction.get('regime_label', 'UNKNOWN')
+        tp, sl = self.calculate_tp_sl(current_price, direction, volatility, 
+                                       regime=regime, confidence=adj_conf)
         
         # Create position and add to list
         new_pos = Position(
             direction=direction,
             entry_price=current_price,
             size_usd=size_usd,
-            leverage=self.leverage,
-            confidence=prediction.get('confidence', 0),
-            regime=prediction.get('regime_label', 'UNKNOWN'),
+            leverage=trade_leverage,
+            confidence=adj_conf,
+            regime=regime,
             tp_price=tp,
             sl_price=sl,
             hurst=prediction.get('hurst', 0.5)
@@ -441,13 +581,13 @@ class PaperTrader:
         
         self.last_trade_time = datetime.now()
         
-        self.nlog.log_trade_open(direction, current_price, size_usd, self.leverage, 
-                                  prediction.get('confidence', 0))
+        self.nlog.log_trade_open(direction, current_price, size_usd, trade_leverage, 
+                                  adj_conf)
         logging.info(
             f"OPENED {direction} #{len(self.positions)} @ ${current_price:,.2f} | "
-            f"Size: ${size_usd:,.2f} ({self.leverage}x) | Fee: ${entry_fee:.2f} | "
-            f"TP: ${tp:,.2f} | SL: ${sl:,.2f} | "
-            f"Liq: ${new_pos.liquidation_price:,.2f}"
+            f"Size: ${size_usd:,.2f} ({trade_leverage}x) | Conf: {adj_conf:.0f}% | Fee: ${entry_fee:.2f} | "
+            f"TP: ${tp:,.2f} (TP1: ${new_pos.tp1_price:,.2f}) | SL: ${sl:,.2f} | "
+            f"Liq: ${new_pos.liquidation_price:,.2f} | Regime: {regime}"
         )
         
         return True
@@ -568,12 +708,53 @@ class PaperTrader:
         
         return trade_record
     
+    def partial_close(self, pos: Position, current_price: float, 
+                      fraction: float = 0.5, reason: str = "TP1_PARTIAL"):
+        """
+        Close a fraction of a position (scale-out).
+        Reduces size_usd and returns freed margin to balance.
+        """
+        close_size = pos.size_usd * fraction
+        
+        # Calculate PnL on the closed portion
+        if pos.direction == "LONG":
+            pnl_pct = (current_price - pos.entry_price) / pos.entry_price
+        else:
+            pnl_pct = (pos.entry_price - current_price) / pos.entry_price
+        
+        gross_pnl = close_size * pnl_pct
+        
+        # Exit fee on closed portion
+        fee_pct = (getattr(config, 'PAPER_FEE_TAKER_PCT', 0.04)
+                   + getattr(config, 'PAPER_SLIPPAGE_PCT', 0.01))
+        exit_fee = round(close_size * fee_pct / 100, 4)
+        net_pnl = gross_pnl - exit_fee
+        
+        # Update position size (keep remaining fraction open)
+        pos.size_usd *= (1 - fraction)
+        freed_margin = close_size / pos.leverage
+        pos.margin = pos.size_usd / pos.leverage
+        
+        # Credit balance: freed margin + net PnL
+        self.balance += freed_margin + net_pnl
+        self.total_pnl += net_pnl
+        self.total_gross_pnl += gross_pnl
+        self.total_fees += exit_fee
+        
+        if self.balance > self.peak_balance:
+            self.peak_balance = self.balance
+        
+        logging.info(
+            f"PARTIAL CLOSE {pos.direction} {fraction*100:.0f}% @ ${current_price:,.2f} | "
+            f"Closed: ${close_size:,.2f} | PnL: ${net_pnl:+.2f} | "
+            f"Remaining: ${pos.size_usd:,.2f} | Reason: {reason}"
+        )
+    
     def update(self, current_price: float, prediction: Dict = None, 
                volatility: float = 0.005) -> Optional[Dict]:
         """
         Main update loop — call this every tick.
-        Checks open position for TP/SL/liquidation, 
-        then evaluates new signals if flat.
+        v2.0: Checks TP1 partial exits, TP/SL/liquidation, then evaluates new signals.
         
         Returns trade record if a trade was closed, None otherwise.
         """
@@ -583,29 +764,40 @@ class PaperTrader:
         for pos in list(self.positions):
             pos.update_trailing_sl(current_price)
         
-        # 2. Check ALL open positions for exits
+        # 2. Check ALL open positions for exits (priority: liquidation > TP > TP1 > SL)
         for pos in list(self.positions):  # Copy list since we may remove during iteration
             # Time-based exit: auto-close positions held too long
             hold_secs = (datetime.now() - pos.entry_time).total_seconds()
-            max_hold = getattr(config, 'PAPER_MAX_HOLD_SEC', 3600)
+            max_hold = getattr(config, 'PAPER_MAX_HOLD_SEC', 5400)
             if hold_secs > max_hold:
                 result = self.close_position(current_price, "MAX_HOLD_TIME", pos)
             elif pos.should_liquidate(current_price):
                 result = self.close_position(current_price, "LIQUIDATED", pos)
             elif pos.should_tp(current_price):
                 result = self.close_position(current_price, "TAKE_PROFIT", pos)
+            elif hasattr(pos, 'should_tp1') and pos.should_tp1(current_price):
+                # TP1 partial exit: close 50%, move SL to breakeven
+                self.partial_close(pos, current_price, fraction=0.5, reason="TP1_PARTIAL")
+                pos.tp1_hit = True
+                pos.sl_price = pos.entry_price  # Move SL to breakeven after TP1
+                logging.info(f"TP1 hit — SL moved to breakeven ${pos.entry_price:,.2f}")
             elif pos.should_sl(current_price):
                 # Determine if this was the trailing SL or original SL
-                sl_reason = "TRAILING_STOP" if pos.sl_price != pos.initial_sl else "STOP_LOSS"
+                if pos.sl_price == pos.entry_price and getattr(pos, 'tp1_hit', False):
+                    sl_reason = "BREAKEVEN_EXIT"  # SL was moved to entry after TP1
+                elif pos.sl_price != pos.initial_sl:
+                    sl_reason = "TRAILING_STOP"
+                else:
+                    sl_reason = "STOP_LOSS"
                 result = self.close_position(current_price, sl_reason, pos)
         
-        # 2. Evaluate new signals if slots available and running
+        # 3. Evaluate new signals if slots available and running
         if len(self.positions) < self.MAX_CONCURRENT and self.is_running and prediction is not None:
             signal = self.evaluate_signal(prediction)
             if signal is not None:
                 self.open_position(signal, current_price, prediction, volatility)
         
-        # 3. Record equity
+        # 4. Record equity
         self._save_equity_point()
         
         return result

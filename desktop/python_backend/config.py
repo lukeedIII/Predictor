@@ -146,10 +146,13 @@ PAPER_TRADES_PATH = os.path.join(DATA_DIR, "paper_trades.csv")
 PAPER_EQUITY_PATH = os.path.join(DATA_DIR, "paper_equity.csv")
 PAPER_POSITIONS_PATH = os.path.join(DATA_DIR, "paper_positions.json")
 PAPER_DEFAULT_LEVERAGE = 10
-PAPER_MIN_CONFIDENCE = 30
+PAPER_MIN_CONFIDENCE = 40          # Higher floor (was 30), compensated by tiered confirmations
 PAPER_MAX_DRAWDOWN = 0.20
-PAPER_COOLDOWN_SEC = 60
-PAPER_MAX_HOLD_SEC = 7200
+PAPER_COOLDOWN_SEC = 120           # Slightly longer cooldown to avoid noise (was 60)
+PAPER_MAX_HOLD_SEC = 5400          # 90 min max — BTC moves fast, stale trades bleed fees (was 7200)
+PAPER_MAX_SAME_DIRECTION = 3       # Pyramid limit per direction
+PAPER_LEVERAGE_MIN = 3             # Dynamic leverage floor
+PAPER_LEVERAGE_MAX = 20            # Dynamic leverage ceiling
 
 # ── Paper Trading Fees ────────────────────────────────
 PAPER_FEE_TAKER_PCT = 0.04     # Binance taker fee per side (0.04%)
