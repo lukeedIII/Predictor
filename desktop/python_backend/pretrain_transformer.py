@@ -42,7 +42,7 @@ CHECKPOINT_DIR = SCRIPT_DIR / "models" / "checkpoints"
 # === Constants ===
 SEQ_LEN = 30  # Must match DEEP_SEQ_LEN in predictor.py
 PREDICTION_HORIZON = 15  # 15-min lookahead, same as live
-PRICE_THRESHOLD = 0.003  # 0.3% move = significant, same as live
+PRICE_THRESHOLD = 0.001  # 0.1% symmetric threshold, same as live config
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -292,9 +292,15 @@ def engineer_features(df: pd.DataFrame) -> pd.DataFrame:
     df['ws_buy_sell_ratio'] = df['buy_sell_ratio'] * 0.95  # proxy
     df['ws_spread_bps'] = df['high_low_range'] * 100  # proxy for spread
 
-    # ──── TARGET ────
+    # ──── TARGET (SYMMETRIC) ────
     future_ret = close.pct_change(PREDICTION_HORIZON).shift(-PREDICTION_HORIZON)
-    df['target'] = (future_ret > PRICE_THRESHOLD).astype(float)
+    # Symmetric: UP > +threshold, DOWN < -threshold, drop neutral zone
+    df['target'] = -1.0  # sentinel for neutral
+    df.loc[future_ret > PRICE_THRESHOLD, 'target'] = 1.0   # UP
+    df.loc[future_ret < -PRICE_THRESHOLD, 'target'] = 0.0  # DOWN
+    n_neutral = (df['target'] == -1.0).sum()
+    df = df[df['target'] != -1.0].reset_index(drop=True)
+    log.info(f"   Symmetric ±{PRICE_THRESHOLD*100:.1f}%: dropped {n_neutral:,} neutral rows")
 
     # Drop warmup rows and future-leaking rows
     df = df.iloc[max(240, hurst_window):-(PREDICTION_HORIZON + 1)].reset_index(drop=True)
@@ -368,7 +374,7 @@ def create_windows(df: pd.DataFrame, feature_cols: list, batch_size: int = 100_0
 # STEP 4: PRETRAIN
 # ═══════════════════════════════════════════════════════════════════════════
 
-def pretrain(df: pd.DataFrame, feature_cols: list, epochs: int = 10, lr: float = 3e-4):
+def pretrain(df: pd.DataFrame, feature_cols: list, epochs: int = 10, lr: float = 3e-4, output_name: str = "nexus_transformer_pretrained.pth"):
     """Train NexusTransformer on the full dataset with mixed precision."""
     from predictor import NexusTransformer, DEEP_SEQ_LEN
 
@@ -386,7 +392,7 @@ def pretrain(df: pd.DataFrame, feature_cols: list, epochs: int = 10, lr: float =
     # Check for existing checkpoint
     MODEL_DIR.mkdir(parents=True, exist_ok=True)
     CHECKPOINT_DIR.mkdir(parents=True, exist_ok=True)
-    pretrained_path = MODEL_DIR / "nexus_transformer_pretrained.pth"
+    pretrained_path = MODEL_DIR / output_name
 
     if pretrained_path.exists():
         try:
@@ -579,6 +585,8 @@ def main():
     parser.add_argument('--epochs', type=int, default=10, help='Number of epochs (default: 10)')
     parser.add_argument('--lr', type=float, default=3e-4, help='Learning rate (default: 3e-4)')
     parser.add_argument('--quick', action='store_true', help='Quick test: 1 epoch, first 100K rows')
+    parser.add_argument('--output', type=str, default='nexus_transformer_pretrained.pth',
+                        help='Output filename (default: nexus_transformer_pretrained.pth)')
     args = parser.parse_args()
 
     log.info("=" * 60)
@@ -624,7 +632,7 @@ def main():
     df, feature_cols = engineer_features(df)
 
     # Step 4: Pretrain
-    model = pretrain(df, feature_cols, epochs=args.epochs, lr=args.lr)
+    model = pretrain(df, feature_cols, epochs=args.epochs, lr=args.lr, output_name=args.output)
 
     log.info("\n🎉 Done! The pretrained model is ready for use.")
     log.info("Next steps:")
