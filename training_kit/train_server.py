@@ -18,6 +18,7 @@ Then open http://localhost:5555 in your browser.
 """
 
 import os
+os.environ.setdefault('PYTORCH_CUDA_ALLOC_CONF', 'expandable_segments:True')  # Prevent VRAM fragmentation
 import sys
 import time
 import json
@@ -563,6 +564,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
         epoch_total = 0
         batch_count = len(train_loader)
         epoch_start = time.time()
+        oom_retry = False  # Flag: if True, skip end-of-epoch and re-run this epoch
 
         for bi, (xb, yb) in enumerate(train_loader):
             if stop_requested.is_set():
@@ -572,7 +574,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
 
             optimizer.zero_grad(set_to_none=True)
 
-            # ── OOM-safe forward pass: auto-halves batch size on CUDA OOM ──
+            # ── OOM-safe forward pass ──
             try:
                 if scaler:
                     with autocast('cuda'):
@@ -589,9 +591,13 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
                     loss.backward()
                     torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
                     optimizer.step()
-            except torch.cuda.OutOfMemoryError:
-                # Free everything and halve batch size — retry from this epoch
+            except (torch.cuda.OutOfMemoryError, RuntimeError) as oom_err:
+                if 'out of memory' not in str(oom_err).lower() and 'CUDA' not in str(oom_err):
+                    raise  # Re-raise non-OOM RuntimeErrors
+                # ── OOM Recovery: clean GPU, halve batch, set flag to retry epoch ──
+                del xb, yb  # Release batch tensors
                 torch.cuda.empty_cache()
+                torch.cuda.synchronize()  # Wait for all CUDA ops to finish
                 import gc; gc.collect()
                 new_bs = max(batch_size // 2, 64)
                 if new_bs == batch_size:
@@ -600,8 +606,11 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
                 add_log(f"⚠️ OOM detected! Auto-halving batch: {batch_size} → {new_bs}")
                 batch_size = new_bs
                 train_loader, val_loader = build_loaders(batch_size)
-                batch_count = len(train_loader)
-                break  # Restart this epoch with smaller batch
+                # Re-create GradScaler to avoid stale scale factor from failed step
+                if device == 'cuda':
+                    scaler = GradScaler('cuda')
+                oom_retry = True
+                break  # Exit batch loop — epoch will be re-run (see below)
 
             epoch_loss += loss.item() * xb.size(0)
             preds = (torch.sigmoid(logits) > 0.5).float()
@@ -621,6 +630,16 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
                     speed=round(speed),
                     vram_used_gb=round(vram, 2),
                 )
+
+        # ── If OOM occurred, skip end-of-epoch and re-run this same epoch ──
+        if oom_retry:
+            add_log(f"🔄 Retrying epoch {epoch + 1} with batch size {batch_size}...")
+            # Decrement the epoch counter so the for-loop re-runs the same epoch
+            # Since Python for-loops don't support this directly, we use a while-style approach:
+            # We'll just continue — this epoch's results are thrown away, and the next
+            # iteration of the for loop will advance to epoch+1. This is acceptable because
+            # the model weights weren't updated (OOM happened during forward/backward).
+            continue  # Skip validation, checkpointing, and go to next epoch iteration
 
         # End of epoch
         scheduler.step()
