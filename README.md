@@ -8,7 +8,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-6.2.1-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
+[![Version](https://img.shields.io/badge/version-6.3.0-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 [![Electron](https://img.shields.io/badge/Electron-40-47848F?style=flat-square&logo=electron&logoColor=white)](https://electronjs.org)
@@ -29,6 +29,9 @@
 - **Retraining:** every **6 hours**, from scratch, on the most recent **500,000** 1-minute candles (~1 year)
 - **Champion-Challenger gate:** newly trained models must beat the current production model (logloss + accuracy) before promotion
 - **Drift monitoring:** PSI-based feature drift, prediction distribution shift, and calibration quality (Brier + ECE) tracked every 30 min
+- **Dashboard:** drag-and-drop grid layout with saveable presets, light/dark theme, World Clock + Swiss Weather widgets
+- **Real-time:** WebSocket push for price, predictions, positions, and quant data (~1s latency)
+- **16-model Quant Intelligence:** HMM regime, GJR-GARCH, Heston, Rough Vol, Merton Jump, Bates SVJ, EMD, HHT, Wavelets, MF-DFA, RQA, TDA, PPO RL, Almgren-Chriss, OFI
 - **Everything local:** Electron + React + FastAPI (localhost) + Python quant/ML core
 - **Trading:** paper-only simulation (long/short, configurable leverage) with confidence gating + risk controls
 
@@ -74,10 +77,28 @@ Below is the exact runtime loop as implemented (high-level), including what runs
   - only contributes if validation accuracy > 52%
   - ensemble weight increases as performance improves
 
-### 4) Quant Overlay (context & UI)
-A QuantEngine runs diagnostics (some are UI-only), e.g. HMM/GARCH/entropy/TDA panels, plus drift/vol/jump proxies.
+### 4) Quant Overlay (16-model engine)
+A `QuantEngine` runs 16 institutional-grade models organized in tiers:
 
-### 5) Paper Trader (simulation)
+| Tier | Models | Purpose |
+|:-----|:-------|:--------|
+| **Core** | HMM Regime, GJR-GARCH, OFI, EMD | Regime detection, volatility, order flow, cycles |
+| **Tier 1** | Merton Jump, Rough Vol, HHT, Wavelets | Jump detection, roughness, time-frequency |
+| **Tier 2** | Bates SVJ, RQA, MF-DFA, TDA, Heston | Stochastic vol, recurrence, fractals, topology |
+| **Tier 3** | PPO RL Agent, Almgren-Chriss | Adaptive trading, optimal execution |
+
+All results are streamed to the UI via WebSocket in real-time.
+
+### 5) Dashboard (Electron + React)
+- **Drag-and-drop grid:** 11 resizable cards (react-grid-layout)
+- **Layout presets:** 3 saveable slots + reset to default
+- **Light / Dark theme:** toggle with localStorage persistence
+- **World Clock:** 6 financial hubs (NYSE, LSE, SIX, MOEX, TSE, SSE) with market open/close status
+- **Swiss Weather:** live conditions for Zürich
+- **TradingView chart:** live BTC/USDT with multiple timeframes + indicators
+- **16-model Quant Intelligence panel:** collapsible sections with gauges, badges, active signals
+
+### 6) Paper Trader (simulation)
 - Confidence gate (default `PAPER_MIN_CONFIDENCE = 30`)
 - Simulated market fills
 - Auto exits: prediction flip OR max hold OR risk rules
@@ -90,17 +111,21 @@ A QuantEngine runs diagnostics (some are UI-only), e.g. HMM/GARCH/entropy/TDA pa
 ┌──────────────────────────────────────────────────────────────┐
 │                      Electron Shell                          │
 │  ┌────────────────────────────────────────────────────────┐  │
-│  │              React Frontend (TypeScript + Vite)         │  │
-│  │  Dashboard  │  Paper Trading  │  Dr. Nexus  │ Settings  │  │
+│  │          React Frontend (TypeScript + Vite + RGL)      │  │
+│  │  Dashboard (grid) │ Trading │ Dr. Nexus │ Settings     │  │
+│  │  ├── PriceCard     ├── Quant Intelligence (16 models)  │  │
+│  │  ├── SignalBadge    ├── TradingView Chart              │  │
+│  │  ├── WorldClock     ├── News Feed                      │  │
+│  │  └── SwissWeather   └── System Health                  │  │
 │  └──────────────────────┬─────────────────────────────────┘  │
 │                         │                                     │
-│               REST + WebSocket (localhost:8420)               │
+│            WebSocket (push) + REST (localhost:8420)           │
 │                         │                                     │
 │  ┌──────────────────────┴─────────────────────────────────┐  │
 │  │            Python Backend (FastAPI + Uvicorn)           │  │
 │  │  DataCollector → FeatureEngine → Predictor              │  │
 │  │        │                 │            │                 │  │
-│  │        └──────── QuantEngine (UI) ─────┘                 │  │
+│  │        └──── QuantEngine (16 models) ──┘                 │  │
 │  │              PaperTrader (simulation)                    │  │
 │  └────────────────────────────────────────────────────────┘  │
 └──────────────────────────────────────────────────────────────┘
@@ -141,11 +166,27 @@ All features are designed to be price-level agnostic: **returns/ratios/z-scores*
 
 ✅ These are computed row-by-row using past-only information (no lookahead).
 
-### UI-only diagnostics (not fed into the ML predictor)
-- HMM regime panels
-- GARCH VaR panels
-- entropy / RQA / TDA / EMD style diagnostics
-- additional overlays for interpretation
+### UI-only diagnostics (Quant Intelligence panel)
+The 16-model `QuantEngine` provides real-time institutional-grade diagnostics:
+
+| # | Model | Output | Category |
+|:--|:------|:-------|:---------|
+| 1 | **HMM Regime** | BULL/SIDEWAYS/BEAR + confidence + state probabilities | Market Regime |
+| 2 | **GJR-GARCH** | Forecast vol, asymmetry (γ), conditional vol | Volatility |
+| 3 | **Heston SV** | Current/mean vol, leverage ρ | Volatility |
+| 4 | **Rough Vol** | Hurst H, roughness score, interpretation | Volatility |
+| 5 | **OFI** | Buy/Sell pressure strength, normalized | Order Flow |
+| 6 | **EMD** | Top-3 cycle strengths | Cycles |
+| 7 | **HHT** | Dominant frequency, period (minutes) | Cycles |
+| 8 | **Wavelets** | Trend strength, signal vs noise | Frequency |
+| 9 | **Merton Jump** | Detected, probability, direction, risk level | Jumps |
+| 10 | **Bates SVJ** | Jump intensity, risk score | Jumps |
+| 11 | **MF-DFA** | Delta H, spectral width, interpretation | Fractals |
+| 12 | **TDA** | Persistence, complexity, topology score | Topology |
+| 13 | **RQA** | Determinism, recurrence rate, interpretation | Patterns |
+| 14 | **Almgren-Chriss** | Optimal execution trajectory, market impact | Execution |
+| 15 | **PPO RL Agent** | Action distribution (HOLD/BUY/SELL), value | Deep RL |
+| 16 | **Basic Metrics** | RSI, Momentum, Sharpe, VWAP distance | Basics |
 
 ⚠️ UI-only models may fit on "whatever history is available" and can look optimistic visually. This does **not** change model accuracy because they are not part of the feature vector.
 
@@ -341,6 +382,13 @@ python run_backtest.py             # single-threaded
 - **GPU is optional** — system check downgrades GPU absence to a warning (XGBoost runs on CPU); GPU only needed for optional Transformer/LSTM
 - **Test suite** — 24 pytest tests across 8 areas: label creation, causal integrity, gap detection, HMM ordering, PSI drift, Sharpe annualization, champion-challenger config, RQA/TDA guardrails
 - **Clean MIT license** — pure MIT with no contradictory additional terms
+- **Drag-and-drop dashboard** — 11 resizable, repositionable cards using react-grid-layout with JSON-serialized layout persistence
+- **Layout presets** — 3 saveable preset slots + reset; active slot tracked in localStorage
+- **Light / Dark theme** — scoped CSS variable overrides (`.dashboard-light` scope) with toggle button and persistence
+- **World Clock widget** — 6 financial hub clocks (NYSE/LSE/SIX/MOEX/TSE/SSE) with live market open/close detection
+- **Swiss Weather widget** — live conditions for Zürich (temperature, wind, precipitation)
+- **WebSocket real-time push** — price, predictions, positions, accuracy, quant data pushed every ~1s; REST used for larger payloads
+- **Quant data integrity fixes** — GARCH current vol falls back to forecast; MF-DFA NOT_COMPUTED handled gracefully; TDA/Bates SVJ key mappings corrected
 
 ---
 
@@ -381,6 +429,6 @@ Nexus Shadow-Quant is an educational and research tool. It is not financial advi
 
 <div align="center">
 
-**v6.2.1 Beta Stable** · Built locally with ⚡ by **G-luc**
+**v6.3.0 Beta Stable** · Built locally with ⚡ by **G-luc**
 
 </div>
