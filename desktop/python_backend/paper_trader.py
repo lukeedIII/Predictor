@@ -208,6 +208,10 @@ class PaperTrader:
         self._avg_win = 0.015    # 1.5% avg win
         self._avg_loss = 0.01    # 1.0% avg loss
         
+        # Signal streak tracking (used by evaluate_signal)
+        self._signal_streak = 0
+        self._signal_direction = None
+        
         # ===== PHASE 2: Feedback Loop =====
         # Trade feedback log — persisted to JSON for predictor to consume
         self._feedback_path = os.path.join(config.DATA_ROOT, 'feedback', 'trade_feedback.json')

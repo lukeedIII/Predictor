@@ -920,14 +920,37 @@ class NexusPredictor:
     def create_target_variable(self, df, for_training=True):
         """
         Create target variable WITHOUT look-ahead bias.
-        P2: 15-min horizon with 0.3% threshold (covers fees + slippage).
+        SYMMETRIC threshold: UP > +T, DOWN < -T, drop neutral zone.
+        This ensures balanced classes regardless of market regime.
         """
         if for_training:
             df = df.copy()
             df['future_price'] = df['close'].shift(-self.prediction_horizon)
-            # P2: 0.3% threshold covers Binance fees (0.1% x2) + slippage
-            df['target'] = (df['future_price'] > df['close'] * 1.003).astype(int)
-            df = df.dropna(subset=['target'])
+            
+            # Symmetric thresholding — prevents class imbalance
+            threshold = getattr(config, 'PREDICTION_THRESHOLD', 0.001)
+            pct_change = (df['future_price'] - df['close']) / df['close']
+            
+            # 1 = UP (price rose > threshold), 0 = DOWN (price fell > threshold)
+            # Neutral zone (between -threshold and +threshold) is DROPPED
+            df['target'] = -1  # sentinel for neutral
+            df.loc[pct_change > threshold, 'target'] = 1   # UP
+            df.loc[pct_change < -threshold, 'target'] = 0  # DOWN
+            
+            # Drop rows with no future price AND neutral zone rows
+            df = df.dropna(subset=['future_price'])
+            n_before = len(df)
+            df = df[df['target'] != -1].copy()
+            n_neutral = n_before - len(df)
+            
+            if n_neutral > 0:
+                logging.info(
+                    f"[TARGET] Symmetric ±{threshold*100:.1f}%: "
+                    f"UP={(df['target']==1).sum()}, DOWN={(df['target']==0).sum()}, "
+                    f"neutral_dropped={n_neutral}"
+                )
+            
+            df['target'] = df['target'].astype(int)
             return df
         else:
             return df
@@ -982,6 +1005,24 @@ class NexusPredictor:
         
         if train_df['target'].nunique() < 2:
             logging.warning("Not enough target variance. Market too stable.")
+            return False, 95, None
+        
+        # Class balance guard — prevent training on severely imbalanced data
+        n_up = int((train_df['target'] == 1).sum())
+        n_down = int((train_df['target'] == 0).sum())
+        minority_ratio = min(n_up, n_down) / max(len(train_df), 1)
+        min_ratio = getattr(config, 'PREDICTION_MIN_CLASS_RATIO', 0.15)
+        logging.info(
+            f"[CLASS-DIST] UP={n_up} ({n_up/len(train_df)*100:.1f}%) "
+            f"DOWN={n_down} ({n_down/len(train_df)*100:.1f}%) "
+            f"minority={minority_ratio*100:.1f}% (min={min_ratio*100:.0f}%)"
+        )
+        if minority_ratio < min_ratio:
+            logging.warning(
+                f"[CLASS-GUARD] Skipping training — minority class too small: "
+                f"{minority_ratio*100:.1f}% < {min_ratio*100:.0f}%. "
+                f"Need more data or different market conditions."
+            )
             return False, 95, None
         
         X_train = train_df[self.features]
@@ -1750,11 +1791,12 @@ class NexusPredictor:
                     # Use current price as proxy for "price at target time"
                     # (the closer predictions are spaced, the more accurate this is)
                     price_change_pct = (current_price - rec['price']) / rec['price']
-                    # Aligned with training: 0.3% threshold for UP
+                    # Aligned with training: symmetric threshold
+                    _threshold = getattr(config, 'PREDICTION_THRESHOLD', 0.001)
                     if rec['direction'] == 'UP':
-                        rec['correct'] = price_change_pct > 0.003
+                        rec['correct'] = price_change_pct > _threshold
                     else:  # DOWN
-                        rec['correct'] = price_change_pct < -0.003
+                        rec['correct'] = price_change_pct < -_threshold
                     validated += 1
                     if rec['correct']:
                         correct += 1
@@ -1975,12 +2017,19 @@ class NexusPredictor:
             if len(merged) == 0:
                 return self.last_validation_accuracy
             
-            # Aligned threshold: 0.3% move = UP (matches training target)
+            # Aligned threshold: symmetric (matches training target)
+            _th = getattr(config, 'PREDICTION_THRESHOLD', 0.001)
+            pct_move = (merged['actual_price'] - merged['price_at_prediction']) / merged['price_at_prediction']
             merged['actual_direction'] = np.where(
-                merged['actual_price'] > merged['price_at_prediction'] * 1.003, 'UP', 'DOWN'
+                pct_move > _th, 'UP',
+                np.where(pct_move < -_th, 'DOWN', 'NEUTRAL')
             )
-            correct = (merged['direction'] == merged['actual_direction']).sum()
-            total = len(merged)
+            # Only score predictions where market actually moved (drop neutral)
+            scored = merged[merged['actual_direction'] != 'NEUTRAL']
+            if len(scored) == 0:
+                return self.last_validation_accuracy
+            correct = (scored['direction'] == scored['actual_direction']).sum()
+            total = len(scored)
             
             return (correct / total) * 100
             

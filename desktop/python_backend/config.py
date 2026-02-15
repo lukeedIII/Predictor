@@ -159,6 +159,14 @@ PAPER_FEE_TAKER_PCT = 0.04     # Binance taker fee per side (0.04%)
 PAPER_FEE_MAKER_PCT = 0.02     # Binance maker fee per side (unused — paper uses taker)
 PAPER_SLIPPAGE_PCT = 0.01      # Estimated slippage per fill (0.01%)
 
+# ── Prediction Target ────────────────────────────────
+PREDICTION_THRESHOLD = 0.001   # Symmetric UP/DOWN threshold (0.1%)
+                               # UP = future_price > close * (1 + threshold)
+                               # DOWN = future_price < close * (1 - threshold)
+                               # Neutral zone between is dropped from training
+                               # Previous: 0.003 (0.3%) caused 120:1 class imbalance
+PREDICTION_MIN_CLASS_RATIO = 0.15  # Min fraction of minority class (skip training if below)
+
 # ── News Sources ──────────────────────────────────────
 NEWS_SOURCES = [
     "https://cointelegraph.com/rss",
