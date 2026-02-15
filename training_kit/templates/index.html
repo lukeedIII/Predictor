@@ -1,0 +1,866 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Nexus Training Kit</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        :root {
+            --bg: #0a0a0f;
+            --card: rgba(18, 18, 28, 0.85);
+            --border: rgba(255, 255, 255, 0.06);
+            --text-1: #f0f0f5;
+            --text-2: #a0a0b8;
+            --text-3: #606075;
+            --accent: #7c4dff;
+            --green: #69F0AE;
+            --red: #ff5252;
+            --amber: #FFD740;
+            --blue: #448AFF;
+            --glass: rgba(124, 77, 255, 0.08);
+        }
+
+        body {
+            background: var(--bg);
+            color: var(--text-1);
+            font-family: 'Segoe UI', -apple-system, sans-serif;
+            min-height: 100vh;
+            overflow-x: hidden;
+        }
+
+        /* Background glow */
+        body::before {
+            content: '';
+            position: fixed;
+            top: -30%;
+            left: -10%;
+            width: 60%;
+            height: 60%;
+            background: radial-gradient(circle, rgba(124, 77, 255, 0.06) 0%, transparent 70%);
+            pointer-events: none;
+        }
+
+        .container {
+            max-width: 1100px;
+            margin: 0 auto;
+            padding: 24px 20px;
+        }
+
+        /* Header */
+        .header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            margin-bottom: 24px;
+        }
+
+        .header h1 {
+            font-size: 22px;
+            font-weight: 700;
+            background: linear-gradient(135deg, var(--accent), #b388ff);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .gpu-badge {
+            background: var(--card);
+            border: 1px solid var(--border);
+            padding: 6px 14px;
+            border-radius: 20px;
+            font-size: 12px;
+            color: var(--text-2);
+        }
+
+        .gpu-badge .dot {
+            display: inline-block;
+            width: 7px;
+            height: 7px;
+            border-radius: 50%;
+            background: var(--green);
+            margin-right: 6px;
+            animation: pulse 2s infinite;
+        }
+
+        @keyframes pulse {
+
+            0%,
+            100% {
+                opacity: 1;
+            }
+
+            50% {
+                opacity: 0.4;
+            }
+        }
+
+        /* Cards */
+        .card {
+            background: var(--card);
+            border: 1px solid var(--border);
+            border-radius: 14px;
+            padding: 20px;
+            margin-bottom: 16px;
+            backdrop-filter: blur(12px);
+        }
+
+        .card-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.2px;
+            color: var(--text-3);
+            margin-bottom: 14px;
+        }
+
+        /* Status bar */
+        .status-row {
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            margin-bottom: 12px;
+        }
+
+        .status-badge {
+            padding: 4px 12px;
+            border-radius: 12px;
+            font-size: 12px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .status-idle {
+            background: rgba(96, 96, 117, 0.2);
+            color: var(--text-3);
+        }
+
+        .status-downloading,
+        .status-preparing {
+            background: rgba(68, 138, 255, 0.15);
+            color: var(--blue);
+        }
+
+        .status-training {
+            background: rgba(105, 240, 174, 0.12);
+            color: var(--green);
+            animation: pulse 1.5s infinite;
+        }
+
+        .status-paused {
+            background: rgba(255, 215, 64, 0.12);
+            color: var(--amber);
+        }
+
+        .status-finished {
+            background: rgba(105, 240, 174, 0.15);
+            color: var(--green);
+        }
+
+        .status-error {
+            background: rgba(255, 82, 82, 0.12);
+            color: var(--red);
+        }
+
+        .arch-name {
+            font-size: 16px;
+            font-weight: 600;
+        }
+
+        /* Stats grid */
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+            gap: 12px;
+            margin-bottom: 16px;
+        }
+
+        .stat-box {
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 10px;
+            color: var(--text-3);
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            margin-bottom: 4px;
+        }
+
+        .stat-value {
+            font-size: 22px;
+            font-weight: 700;
+            font-family: 'Consolas', monospace;
+        }
+
+        .stat-value.green {
+            color: var(--green);
+        }
+
+        .stat-value.blue {
+            color: var(--blue);
+        }
+
+        .stat-value.amber {
+            color: var(--amber);
+        }
+
+        .stat-value.accent {
+            color: var(--accent);
+        }
+
+        /* Progress bar */
+        .progress-wrap {
+            background: rgba(255, 255, 255, 0.04);
+            border-radius: 6px;
+            overflow: hidden;
+            height: 8px;
+            margin-bottom: 6px;
+        }
+
+        .progress-bar {
+            height: 100%;
+            background: linear-gradient(90deg, var(--accent), #b388ff);
+            border-radius: 6px;
+            transition: width 0.3s ease;
+        }
+
+        .progress-text {
+            font-size: 11px;
+            color: var(--text-3);
+            text-align: right;
+        }
+
+        /* Epoch chart */
+        .chart-area {
+            position: relative;
+            height: 160px;
+            margin: 12px 0;
+        }
+
+        .chart-canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Controls */
+        .controls {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+
+        .btn {
+            padding: 10px 24px;
+            border-radius: 10px;
+            border: 1px solid var(--border);
+            background: var(--card);
+            color: var(--text-1);
+            font-size: 13px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .btn:hover {
+            border-color: var(--accent);
+            background: var(--glass);
+        }
+
+        .btn:disabled {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, var(--accent), #9c7cff);
+            border-color: transparent;
+            color: #fff;
+        }
+
+        .btn-primary:hover {
+            filter: brightness(1.15);
+        }
+
+        .btn-danger {
+            border-color: rgba(255, 82, 82, 0.3);
+            color: var(--red);
+        }
+
+        .btn-danger:hover {
+            background: rgba(255, 82, 82, 0.1);
+        }
+
+        /* Architecture selector */
+        .arch-selector {
+            display: flex;
+            gap: 8px;
+            flex-wrap: wrap;
+            margin-bottom: 16px;
+        }
+
+        .arch-chip {
+            padding: 6px 14px;
+            border-radius: 8px;
+            border: 1px solid var(--border);
+            background: rgba(255, 255, 255, 0.02);
+            color: var(--text-2);
+            font-size: 12px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+
+        .arch-chip:hover {
+            border-color: var(--accent);
+        }
+
+        .arch-chip.selected {
+            border-color: var(--accent);
+            background: var(--glass);
+            color: var(--text-1);
+        }
+
+        .arch-chip .params {
+            font-size: 10px;
+            color: var(--text-3);
+            margin-left: 4px;
+        }
+
+        /* Settings row */
+        .settings-row {
+            display: flex;
+            gap: 16px;
+            align-items: center;
+            margin-bottom: 12px;
+            flex-wrap: wrap;
+        }
+
+        .setting {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .setting label {
+            font-size: 12px;
+            color: var(--text-3);
+        }
+
+        .setting input {
+            background: rgba(255, 255, 255, 0.04);
+            border: 1px solid var(--border);
+            border-radius: 6px;
+            padding: 6px 10px;
+            color: var(--text-1);
+            font-size: 13px;
+            width: 80px;
+            text-align: center;
+            font-family: 'Consolas', monospace;
+        }
+
+        .setting input:focus {
+            outline: none;
+            border-color: var(--accent);
+        }
+
+        /* Log viewer */
+        .log-viewer {
+            background: rgba(0, 0, 0, 0.3);
+            border: 1px solid var(--border);
+            border-radius: 10px;
+            padding: 12px;
+            max-height: 260px;
+            overflow-y: auto;
+            font-family: 'Consolas', 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.6;
+        }
+
+        .log-viewer::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .log-viewer::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .log-viewer::-webkit-scrollbar-thumb {
+            background: var(--text-3);
+            border-radius: 2px;
+        }
+
+        .log-line {
+            color: var(--text-2);
+        }
+
+        .log-time {
+            color: var(--text-3);
+            margin-right: 8px;
+        }
+
+        /* Checkpoints list */
+        .ckpt-row {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 6px 10px;
+            border-bottom: 1px solid var(--border);
+            font-size: 12px;
+        }
+
+        .ckpt-row:last-child {
+            border-bottom: none;
+        }
+
+        .ckpt-acc {
+            font-weight: 700;
+            font-family: monospace;
+        }
+
+        /* Queue display */
+        .queue-item {
+            display: inline-block;
+            padding: 3px 10px;
+            border-radius: 6px;
+            font-size: 11px;
+            margin-right: 6px;
+            margin-bottom: 4px;
+        }
+
+        .queue-done {
+            background: rgba(105, 240, 174, 0.1);
+            color: var(--green);
+            text-decoration: line-through;
+            opacity: 0.6;
+        }
+
+        .queue-active {
+            background: var(--glass);
+            color: var(--accent);
+            font-weight: 600;
+        }
+
+        .queue-pending {
+            background: rgba(255, 255, 255, 0.03);
+            color: var(--text-3);
+        }
+
+        /* Responsive */
+        @media (max-width: 640px) {
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .controls {
+                flex-direction: column;
+            }
+        }
+    </style>
+</head>
+
+<body>
+
+    <div class="container">
+
+        <!-- Header -->
+        <div class="header">
+            <h1>⚡ Nexus Training Kit</h1>
+            <div class="gpu-badge">
+                <span class="dot" id="gpuDot"></span>
+                <span id="gpuName">Detecting GPU...</span>
+            </div>
+        </div>
+
+        <!-- Controls Card -->
+        <div class="card">
+            <div class="card-title">Control Panel</div>
+
+            <div class="arch-selector" id="archSelector"></div>
+
+            <div class="settings-row">
+                <div class="setting">
+                    <label>Epochs</label>
+                    <input type="number" id="inputEpochs" value="50" min="1" max="500">
+                </div>
+                <div class="setting">
+                    <label>Learning Rate</label>
+                    <input type="text" id="inputLR" value="0.0003">
+                </div>
+            </div>
+
+            <div class="controls">
+                <button class="btn btn-primary" id="btnStart" onclick="startTraining()">▶ Start Training</button>
+                <button class="btn btn-danger" id="btnStop" onclick="stopTraining()" disabled>⏸ Pause</button>
+                <button class="btn" id="btnContinue" onclick="continueTraining()" disabled>▶ Continue</button>
+            </div>
+
+            <!-- Queue -->
+            <div id="queueBar" style="margin-top: 8px;"></div>
+        </div>
+
+        <!-- Status + Stats -->
+        <div class="card" id="trainingCard">
+            <div class="status-row">
+                <span class="status-badge status-idle" id="statusBadge">IDLE</span>
+                <span class="arch-name" id="currentArch">—</span>
+                <span style="margin-left: auto; font-size: 12px; color: var(--text-3);" id="elapsedTime"></span>
+            </div>
+
+            <!-- Progress -->
+            <div class="progress-wrap">
+                <div class="progress-bar" id="progressBar" style="width: 0%"></div>
+            </div>
+            <div class="progress-text" id="progressText">—</div>
+
+            <!-- Stats grid -->
+            <div class="stats-grid">
+                <div class="stat-box">
+                    <div class="stat-label">Epoch</div>
+                    <div class="stat-value accent" id="statEpoch">0/0</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Train Acc</div>
+                    <div class="stat-value blue" id="statTrainAcc">—</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Val Acc</div>
+                    <div class="stat-value green" id="statValAcc">—</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Best Val Acc</div>
+                    <div class="stat-value green" id="statBestAcc">—</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Train Loss</div>
+                    <div class="stat-value" id="statTrainLoss">—</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Val Loss</div>
+                    <div class="stat-value" id="statValLoss">—</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">Speed</div>
+                    <div class="stat-value amber" id="statSpeed">—</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">VRAM</div>
+                    <div class="stat-value" id="statVRAM">—</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">LR</div>
+                    <div class="stat-value" id="statLR">—</div>
+                </div>
+                <div class="stat-box">
+                    <div class="stat-label">ETA</div>
+                    <div class="stat-value" id="statETA">—</div>
+                </div>
+            </div>
+
+            <!-- Accuracy chart -->
+            <div class="chart-area">
+                <canvas id="chartCanvas" class="chart-canvas"></canvas>
+            </div>
+        </div>
+
+        <!-- Log Viewer -->
+        <div class="card">
+            <div class="card-title">Training Log</div>
+            <div class="log-viewer" id="logViewer">
+                <div class="log-line"><span class="log-time">--:--:--</span>Waiting to start...</div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+        // ═══════════════════════════════════════════════════
+        // STATE
+        // ═══════════════════════════════════════════════════
+
+        const ARCHS = {
+            'small_transformer': { label: 'SmallTransformer', params: '3.2M', vram: '0.2GB' },
+            'medium_transformer': { label: 'MediumTransformer', params: '19M', vram: '0.6GB' },
+            'midlarge_transformer': { label: 'MidLargeTransformer', params: '32M', vram: '1.5GB' },
+            'nexus_transformer': { label: 'NexusTransformer', params: '152M', vram: '2.5GB' },
+        };
+
+        let selectedArchs = new Set(Object.keys(ARCHS));
+        let polling = null;
+        let lastLogCount = 0;
+
+        // ═══════════════════════════════════════════════════
+        // INIT
+        // ═══════════════════════════════════════════════════
+
+        function init() {
+            // Build arch selector chips
+            const sel = document.getElementById('archSelector');
+            for (const [key, info] of Object.entries(ARCHS)) {
+                const chip = document.createElement('div');
+                chip.className = 'arch-chip selected';
+                chip.dataset.arch = key;
+                chip.innerHTML = `${info.label}<span class="params">${info.params} · ${info.vram}</span>`;
+                chip.onclick = () => {
+                    if (selectedArchs.has(key)) {
+                        selectedArchs.delete(key);
+                        chip.classList.remove('selected');
+                    } else {
+                        selectedArchs.add(key);
+                        chip.classList.add('selected');
+                    }
+                };
+                sel.appendChild(chip);
+            }
+
+            // Start polling
+            polling = setInterval(fetchState, 1000);
+            fetchState();
+        }
+
+        // ═══════════════════════════════════════════════════
+        // API CALLS
+        // ═══════════════════════════════════════════════════
+
+        async function fetchState() {
+            try {
+                const res = await fetch('/api/state');
+                const s = await res.json();
+                updateUI(s);
+            } catch (e) {
+                // Server unreachable
+            }
+        }
+
+        async function startTraining() {
+            const archs = Array.from(selectedArchs);
+            if (archs.length === 0) { alert('Select at least one architecture!'); return; }
+
+            const epochs = parseInt(document.getElementById('inputEpochs').value) || 50;
+            const lr = parseFloat(document.getElementById('inputLR').value) || 3e-4;
+
+            await fetch('/api/start', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ archs, epochs, lr }),
+            });
+        }
+
+        async function stopTraining() {
+            await fetch('/api/stop', { method: 'POST' });
+        }
+
+        async function continueTraining() {
+            const epochs = parseInt(document.getElementById('inputEpochs').value) || 50;
+            const lr = parseFloat(document.getElementById('inputLR').value) || 3e-4;
+
+            await fetch('/api/continue', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ epochs, lr }),
+            });
+        }
+
+        // ═══════════════════════════════════════════════════
+        // UI UPDATE
+        // ═══════════════════════════════════════════════════
+
+        function updateUI(s) {
+            // GPU
+            if (s.gpu_name && s.gpu_name !== 'N/A') {
+                document.getElementById('gpuName').textContent = `${s.gpu_name} · ${s.vram_total_gb}GB`;
+                document.getElementById('gpuDot').style.background = 'var(--green)';
+            }
+
+            // Status badge
+            const badge = document.getElementById('statusBadge');
+            badge.textContent = s.status.toUpperCase();
+            badge.className = `status-badge status-${s.status}`;
+
+            // Arch name
+            document.getElementById('currentArch').textContent = s.current_arch
+                ? (ARCHS[s.current_arch]?.label || s.current_arch)
+                : '—';
+
+            // Elapsed
+            document.getElementById('elapsedTime').textContent = s.elapsed ? `⏱ ${s.elapsed}` : '';
+
+            // Progress
+            const epochProgress = s.total_epochs > 0 ? (s.epoch / s.total_epochs * 100) : 0;
+            const batchProgress = s.batch_progress || 0;
+            const totalProgress = s.total_epochs > 0
+                ? ((s.epoch - 1 + batchProgress / 100) / s.total_epochs * 100)
+                : 0;
+            document.getElementById('progressBar').style.width = `${Math.min(totalProgress, 100)}%`;
+            document.getElementById('progressText').textContent =
+                s.status === 'training'
+                    ? `Epoch ${s.epoch}/${s.total_epochs} · Batch ${batchProgress}%`
+                    : (s.status === 'finished' ? 'Complete!' : '—');
+
+            // Stats
+            document.getElementById('statEpoch').textContent = `${s.epoch}/${s.total_epochs}`;
+            document.getElementById('statTrainAcc').textContent = s.train_acc ? `${s.train_acc}%` : '—';
+            document.getElementById('statValAcc').textContent = s.val_acc ? `${s.val_acc}%` : '—';
+            document.getElementById('statBestAcc').textContent = s.best_val_acc ? `${s.best_val_acc}%` : '—';
+            document.getElementById('statTrainLoss').textContent = s.train_loss ? s.train_loss.toFixed(4) : '—';
+            document.getElementById('statValLoss').textContent = s.val_loss ? s.val_loss.toFixed(4) : '—';
+            document.getElementById('statSpeed').textContent = s.speed ? `${s.speed}/s` : '—';
+            document.getElementById('statVRAM').textContent =
+                s.vram_used_gb ? `${s.vram_used_gb}/${s.vram_total_gb}GB` : '—';
+            document.getElementById('statLR').textContent = s.lr ? s.lr.toExponential(2) : '—';
+            document.getElementById('statETA').textContent = s.eta || '—';
+
+            // Color code val acc
+            const valAccEl = document.getElementById('statValAcc');
+            const bestAccEl = document.getElementById('statBestAcc');
+            if (s.val_acc >= 75) { valAccEl.style.color = 'var(--green)'; }
+            else if (s.val_acc >= 60) { valAccEl.style.color = 'var(--amber)'; }
+            else { valAccEl.style.color = 'var(--text-2)'; }
+
+            // Buttons
+            const isActive = ['training', 'downloading', 'preparing'].includes(s.status);
+            document.getElementById('btnStart').disabled = isActive;
+            document.getElementById('btnStop').disabled = !isActive;
+            document.getElementById('btnContinue').disabled = isActive || s.status === 'idle';
+
+            // Queue
+            const queueBar = document.getElementById('queueBar');
+            const allArchs = [...(s.completed_archs || []), ...(s.current_arch && !s.completed_archs?.includes(s.current_arch) ? [s.current_arch] : []), ...(s.queue || [])];
+            queueBar.innerHTML = allArchs.map(a => {
+                let cls = 'queue-pending';
+                if (s.completed_archs?.includes(a)) cls = 'queue-done';
+                else if (a === s.current_arch) cls = 'queue-active';
+                return `<span class="queue-item ${cls}">${ARCHS[a]?.label || a}</span>`;
+            }).join('');
+
+            // Log
+            const logViewer = document.getElementById('logViewer');
+            if (s.log_messages && s.log_messages.length > lastLogCount) {
+                const newMessages = s.log_messages.slice(lastLogCount);
+                for (const m of newMessages) {
+                    const div = document.createElement('div');
+                    div.className = 'log-line';
+                    div.innerHTML = `<span class="log-time">${m.time}</span>${escapeHtml(m.msg)}`;
+                    logViewer.appendChild(div);
+                }
+                lastLogCount = s.log_messages.length;
+                logViewer.scrollTop = logViewer.scrollHeight;
+            }
+
+            // Chart
+            if (s.epoch_history && s.epoch_history.length > 0) {
+                drawChart(s.epoch_history);
+            }
+        }
+
+        function escapeHtml(text) {
+            const div = document.createElement('div');
+            div.appendChild(document.createTextNode(text));
+            return div.innerHTML;
+        }
+
+        // ═══════════════════════════════════════════════════
+        // MINI CHART (Canvas)
+        // ═══════════════════════════════════════════════════
+
+        function drawChart(history) {
+            const canvas = document.getElementById('chartCanvas');
+            const ctx = canvas.getContext('2d');
+            const rect = canvas.getBoundingClientRect();
+            canvas.width = rect.width * 2;
+            canvas.height = rect.height * 2;
+            ctx.scale(2, 2);
+
+            const W = rect.width;
+            const H = rect.height;
+            const pad = { top: 20, right: 16, bottom: 24, left: 40 };
+            const plotW = W - pad.left - pad.right;
+            const plotH = H - pad.top - pad.bottom;
+
+            ctx.clearRect(0, 0, W, H);
+
+            if (history.length < 2) return;
+
+            const epochs = history.map(h => h.epoch);
+            const trainAcc = history.map(h => h.train_acc);
+            const valAcc = history.map(h => h.val_acc);
+
+            const minY = Math.max(0, Math.min(...trainAcc, ...valAcc) - 5);
+            const maxY = Math.min(100, Math.max(...trainAcc, ...valAcc) + 5);
+
+            const xScale = (i) => pad.left + (i / (history.length - 1)) * plotW;
+            const yScale = (v) => pad.top + plotH - ((v - minY) / (maxY - minY)) * plotH;
+
+            // Grid lines
+            ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+            ctx.lineWidth = 0.5;
+            for (let y = Math.ceil(minY / 10) * 10; y <= maxY; y += 10) {
+                const py = yScale(y);
+                ctx.beginPath(); ctx.moveTo(pad.left, py); ctx.lineTo(W - pad.right, py); ctx.stroke();
+                ctx.fillStyle = 'rgba(160,160,184,0.5)';
+                ctx.font = '9px Consolas';
+                ctx.textAlign = 'right';
+                ctx.fillText(`${y}%`, pad.left - 4, py + 3);
+            }
+
+            // X axis labels
+            ctx.textAlign = 'center';
+            const step = Math.max(1, Math.floor(history.length / 8));
+            for (let i = 0; i < history.length; i += step) {
+                ctx.fillStyle = 'rgba(160,160,184,0.5)';
+                ctx.fillText(`E${epochs[i]}`, xScale(i), H - 6);
+            }
+
+            // Draw lines
+            function drawLine(data, color) {
+                ctx.beginPath();
+                ctx.strokeStyle = color;
+                ctx.lineWidth = 1.5;
+                ctx.lineJoin = 'round';
+                for (let i = 0; i < data.length; i++) {
+                    const x = xScale(i);
+                    const y = yScale(data[i]);
+                    if (i === 0) ctx.moveTo(x, y);
+                    else ctx.lineTo(x, y);
+                }
+                ctx.stroke();
+
+                // Last point dot
+                const lastX = xScale(data.length - 1);
+                const lastY = yScale(data[data.length - 1]);
+                ctx.beginPath();
+                ctx.arc(lastX, lastY, 3, 0, Math.PI * 2);
+                ctx.fillStyle = color;
+                ctx.fill();
+            }
+
+            drawLine(trainAcc, '#448AFF');   // Blue = train
+            drawLine(valAcc, '#69F0AE');     // Green = val
+
+            // Legend
+            ctx.font = '9px Segoe UI';
+            ctx.fillStyle = '#448AFF';
+            ctx.fillText('● Train', pad.left + 20, 12);
+            ctx.fillStyle = '#69F0AE';
+            ctx.fillText('● Val', pad.left + 70, 12);
+        }
+
+        // ═══════════════════════════════════════════════════
+        // INIT
+        // ═══════════════════════════════════════════════════
+
+        document.addEventListener('DOMContentLoaded', init);
+    </script>
+
+</body>
+
+</html>

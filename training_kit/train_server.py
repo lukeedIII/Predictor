@@ -1,0 +1,878 @@
+"""
+train_server.py — Nexus Training Kit: Flask Web Server + Training Engine
+
+Features:
+  ✅ Auto-downloads BTC data from HuggingFace
+  ✅ Premium web UI with real-time progress
+  ✅ Start / Stop / Continue training
+  ✅ Auto-saves checkpoints every epoch
+  ✅ Resumes from last checkpoint on restart
+  ✅ Trains all 4 architectures sequentially (or pick one)
+  ✅ Graceful shutdown — saves state on Ctrl+C or browser Stop
+
+Usage:
+  python train_server.py                  # Train all architectures
+  python train_server.py --arch small_transformer  # Train one specific arch
+
+Then open http://localhost:5555 in your browser.
+"""
+
+import os
+import sys
+import time
+import json
+import signal
+import logging
+import threading
+import re
+import argparse
+from pathlib import Path
+from datetime import datetime, timedelta
+
+import numpy as np
+import pandas as pd
+import torch
+import torch.nn as nn
+from torch.amp import autocast, GradScaler
+from flask import Flask, render_template, jsonify, request
+
+from models import ARCHITECTURES, ARCH_INFO
+
+# ── Paths ──
+SCRIPT_DIR = Path(__file__).parent
+DATA_DIR = SCRIPT_DIR / "data"
+MODEL_DIR = SCRIPT_DIR / "models"
+CHECKPOINT_DIR = SCRIPT_DIR / "checkpoints"
+STATE_FILE = SCRIPT_DIR / "training_state.json"
+
+DATA_DIR.mkdir(exist_ok=True)
+MODEL_DIR.mkdir(exist_ok=True)
+CHECKPOINT_DIR.mkdir(exist_ok=True)
+
+# ── Constants ──
+SEQ_LEN = 30
+PREDICTION_HORIZON = 15
+PRICE_THRESHOLD = 0.001
+
+# ── Logging ──
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s [TRAIN] %(message)s',
+    datefmt='%H:%M:%S',
+)
+log = logging.getLogger(__name__)
+
+# ── Flask App ──
+app = Flask(__name__)
+
+# ══════════════════════════════════════════════════════════════════════════
+# GLOBAL STATE (thread-safe via lock)
+# ══════════════════════════════════════════════════════════════════════════
+
+lock = threading.Lock()
+
+state = {
+    "status": "idle",          # idle, downloading, preparing, training, paused, finished, error
+    "current_arch": None,
+    "epoch": 0,
+    "total_epochs": 0,
+    "batch_progress": 0.0,
+    "train_loss": 0.0,
+    "train_acc": 0.0,
+    "val_loss": 0.0,
+    "val_acc": 0.0,
+    "best_val_acc": 0.0,
+    "lr": 0.0,
+    "speed": 0.0,
+    "vram_used_gb": 0.0,
+    "vram_total_gb": 0.0,
+    "gpu_name": "N/A",
+    "eta": "",
+    "log_messages": [],
+    "completed_archs": [],
+    "queue": [],
+    "error_msg": "",
+    "epoch_history": [],       # [{epoch, train_loss, train_acc, val_loss, val_acc}]
+    "started_at": None,
+    "elapsed": "",
+}
+
+stop_requested = threading.Event()
+training_thread = None
+data_cache = {"df": None, "feature_cols": None}
+
+
+def add_log(msg):
+    with lock:
+        state["log_messages"].append({
+            "time": datetime.now().strftime("%H:%M:%S"),
+            "msg": msg,
+        })
+        # Keep last 200 messages
+        if len(state["log_messages"]) > 200:
+            state["log_messages"] = state["log_messages"][-200:]
+    log.info(msg)
+
+
+def update_state(**kwargs):
+    with lock:
+        state.update(kwargs)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# DATA PIPELINE
+# ══════════════════════════════════════════════════════════════════════════
+
+def download_datasets():
+    """Download BTC data from HuggingFace."""
+    update_state(status="downloading")
+    add_log("⬇️  Checking/downloading BTC datasets from HuggingFace...")
+
+    try:
+        from huggingface_hub import hf_hub_download
+    except ImportError:
+        add_log("📦 Installing huggingface_hub...")
+        os.system(f"{sys.executable} -m pip install huggingface_hub datasets")
+        from huggingface_hub import hf_hub_download
+
+    datasets_to_download = [
+        {
+            "repo": "FamilyLinks/btc-price-1m-2017-2025",
+            "filename": "BTC_Raw_Micro_Macro_1m.parquet",
+            "local_name": "familylinks_btc_1m.parquet",
+            "description": "4.37M rows: OHLCV + order flow + on-chain (2017-2025)",
+        },
+    ]
+
+    for ds in datasets_to_download:
+        local_path = DATA_DIR / ds["local_name"]
+        if local_path.exists():
+            add_log(f"✅ Already downloaded: {ds['local_name']} ({local_path.stat().st_size / 1e6:.0f} MB)")
+            continue
+
+        add_log(f"⬇️  Downloading: {ds['description']}...")
+        try:
+            downloaded = hf_hub_download(
+                repo_id=ds["repo"],
+                filename=ds["filename"],
+                repo_type="dataset",
+                local_dir=str(DATA_DIR),
+            )
+            if Path(downloaded).name != ds["local_name"]:
+                Path(downloaded).rename(local_path)
+            add_log(f"✅ Downloaded: {ds['local_name']} ({local_path.stat().st_size / 1e6:.0f} MB)")
+        except Exception as e:
+            add_log(f"❌ Download failed: {e}")
+            add_log("Trying alternative download via datasets library...")
+            try:
+                from datasets import load_dataset
+                hf_ds = load_dataset(ds["repo"], split="train")
+                df = hf_ds.to_pandas()
+                df.to_parquet(local_path)
+                add_log(f"✅ Downloaded via datasets lib: {ds['local_name']} ({len(df):,} rows)")
+            except Exception as e2:
+                add_log(f"❌ Both download methods failed: {e2}")
+                raise
+
+    # Try WinkingFace supplement
+    wf_path = DATA_DIR / "winkingface_btc.parquet"
+    if not wf_path.exists():
+        add_log("⬇️  Downloading WinkingFace supplement...")
+        try:
+            from datasets import load_dataset
+            hf_ds = load_dataset("WinkingFace/CryptoLM-Bitcoin-BTC-USDT", split="train")
+            df = hf_ds.to_pandas()
+            df.to_parquet(wf_path)
+            add_log(f"✅ Downloaded: winkingface_btc.parquet ({len(df):,} rows)")
+        except Exception as e:
+            add_log(f"⚠️ WinkingFace download failed (non-critical): {e}")
+
+
+def engineer_features(df):
+    """Engineer the same 42 features used in the live Nexus system."""
+    add_log(f"🔧 Engineering features from {len(df):,} rows...")
+
+    if 'date' in df.columns:
+        df = df.sort_values('date').reset_index(drop=True)
+    elif 'timestamp' in df.columns:
+        df = df.sort_values('timestamp').reset_index(drop=True)
+
+    col_map = {'volume_btc': 'volume', 'volume_usdt': 'quote_volume'}
+    df = df.rename(columns={k: v for k, v in col_map.items() if k in df.columns})
+
+    for col in ['open', 'high', 'low', 'close', 'volume']:
+        if col not in df.columns:
+            raise ValueError(f"Missing required column: {col}")
+
+    close = df['close'].astype(float)
+    high = df['high'].astype(float)
+    low = df['low'].astype(float)
+    opn = df['open'].astype(float)
+    vol = df['volume'].astype(float).replace(0, np.nan).fillna(1)
+
+    # Returns-based OHLCV
+    df['close_ret_1'] = close.pct_change(1).fillna(0)
+    df['close_ret_5'] = close.pct_change(5).fillna(0)
+    df['close_ret_15'] = close.pct_change(15).fillna(0)
+    df['high_low_range'] = (high - low) / close
+    df['close_open_range'] = (close - opn) / close
+    df['volume_ratio'] = vol / vol.rolling(20, min_periods=1).mean()
+
+    # Technical indicators
+    sma_20 = close.rolling(20, min_periods=1).mean()
+    sma_50 = close.rolling(50, min_periods=1).mean()
+    df['sma_20_dist'] = (close - sma_20) / sma_20
+    df['sma_50_dist'] = (close - sma_50) / sma_50
+
+    # RSI
+    delta = close.diff()
+    gain = delta.clip(lower=0).rolling(14, min_periods=1).mean()
+    loss_s = (-delta.clip(upper=0)).rolling(14, min_periods=1).mean()
+    rs = gain / loss_s.replace(0, np.nan).fillna(1)
+    df['rsi'] = (100 - (100 / (1 + rs))).fillna(50) / 100
+
+    # Volatility
+    df['volatility'] = close.pct_change().rolling(20, min_periods=1).std().fillna(0)
+
+    # Fourier cycles
+    ret_series = close.pct_change().fillna(0).values
+    cycle_1 = np.zeros(len(df))
+    cycle_2 = np.zeros(len(df))
+    window = 64
+    for i in range(window, len(ret_series)):
+        segment = ret_series[i - window:i]
+        fft = np.fft.rfft(segment)
+        magnitudes = np.abs(fft[1:])
+        if len(magnitudes) >= 2:
+            cycle_1[i] = magnitudes[0] / (np.sum(magnitudes) + 1e-10)
+            cycle_2[i] = magnitudes[1] / (np.sum(magnitudes) + 1e-10)
+    df['cycle_1'] = cycle_1
+    df['cycle_2'] = cycle_2
+
+    # Hurst exponent
+    hurst_window = 100
+    hurst = np.full(len(df), 0.5)
+    returns = close.pct_change().fillna(0).values
+    for i in range(hurst_window, len(returns)):
+        seg = returns[i - hurst_window:i]
+        mean_r = np.mean(seg)
+        dev = np.cumsum(seg - mean_r)
+        r_range = np.max(dev) - np.min(dev)
+        s = np.std(seg) + 1e-10
+        rs_val = r_range / s
+        if rs_val > 0:
+            hurst[i] = np.log(rs_val + 1e-10) / np.log(hurst_window)
+    df['hurst'] = np.clip(hurst, 0, 1)
+
+    # Kalman error
+    kalman_pred = close.ewm(span=10, min_periods=1).mean()
+    df['kalman_err_norm'] = ((close - kalman_pred) / close).fillna(0)
+
+    # Order book imbalance
+    if 'taker_buy_vol_btc' in df.columns and 'taker_sell_vol_btc' in df.columns:
+        buy_v = df['taker_buy_vol_btc'].astype(float).fillna(0)
+        sell_v = df['taker_sell_vol_btc'].astype(float).fillna(0)
+        total = buy_v + sell_v + 1e-10
+        df['obi_sim'] = (buy_v - sell_v) / total
+    elif 'net_flow_delta' in df.columns:
+        nfd = df['net_flow_delta'].astype(float).fillna(0)
+        df['obi_sim'] = nfd / (nfd.abs().rolling(20, min_periods=1).mean() + 1e-10)
+        df['obi_sim'] = df['obi_sim'].clip(-3, 3) / 3
+    else:
+        df['obi_sim'] = 0
+
+    # Regime detection
+    vol_pct = df['volatility'].rolling(240, min_periods=60).rank(pct=True).fillna(0.5)
+    df['regime_id'] = (vol_pct * 3).astype(int).clip(0, 2)
+    df['regime_confidence'] = vol_pct
+
+    # GJR-GARCH volatility
+    neg_ret = (close.pct_change().fillna(0).clip(upper=0)) ** 2
+    pos_ret = (close.pct_change().fillna(0).clip(lower=0)) ** 2
+    df['gjr_garch_vol'] = (0.7 * neg_ret.ewm(span=20).mean() + 0.3 * pos_ret.ewm(span=20).mean()).fillna(0)
+
+    # Additional momentum features
+    df['momentum_5'] = close.pct_change(5).fillna(0)
+    df['momentum_15'] = close.pct_change(15).fillna(0)
+    df['momentum_60'] = close.pct_change(60).fillna(0)
+
+    # MACD
+    ema_12 = close.ewm(span=12).mean()
+    ema_26 = close.ewm(span=26).mean()
+    macd = ema_12 - ema_26
+    signal_line = macd.ewm(span=9).mean()
+    df['macd_norm'] = (macd / close).fillna(0)
+    df['macd_signal_norm'] = (signal_line / close).fillna(0)
+    df['macd_hist_norm'] = ((macd - signal_line) / close).fillna(0)
+
+    # Bollinger Band width
+    bb_std = close.rolling(20, min_periods=1).std()
+    df['bb_width'] = (2 * bb_std / sma_20).fillna(0)
+    df['bb_position'] = ((close - (sma_20 - 2 * bb_std)) / (4 * bb_std + 1e-10)).clip(0, 1).fillna(0.5)
+
+    # Volume features
+    df['volume_sma_ratio'] = vol / vol.rolling(50, min_periods=1).mean().replace(0, 1)
+    df['volume_std'] = vol.rolling(20, min_periods=1).std() / (vol.rolling(20, min_periods=1).mean() + 1e-10)
+
+    # Candle patterns
+    body = (close - opn).abs()
+    total_range = (high - low).replace(0, 1e-10)
+    df['candle_body_ratio'] = body / total_range
+    upper_wick = high - pd.concat([close, opn], axis=1).max(axis=1)
+    lower_wick = pd.concat([close, opn], axis=1).min(axis=1) - low
+    df['upper_wick_ratio'] = upper_wick / total_range
+    df['lower_wick_ratio'] = lower_wick / total_range
+
+    # ATR
+    tr = pd.concat([high - low, (high - close.shift(1)).abs(), (low - close.shift(1)).abs()], axis=1).max(axis=1)
+    atr = tr.rolling(14, min_periods=1).mean()
+    df['atr_norm'] = (atr / close).fillna(0)
+
+    # Extra derived
+    df['close_vs_high'] = (close - low) / (high - low + 1e-10)
+    df['intraday_vol'] = (high - low) / opn
+
+    # Clean up
+    df = df.replace([np.inf, -np.inf], np.nan).fillna(0)
+
+    # Select feature columns (42 features)
+    feature_cols = [
+        'close_ret_1', 'close_ret_5', 'close_ret_15',
+        'high_low_range', 'close_open_range', 'volume_ratio',
+        'sma_20_dist', 'sma_50_dist', 'rsi', 'volatility',
+        'cycle_1', 'cycle_2', 'hurst', 'kalman_err_norm',
+        'obi_sim', 'regime_id', 'regime_confidence', 'gjr_garch_vol',
+        'momentum_5', 'momentum_15', 'momentum_60',
+        'macd_norm', 'macd_signal_norm', 'macd_hist_norm',
+        'bb_width', 'bb_position',
+        'volume_sma_ratio', 'volume_std',
+        'candle_body_ratio', 'upper_wick_ratio', 'lower_wick_ratio',
+        'atr_norm', 'close_vs_high', 'intraday_vol',
+    ]
+
+    # Add any available columns up to 42
+    available = [c for c in feature_cols if c in df.columns]
+    while len(available) < 42:
+        for c in df.columns:
+            if c not in available and df[c].dtype in [np.float64, np.float32, np.int64, np.int32, float, int]:
+                if c not in ['open', 'high', 'low', 'close', 'volume', 'date', 'timestamp']:
+                    available.append(c)
+                    if len(available) >= 42:
+                        break
+        break  # only one pass
+
+    add_log(f"✅ Engineered {len(available)} features from {len(df):,} rows")
+    return df, available
+
+
+def load_and_prepare_data():
+    """Full data pipeline: download → load → engineer features."""
+    if data_cache["df"] is not None:
+        add_log("📦 Using cached data...")
+        return data_cache["df"], data_cache["feature_cols"]
+
+    update_state(status="downloading")
+    download_datasets()
+
+    update_state(status="preparing")
+    add_log("📂 Loading dataset...")
+
+    fl_path = DATA_DIR / "familylinks_btc_1m.parquet"
+    if fl_path.exists():
+        df = pd.read_parquet(fl_path)
+        add_log(f"✅ Loaded FamilyLinks: {len(df):,} rows")
+    else:
+        raise FileNotFoundError("No dataset found! Check data/ directory.")
+
+    df, feature_cols = engineer_features(df)
+
+    data_cache["df"] = df
+    data_cache["feature_cols"] = feature_cols
+    return df, feature_cols
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# TRAINING ENGINE
+# ══════════════════════════════════════════════════════════════════════════
+
+def find_latest_checkpoint(arch_name):
+    """Find the latest checkpoint for an architecture."""
+    pattern = re.compile(rf'^{re.escape(arch_name)}_epoch_(\d+)_acc([\d.]+)\.pth$')
+    best_epoch = 0
+    best_file = None
+    best_acc = 0.0
+    for f in CHECKPOINT_DIR.iterdir():
+        m = pattern.match(f.name)
+        if m:
+            epoch = int(m.group(1))
+            acc = float(m.group(2))
+            if epoch > best_epoch:
+                best_epoch = epoch
+                best_file = f
+                best_acc = acc
+    return best_file, best_epoch, best_acc
+
+
+def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
+    """Train one architecture with full checkpoint save/resume."""
+    global stop_requested
+
+    add_log(f"🚀 Starting training: {arch_name}")
+    add_log(f"   Config: {epochs} epochs, lr={lr}")
+
+    # GPU info
+    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+    if device == 'cuda':
+        gpu_name = torch.cuda.get_device_name(0)
+        vram_total = torch.cuda.get_device_properties(0).total_mem / 1e9
+        update_state(gpu_name=gpu_name, vram_total_gb=round(vram_total, 1))
+        add_log(f"🖥️  GPU: {gpu_name} ({vram_total:.1f} GB VRAM)")
+    else:
+        add_log("⚠️ No GPU found! Training on CPU (very slow)")
+
+    # Load data
+    df, feature_cols = load_and_prepare_data()
+
+    # Create labels
+    add_log("📊 Creating training windows...")
+    future_ret = df['close'].pct_change(PREDICTION_HORIZON).shift(-PREDICTION_HORIZON)
+    labels = (future_ret > PRICE_THRESHOLD).astype(float)
+    valid_mask = labels.notna() & (labels.index >= SEQ_LEN)
+    df_valid = df[valid_mask].reset_index(drop=True)
+    labels_valid = labels[valid_mask].reset_index(drop=True)
+
+    n = len(df_valid) - SEQ_LEN
+    add_log(f"   Total windows: {n:,}")
+
+    # Create feature matrix
+    features = df_valid[feature_cols].values.astype(np.float32)
+
+    # Standardize
+    from sklearn.preprocessing import StandardScaler
+    scaler = StandardScaler()
+    features = scaler.fit_transform(features)
+
+    # Create sliding windows
+    X_all = np.array([features[i:i+SEQ_LEN] for i in range(n)])
+    y_all = labels_valid.values[SEQ_LEN:SEQ_LEN+n].astype(np.float32)
+
+    # Train/val split (80/20)
+    split = int(0.8 * n)
+    X_train, X_val = X_all[:split], X_all[split:]
+    y_train, y_val = y_all[:split], y_all[split:]
+
+    # Class balance
+    pos_count = y_train.sum()
+    neg_count = len(y_train) - pos_count
+    pos_weight = neg_count / max(pos_count, 1)
+    add_log(f"   Train: {len(X_train):,} | Val: {len(X_val):,} | Pos weight: {pos_weight:.2f}")
+
+    # Auto batch size based on VRAM
+    if batch_size is None:
+        if device == 'cuda':
+            vram_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
+            if vram_gb >= 20:
+                batch_size = 4096
+            elif vram_gb >= 12:
+                batch_size = 2048
+            elif vram_gb >= 8:
+                batch_size = 1024
+            else:
+                batch_size = 512
+        else:
+            batch_size = 256
+    add_log(f"   Batch size: {batch_size}")
+
+    # Tensors
+    X_train_t = torch.tensor(X_train)
+    y_train_t = torch.tensor(y_train).unsqueeze(1)
+    X_val_t = torch.tensor(X_val)
+    y_val_t = torch.tensor(y_val).unsqueeze(1)
+
+    train_ds = torch.utils.data.TensorDataset(X_train_t, y_train_t)
+    train_loader = torch.utils.data.DataLoader(train_ds, batch_size=batch_size, shuffle=True, 
+                                                num_workers=0, pin_memory=(device == 'cuda'))
+    val_ds = torch.utils.data.TensorDataset(X_val_t, y_val_t)
+    val_loader = torch.utils.data.DataLoader(val_ds, batch_size=batch_size * 2, num_workers=0,
+                                              pin_memory=(device == 'cuda'))
+
+    # Model
+    ModelClass = ARCHITECTURES[arch_name]
+    model = ModelClass(input_size=len(feature_cols)).to(device)
+    add_log(f"🧠 Model: {arch_name} | {model.num_parameters:,} params ({model.size_mb:.1f} MB)")
+
+    # Check for existing checkpoint → resume
+    start_epoch = 0
+    ckpt_file, ckpt_epoch, ckpt_acc = find_latest_checkpoint(arch_name)
+    if ckpt_file:
+        try:
+            model.load_state_dict(torch.load(ckpt_file, map_location=device, weights_only=True))
+            start_epoch = ckpt_epoch
+            add_log(f"📂 Resumed from checkpoint: epoch {ckpt_epoch}, acc {ckpt_acc:.1%}")
+        except Exception as e:
+            add_log(f"⚠️ Could not load checkpoint: {e} — training from scratch")
+            start_epoch = 0
+
+    # Optimizer & scheduler
+    optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
+    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs - start_epoch)
+    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight]).to(device))
+    scaler = GradScaler('cuda') if device == 'cuda' else None
+
+    # Training state
+    best_val_loss = float('inf')
+    best_val_acc = ckpt_acc if ckpt_file else 0.0
+    patience_counter = 0
+    patience_limit = 8  # More patience for long runs
+
+    update_state(
+        status="training",
+        current_arch=arch_name,
+        total_epochs=epochs,
+        epoch=start_epoch,
+        best_val_acc=round(best_val_acc * 100, 1),
+        started_at=time.time(),
+        epoch_history=[],
+    )
+
+    for epoch in range(start_epoch, epochs):
+        if stop_requested.is_set():
+            add_log(f"⏸️ Training paused at epoch {epoch + 1}")
+            # Save current state
+            ckpt_path = CHECKPOINT_DIR / f"{arch_name}_epoch_{epoch}_acc{best_val_acc:.3f}.pth"
+            torch.save(model.state_dict(), ckpt_path)
+            add_log(f"💾 Saved checkpoint: {ckpt_path.name}")
+            update_state(status="paused")
+            return False  # Not finished
+
+        model.train()
+        epoch_loss = 0.0
+        epoch_correct = 0
+        epoch_total = 0
+        batch_count = len(train_loader)
+        epoch_start = time.time()
+
+        for bi, (xb, yb) in enumerate(train_loader):
+            if stop_requested.is_set():
+                break
+
+            xb, yb = xb.to(device), yb.to(device)
+
+            optimizer.zero_grad(set_to_none=True)
+
+            if scaler:
+                with autocast('cuda'):
+                    logits = model(xb, return_logits=True)
+                    loss = criterion(logits, yb)
+                scaler.scale(loss).backward()
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                logits = model(xb, return_logits=True)
+                loss = criterion(logits, yb)
+                loss.backward()
+                torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                optimizer.step()
+
+            epoch_loss += loss.item() * xb.size(0)
+            preds = (torch.sigmoid(logits) > 0.5).float()
+            epoch_correct += (preds == yb).sum().item()
+            epoch_total += xb.size(0)
+
+            # Update progress every 5 batches
+            if bi % 5 == 0:
+                vram = torch.cuda.memory_allocated(0) / 1e9 if device == 'cuda' else 0
+                elapsed = time.time() - epoch_start
+                speed = epoch_total / max(elapsed, 0.01)
+                update_state(
+                    batch_progress=round((bi + 1) / batch_count * 100, 1),
+                    train_loss=round(epoch_loss / max(epoch_total, 1), 4),
+                    train_acc=round(epoch_correct / max(epoch_total, 1) * 100, 1),
+                    lr=optimizer.param_groups[0]['lr'],
+                    speed=round(speed),
+                    vram_used_gb=round(vram, 2),
+                )
+
+        # End of epoch
+        scheduler.step()
+        avg_train_loss = epoch_loss / max(epoch_total, 1)
+        avg_train_acc = epoch_correct / max(epoch_total, 1)
+
+        # Validation
+        model.eval()
+        val_loss_sum = 0.0
+        val_correct = 0
+        val_total = 0
+        with torch.no_grad():
+            for xb, yb in val_loader:
+                xb, yb = xb.to(device), yb.to(device)
+                with autocast('cuda') if device == 'cuda' else torch.no_grad():
+                    logits = model(xb, return_logits=True)
+                    loss = criterion(logits, yb)
+                val_loss_sum += loss.item() * xb.size(0)
+                preds = (torch.sigmoid(logits) > 0.5).float()
+                val_correct += (preds == yb).sum().item()
+                val_total += xb.size(0)
+
+        avg_val_loss = val_loss_sum / max(val_total, 1)
+        val_acc = val_correct / max(val_total, 1)
+
+        epoch_time = time.time() - epoch_start
+        remaining_epochs = epochs - epoch - 1
+        eta_seconds = remaining_epochs * epoch_time
+        eta_str = str(timedelta(seconds=int(eta_seconds)))
+
+        add_log(
+            f"📊 Epoch {epoch + 1}/{epochs} | "
+            f"Train: {avg_train_acc:.1%} loss={avg_train_loss:.4f} | "
+            f"Val: {val_acc:.1%} loss={avg_val_loss:.4f} | "
+            f"ETA: {eta_str}"
+        )
+
+        # Save checkpoint every epoch
+        ckpt_path = CHECKPOINT_DIR / f"{arch_name}_epoch_{epoch + 1}_acc{val_acc:.3f}.pth"
+        torch.save(model.state_dict(), ckpt_path)
+
+        # Track best
+        if val_acc > best_val_acc:
+            best_val_acc = val_acc
+            best_path = MODEL_DIR / f"nexus_{arch_name}_pretrained.pth"
+            torch.save(model.state_dict(), best_path)
+            add_log(f"🏆 New best! {val_acc:.1%} → saved to {best_path.name}")
+            patience_counter = 0
+        elif avg_val_loss < best_val_loss:
+            best_val_loss = avg_val_loss
+            patience_counter = 0
+        else:
+            patience_counter += 1
+            if patience_counter >= patience_limit:
+                add_log(f"🛑 Early stopping at epoch {epoch + 1} (no improvement for {patience_limit} epochs)")
+                break
+
+        # Update state
+        elapsed_total = time.time() - state.get("started_at", time.time())
+        with lock:
+            state["epoch"] = epoch + 1
+            state["val_loss"] = round(avg_val_loss, 4)
+            state["val_acc"] = round(val_acc * 100, 1)
+            state["best_val_acc"] = round(best_val_acc * 100, 1)
+            state["eta"] = eta_str
+            state["elapsed"] = str(timedelta(seconds=int(elapsed_total)))
+            state["epoch_history"].append({
+                "epoch": epoch + 1,
+                "train_loss": round(avg_train_loss, 4),
+                "train_acc": round(avg_train_acc * 100, 1),
+                "val_loss": round(avg_val_loss, 4),
+                "val_acc": round(val_acc * 100, 1),
+            })
+
+    add_log(f"✅ Finished training {arch_name}! Best val acc: {best_val_acc:.1%}")
+    return True  # Completed
+
+
+def training_worker(arch_queue, epochs, lr):
+    """Background thread that trains architectures from the queue."""
+    global stop_requested
+
+    try:
+        for arch_name in arch_queue:
+            if stop_requested.is_set():
+                add_log("⏸️ Training paused by user")
+                update_state(status="paused")
+                return
+
+            update_state(queue=[a for a in arch_queue if a != arch_name])
+            completed = train_architecture(arch_name, epochs=epochs, lr=lr)
+
+            if completed:
+                with lock:
+                    state["completed_archs"].append(arch_name)
+
+            if stop_requested.is_set():
+                update_state(status="paused")
+                return
+
+        update_state(status="finished")
+        add_log("🎉 All architectures trained successfully!")
+
+    except Exception as e:
+        add_log(f"❌ Error: {e}")
+        update_state(status="error", error_msg=str(e))
+        import traceback
+        traceback.print_exc()
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# FLASK ROUTES
+# ══════════════════════════════════════════════════════════════════════════
+
+@app.route('/')
+def index():
+    return render_template('index.html')
+
+
+@app.route('/api/state')
+def get_state():
+    with lock:
+        return jsonify(state)
+
+
+@app.route('/api/start', methods=['POST'])
+def start_training():
+    global training_thread, stop_requested
+
+    if state["status"] == "training":
+        return jsonify({"error": "Already training"}), 400
+
+    data = request.get_json(silent=True) or {}
+    archs = data.get("archs", list(ARCHITECTURES.keys()))
+    epochs = data.get("epochs", 50)
+    lr = data.get("lr", 3e-4)
+
+    # Filter out already completed
+    archs = [a for a in archs if a in ARCHITECTURES]
+
+    stop_requested.clear()
+    update_state(
+        status="preparing",
+        queue=archs,
+        completed_archs=[],
+        error_msg="",
+        epoch_history=[],
+    )
+
+    training_thread = threading.Thread(
+        target=training_worker,
+        args=(archs, epochs, lr),
+        daemon=True,
+    )
+    training_thread.start()
+
+    return jsonify({"ok": True, "archs": archs, "epochs": epochs})
+
+
+@app.route('/api/stop', methods=['POST'])
+def stop_training():
+    global stop_requested
+    stop_requested.set()
+    add_log("⏸️ Stop requested — will save at next checkpoint...")
+    return jsonify({"ok": True})
+
+
+@app.route('/api/continue', methods=['POST'])
+def continue_training():
+    global training_thread, stop_requested
+
+    if state["status"] == "training":
+        return jsonify({"error": "Already training"}), 400
+
+    data = request.get_json(silent=True) or {}
+    arch = data.get("arch", state.get("current_arch"))
+    epochs = data.get("epochs", 50)
+    lr = data.get("lr", 3e-4)
+
+    if not arch:
+        return jsonify({"error": "No architecture specified"}), 400
+
+    stop_requested.clear()
+    update_state(status="preparing", queue=[arch], error_msg="")
+
+    training_thread = threading.Thread(
+        target=training_worker,
+        args=([arch], epochs, lr),
+        daemon=True,
+    )
+    training_thread.start()
+
+    return jsonify({"ok": True, "arch": arch})
+
+
+@app.route('/api/checkpoints')
+def list_checkpoints():
+    """List all saved checkpoints."""
+    results = {}
+    ckpt_re = re.compile(r'^(.+?)_epoch_(\d+)_acc([\d.]+)\.pth$')
+    for f in sorted(CHECKPOINT_DIR.iterdir()):
+        m = ckpt_re.match(f.name)
+        if m:
+            arch = m.group(1)
+            epoch = int(m.group(2))
+            acc = float(m.group(3))
+            if arch not in results:
+                results[arch] = []
+            results[arch].append({
+                "epoch": epoch,
+                "accuracy": round(acc * 100, 1),
+                "filename": f.name,
+                "size_mb": round(f.stat().st_size / 1e6, 1),
+            })
+    return jsonify(results)
+
+
+@app.route('/api/models')
+def list_models():
+    """List final trained models."""
+    models = []
+    for f in sorted(MODEL_DIR.glob("*.pth")):
+        models.append({
+            "filename": f.name,
+            "size_mb": round(f.stat().st_size / 1e6, 1),
+        })
+    return jsonify(models)
+
+
+# ══════════════════════════════════════════════════════════════════════════
+# MAIN
+# ══════════════════════════════════════════════════════════════════════════
+
+def graceful_shutdown(signum, frame):
+    """Handle Ctrl+C — set stop flag so current epoch saves."""
+    log.info("🛑 Shutdown signal received — saving checkpoint...")
+    stop_requested.set()
+    time.sleep(2)  # Give training loop time to save
+    sys.exit(0)
+
+
+if __name__ == '__main__':
+    signal.signal(signal.SIGINT, graceful_shutdown)
+    signal.signal(signal.SIGTERM, graceful_shutdown)
+
+    parser = argparse.ArgumentParser(description="Nexus Training Kit")
+    parser.add_argument('--arch', type=str, default=None,
+                        choices=list(ARCHITECTURES.keys()),
+                        help='Train one specific architecture (default: all)')
+    parser.add_argument('--epochs', type=int, default=50,
+                        help='Epochs per architecture (default: 50)')
+    parser.add_argument('--lr', type=float, default=3e-4,
+                        help='Learning rate (default: 3e-4)')
+    parser.add_argument('--port', type=int, default=5555,
+                        help='Web UI port (default: 5555)')
+    parser.add_argument('--auto-start', action='store_true',
+                        help='Auto-start training on launch')
+    args = parser.parse_args()
+
+    # GPU check
+    if torch.cuda.is_available():
+        gpu = torch.cuda.get_device_name(0)
+        vram = torch.cuda.get_device_properties(0).total_mem / 1e9
+        log.info(f"🖥️  GPU: {gpu} ({vram:.1f} GB VRAM)")
+        update_state(gpu_name=gpu, vram_total_gb=round(vram, 1))
+    else:
+        log.info("⚠️ No GPU detected! Training will be very slow.")
+
+    # Auto-start if requested
+    if args.auto_start:
+        archs = [args.arch] if args.arch else list(ARCHITECTURES.keys())
+        stop_requested.clear()
+        update_state(status="preparing", queue=archs)
+        training_thread = threading.Thread(
+            target=training_worker,
+            args=(archs, args.epochs, args.lr),
+            daemon=True,
+        )
+        training_thread.start()
+
+    log.info(f"🌐 Open http://localhost:{args.port} in your browser")
+    app.run(host='0.0.0.0', port=args.port, debug=False, use_reloader=False)
