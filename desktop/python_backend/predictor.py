@@ -34,6 +34,14 @@ except ImportError:
     ALT_DATA_AVAILABLE = False
     logging.warning("Alternative data not available.")
 
+# Import Probability Calibrator (Phase 2)
+try:
+    from probability_calibrator import ProbabilityCalibrator
+    CALIBRATOR_AVAILABLE = True
+except ImportError:
+    CALIBRATOR_AVAILABLE = False
+    logging.warning("ProbabilityCalibrator not available.")
+
 
 # ========== DEEP MODEL SEQUENCE LENGTH ==========
 DEEP_SEQ_LEN = 30  # 30 timesteps per sample — Transformer processes temporal windows
@@ -251,6 +259,9 @@ class NexusPredictor:
             'basis_rate', 'basis_chg_1h', 'basis_z_7d',
             'derivs_quality', 'oi_is_stale', 'premium_is_stale',
         ]
+        
+        # Phase 2: Probability Calibrator (isotonic regression)
+        self.prob_calibrator = ProbabilityCalibrator() if CALIBRATOR_AVAILABLE else None
         
         # Concurrency: protect model object during retrain vs inference
         self._model_lock = threading.RLock()
@@ -1554,6 +1565,10 @@ class NexusPredictor:
                 acc = (preds == y_te.values).mean() * 100
                 ll = log_loss(y_te, probs)
                 
+                # Phase 2: Accumulate OOS pairs for probability calibrator
+                if self.prob_calibrator is not None:
+                    self.prob_calibrator.add_walk_forward_pairs(probs, y_te.values)
+                
                 folds.append({
                     'fold': k,
                     'train_rows': len(X_tr),
@@ -1569,6 +1584,13 @@ class NexusPredictor:
             logging.warning(f"[WALK-FORWARD] Only {len(folds)} folds completed, insufficient")
             return None
         
+        # Phase 2: Fit calibrator on all accumulated OOS pairs
+        if self.prob_calibrator is not None:
+            cal_success = self.prob_calibrator.fit(min_samples=50)
+            if cal_success:
+                logging.info(f"[WALK-FORWARD] Probability calibrator fitted — "
+                            f"ECE={self.prob_calibrator.calibration_stats.get('ece', -1):.4f}")
+        
         accs = [f['accuracy'] for f in folds]
         lls = [f['logloss'] for f in folds]
         
@@ -1580,6 +1602,7 @@ class NexusPredictor:
             'min_accuracy': round(np.min(accs), 2),
             'max_accuracy': round(np.max(accs), 2),
             'mean_logloss': round(np.mean(lls), 4),
+            'calibrator_fitted': self.prob_calibrator.is_fitted if self.prob_calibrator else False,
         }
         
         logging.info(
@@ -1697,74 +1720,28 @@ class NexusPredictor:
             final_prob = self.xgb_weight * xgb_prob + self.lstm_weight * lstm_prob
             
             direction = "UP" if final_prob > 0.5 else "DOWN"
-            confidence = round(abs(final_prob - 0.5) * 200, 2)
+            raw_confidence = round(abs(final_prob - 0.5) * 200, 2)
             
-            # ===== STAGE 6b: Alt data confidence boost (real-time only) =====
+            # ===== STAGE 6b: Probability Calibration (Phase 2 — replaces heuristic boosters) =====
+            calibrated_prob = final_prob  # fallback to raw
+            if self.prob_calibrator is not None and self.prob_calibrator.is_fitted:
+                calibrated_prob = self.prob_calibrator.calibrate(final_prob)
+                confidence = round(abs(calibrated_prob - 0.5) * 200, 2)
+                logging.debug(
+                    f"PREDICT [stage=calibration] raw_prob={final_prob:.4f} → "
+                    f"calibrated={calibrated_prob:.4f}, confidence={confidence:.1f}%"
+                )
+            else:
+                confidence = raw_confidence
+                logging.debug(f"PREDICT [stage=calibration] no calibrator, using raw confidence={confidence:.1f}%")
+            
+            # Still collect alt-data signals for context (no longer boosts confidence)
             if self.alt_data is not None:
                 try:
                     alt_features = self.alt_data.get_features_for_model()
                     self.last_alt_signals = alt_features
-                    feat = alt_features.get('features', {})
-                    
-                    # Count how many alt signals agree with our direction
-                    agreements = 0
-                    total_signals = 0
-                    
-                    fg_norm = feat.get('fear_greed_norm', 0)  # -1 to 1
-                    if abs(fg_norm) > 0.1:
-                        total_signals += 1
-                        if (direction == "UP" and fg_norm > 0) or (direction == "DOWN" and fg_norm < 0):
-                            agreements += 1
-                    
-                    ob_imb = feat.get('orderbook_imbalance', 0)
-                    if abs(ob_imb) > 0.1:
-                        total_signals += 1
-                        if (direction == "UP" and ob_imb > 0) or (direction == "DOWN" and ob_imb < 0):
-                            agreements += 1
-                    
-                    tp = feat.get('trade_pressure', 0)
-                    if abs(tp) > 0.1:
-                        total_signals += 1
-                        if (direction == "UP" and tp > 0) or (direction == "DOWN" and tp < 0):
-                            agreements += 1
-                    
-                    # Boost or dampen confidence (±10% max, never zero a valid signal)
-                    if total_signals > 0:
-                        agreement_ratio = agreements / total_signals
-                        boost = (agreement_ratio - 0.5) * 20  # -10 to +10
-                        confidence = max(1, min(100, confidence + boost))
-                        logging.debug(f"PREDICT [stage=alt_boost] {agreements}/{total_signals} agree, boost={boost:+.1f}")
                 except Exception as e:
-                    logging.debug(f"PREDICT [stage=alt_boost] skipped: {e}")
-            
-            # ===== STAGE 6c: Signal quality adjustment from trader feedback =====
-            # Read trade outcomes and adjust confidence based on regime performance
-            try:
-                feedback_path = os.path.join(config.DATA_ROOT, 'feedback', 'trade_feedback.json')
-                if os.path.exists(feedback_path):
-                    with open(feedback_path, 'r') as f:
-                        feedback = json.load(f)
-                    
-                    if len(feedback) >= 5:
-                        # Get current regime label
-                        current_regime = self.last_quant_analysis.get('regime', {}).get('regime', 'UNKNOWN')
-                        
-                        # Calculate win rate for current regime
-                        regime_trades = [t for t in feedback[-50:] if t.get('regime') == current_regime]
-                        if len(regime_trades) >= 3:
-                            regime_wins = sum(1 for t in regime_trades if t.get('won', False))
-                            regime_wr = regime_wins / len(regime_trades)
-                            
-                            # Adjust: good regime boosts confidence, bad regime dampens
-                            regime_boost = (regime_wr - 0.5) * 20  # -10 to +10
-                            confidence = max(1, min(100, confidence + regime_boost))
-                            logging.debug(
-                                f"PREDICT [stage=feedback] regime={current_regime} "
-                                f"wr={regime_wr*100:.0f}% ({len(regime_trades)} trades) "
-                                f"boost={regime_boost:+.1f}"
-                            )
-            except Exception as e:
-                logging.debug(f"PREDICT [stage=feedback] skipped: {e}")
+                    logging.debug(f"PREDICT [stage=alt_data] skipped: {e}")
             
             # Save prediction for future accuracy calculation
             self.save_prediction_for_audit(current_price, direction, confidence)
@@ -1857,9 +1834,22 @@ class NexusPredictor:
                     except Exception as e:
                         logging.warning(f"[DRIFT-MONITOR] Check failed: {e}")
             
+            # Compute Expected Value (Phase 2)
+            directional_prob = calibrated_prob if direction == "UP" else (1.0 - calibrated_prob)
+            ev = 0.0
+            if self.prob_calibrator is not None:
+                ev = self.prob_calibrator.expected_value(
+                    directional_prob,
+                    reward_pct=float(mult_15m * 100),  # expected TP %
+                    risk_pct=float(mult_15m * 50),     # expected SL % (tighter)
+                )
+            
             return {
                 "direction": direction,
                 "confidence": float(min(100, confidence)),
+                "raw_confidence": float(min(100, raw_confidence)),
+                "calibrated_prob": round(float(calibrated_prob), 4),
+                "expected_value": round(float(ev), 4),
                 "target_price": round(target_15m, 2),
                 "target_price_1h": round(target_15m, 2),
                 "target_price_2h": round(target_30m, 2),
@@ -1870,7 +1860,8 @@ class NexusPredictor:
                 "xgb_prob": round(xgb_prob, 4),
                 "lstm_prob": round(lstm_prob, 4),
                 "ensemble_weights": f"XGB={self.xgb_weight:.1f} LSTM={self.lstm_weight:.1f}",
-                "verified": self.is_statistically_verified
+                "verified": self.is_statistically_verified,
+                "calibrator_fitted": self.prob_calibrator.is_fitted if self.prob_calibrator else False,
             }
         
         except Exception as e:

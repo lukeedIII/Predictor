@@ -173,6 +173,9 @@ DERIVATIVES_DIR = os.path.join(DATA_DIR, "derivatives")
 DERIVATIVES_COLLECT_INTERVAL = 60         # Snapshot every 60s
 DERIVATIVES_HISTORY_INTERVAL = 300        # OI/basis history every 5 min
 
+# ── Probability Calibration (Phase 2) ────────────────
+MIN_EXPECTED_VALUE = 0.0                  # Minimum EV to take a trade (0.0 = positive EV only)
+
 # ── News Sources ──────────────────────────────────────
 NEWS_SOURCES = [
     "https://cointelegraph.com/rss",

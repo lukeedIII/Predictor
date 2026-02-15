@@ -2526,6 +2526,25 @@ async def get_derivatives():
 
 
 # ============================================================
+#  PROBABILITY CALIBRATION (Phase 2)
+# ============================================================
+
+@app.get("/api/calibration")
+async def get_calibration():
+    """Probability calibration diagnostics: ECE, Brier score, fit status."""
+    if predictor is None or predictor.prob_calibrator is None:
+        return {
+            "enabled": False,
+            "message": "Calibrator not available",
+            "diagnostics": {},
+        }
+    return {
+        "enabled": True,
+        "diagnostics": predictor.prob_calibrator.get_diagnostics(),
+    }
+
+
+# ============================================================
 #  MAIN
 # ============================================================
 

@@ -436,6 +436,16 @@ class PaperTrader:
             logging.debug(f"Skip: confidence {confidence:.1f}% < {min_conf:.0f}% (adaptive)")
             return None
         
+        # Rule 1b: EV gate (Phase 2) — only trade when Expected Value is positive
+        ev = prediction.get('expected_value', None)
+        calibrator_fitted = prediction.get('calibrator_fitted', False)
+        if calibrator_fitted and ev is not None:
+            min_ev = getattr(config, 'MIN_EXPECTED_VALUE', 0.0)
+            if ev < min_ev:
+                self._signal_streak = 0
+                logging.debug(f"Skip: EV={ev:.4f} < {min_ev} (negative expected value)")
+                return None
+        
         # Rule 2: Regime filter — skip chaotic markets (Hurst near 0.5)
         if 0.48 <= hurst <= 0.52:
             self._signal_streak = 0
