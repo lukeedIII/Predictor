@@ -468,18 +468,23 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     pos_weight = neg_count / max(pos_count, 1)
     add_log(f"   Train: {len(X_train):,} | Val: {len(X_val):,} | Pos weight: {pos_weight:.2f}")
 
-    # Auto batch size based on VRAM
+    # Auto batch size based on FREE VRAM (not total — other apps may use GPU memory)
     if batch_size is None:
         if device == 'cuda':
-            vram_gb = torch.cuda.get_device_properties(0).total_memory / 1e9
-            if vram_gb >= 20:
+            # Clear stale cache first so we get accurate free measurement
+            torch.cuda.empty_cache()
+            vram_free = (torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)) / 1e9
+            add_log(f"   Free VRAM: {vram_free:.1f} GB")
+            if vram_free >= 18:
                 batch_size = 4096
-            elif vram_gb >= 12:
+            elif vram_free >= 10:
                 batch_size = 2048
-            elif vram_gb >= 8:
+            elif vram_free >= 6:
                 batch_size = 1024
-            else:
+            elif vram_free >= 3:
                 batch_size = 512
+            else:
+                batch_size = 256
         else:
             batch_size = 256
     add_log(f"   Batch size: {batch_size}")
@@ -690,6 +695,16 @@ def training_worker(arch_queue, epochs, lr):
             if completed:
                 with lock:
                     state["completed_archs"].append(arch_name)
+
+            # ── VRAM cleanup between architectures ──
+            # Free previous model + data from GPU before loading the next one
+            if torch.cuda.is_available():
+                import gc
+                torch.cuda.empty_cache()
+                torch.cuda.ipc_collect()
+                gc.collect()
+                freed_to = torch.cuda.memory_allocated(0) / 1e9
+                add_log(f"🧹 VRAM cleanup between archs — {freed_to:.2f} GB still allocated")
 
             if stop_requested.is_set():
                 update_state(status="paused")
