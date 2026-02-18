@@ -734,6 +734,8 @@ def main():
     log.info("═" * 60)
     log.info(f"  Architecture: {label} (--arch {args.arch})")
     log.info(f"  Output: {args.output}")
+    if args.arch == 'lite':
+        log.info(f"  ⚗️  EXPERIMENTAL: trained on 2021-2026 only (2018-2020 = unseen OOD)")
     log.info(f"  3-class target: UP / FLAT / DOWN")
     log.info(f"  SEQ_LEN = {SEQ_LEN} (2 hours) | Threshold = ±{PRICE_THRESHOLD*100:.2f}%")
     log.info("═" * 60)
@@ -770,6 +772,19 @@ def main():
         df = df.head(100_000)
         args.epochs = 2
         log.info(f"⚡ Quick mode: {len(df):,} rows, {args.epochs} epochs")
+
+    # ── LiteJamba: experimental date filter (2021-2026 only) ──
+    if args.arch == 'lite':
+        if 'date' in df.columns:
+            df['date'] = pd.to_datetime(df['date'])
+            n_before = len(df)
+            df = df[df['date'] >= '2021-01-01'].reset_index(drop=True)
+            n_dropped = n_before - len(df)
+            log.info(f"⚗️  LiteJamba date filter: kept {len(df):,} rows (2021+), "
+                     f"dropped {n_dropped:,} pre-2021 rows")
+            log.info(f"   Never-seen data: 2017-08 → 2020-12 ({n_dropped:,} candles = OOD test set)")
+        else:
+            log.warning("⚠️  No 'date' column found — skipping date filter")
 
     # ── Step 3: Feature engineering ──
     # NOTE: engineer_features() internally drops neutral rows (±0.1%).

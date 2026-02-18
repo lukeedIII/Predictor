@@ -98,7 +98,7 @@ MODEL_ARCHITECTURES = {
         "label": "LiteJamba (12M)",
         "params": "~12M",
         "vram_gb": 0.5,
-        "description": "5 Mamba + 1 Attention + MoE. Balanced speed and capacity.",
+        "description": "⚗️ Experimental — trained on 2021-2026 only (2018-2020 = unseen OOD).",
         "model_file": "nexus_lite_jamba_v1.pth",
         "pretrained_file": "nexus_lite_jamba_v1.pth",
         "jamba_size": "lite",

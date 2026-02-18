@@ -169,8 +169,10 @@ All models use the **Jamba architecture** (AI21 Labs, 2024) adapted for financia
 | Model | Params | VRAM | Blocks | MoE | Best For |
 |:------|:-------|:-----|:-------|:----|:---------|
 | **SmallJamba** | 4.4M | ~0.2 GB | 3 Mamba + 1 Attention | 4 experts, top-1 | Low VRAM, fast inference |
-| **LiteJamba** | ~12M | ~0.5 GB | 5 Mamba + 1 Attention | 4 experts, top-1 | Balanced speed/accuracy |
+| **LiteJamba** ⚗️ | ~12M | ~0.5 GB | 5 Mamba + 1 Attention | 4 experts, top-1 | **Experimental** — 2021-2026 only |
 | **MediumJamba** | ~28M | ~1.2 GB | 6 Mamba + 2 Attention | 6 experts, top-2 | Maximum capacity |
+
+> **⚗️ LiteJamba is experimental:** trained exclusively on 2021-2026 data. The model has **never seen 2018-2020** (pre-bull-run era), making that period a true out-of-distribution (OOD) test set. This tests whether recent market regime knowledge generalizes without historical anchoring.
 
 ### Multi-Model Ensemble (GPU Permitting)
 
