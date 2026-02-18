@@ -8,7 +8,7 @@
 
 <br/>
 
-[![Version](https://img.shields.io/badge/version-6.4.0-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
+[![Version](https://img.shields.io/badge/version-7.0.0-blue?style=flat-square)](https://github.com/lukeedIII/Predictor)
 [![Python](https://img.shields.io/badge/Python-3.12-3776AB?style=flat-square&logo=python&logoColor=white)](https://python.org)
 [![React](https://img.shields.io/badge/React-19-61DAFB?style=flat-square&logo=react&logoColor=black)](https://react.dev)
 [![Electron](https://img.shields.io/badge/Electron-40-47848F?style=flat-square&logo=electron&logoColor=white)](https://electronjs.org)
@@ -25,15 +25,16 @@
 ## 🔥 TL;DR
 
 - **Predictor goal (code-verified):** probability that BTC will be **up at least +0.30% within 15 minutes**
-- **Models:** XGBoost (primary) + optional Transformer sequence model (earns weight only if it performs)
-- **Retraining:** every **6 hours**, from scratch, on the most recent **500,000** 1-minute candles (~1 year)
-- **Champion-Challenger gate:** newly trained models must beat the current production model (logloss + accuracy) before promotion
-- **Drift monitoring:** PSI-based feature drift, prediction distribution shift, and calibration quality (Brier + ECE) tracked every 30 min
-- **Dashboard:** drag-and-drop grid layout with saveable presets, light/dark theme, World Clock + Swiss Weather widgets
+- **Models:** Jamba Hybrid SSM (3 sizes: Small 4.4M / Lite 12M / Medium 28M) — Mamba + Attention + MoE
+- **Multi-Model:** run multiple Jamba variants simultaneously for ensemble predictions (if GPU allows)
+- **Retraining:** from scratch on the most recent **500,000** 1-minute candles (~1 year)
+- **3-class output:** UP / FLAT / DOWN — the model learns when to trade AND when to sit on its hands
+- **Dashboard:** drag-and-drop grid layout with saveable presets, light/dark theme, AI trajectory overlay
 - **Real-time:** WebSocket push for price, predictions, positions, and quant data (~1s latency)
 - **16-model Quant Intelligence:** HMM regime, GJR-GARCH, Heston, Rough Vol, Merton Jump, Bates SVJ, EMD, HHT, Wavelets, MF-DFA, RQA, TDA, PPO RL, Almgren-Chriss, OFI
 - **Everything local:** Electron + React + FastAPI (localhost) + Python quant/ML core
 - **Dr. Nexus AI:** branded analytical reports with rich markdown, multi-provider LLM (OpenAI → Gemini → Ollama → embedded fallback)
+- **AI Forecast:** projected price trajectory overlay on the chart (dashed line showing predicted direction)
 - **Trading:** paper-only simulation (long/short, configurable leverage) with confidence gating + risk controls
 
 ---
@@ -83,13 +84,14 @@ Below is the exact runtime loop as implemented (high-level), including what runs
   - live inference vector
 
 ### 3) Prediction (every 60s)
-- **XGBoost** outputs `P(target=1)`
-- **Calibration:** Platt scaling (sigmoid) via `CalibratedClassifierCV`
-- **Transformer (optional):**
-  - sequence length: 30 timesteps
-  - starts with weight = 0
-  - only contributes if validation accuracy > 52%
-  - ensemble weight increases as performance improves
+- **Jamba Hybrid SSM** outputs 3-class probabilities: P(UP), P(FLAT), P(DOWN)
+- Architecture: Mamba blocks (O(n) sequential modeling) + Attention blocks (global pattern matching) + MoE (expert routing)
+- **3 sizes available:**
+  - **SmallJamba** (4.4M) — ultra-fast, ultra-low VRAM
+  - **LiteJamba** (~12M) — balanced speed/capacity
+  - **MediumJamba** (~28M) — higher capacity for complex patterns
+- **Multi-Model ensemble:** run 2-3 variants simultaneously for stronger consensus signals
+- **AI Trajectory:** projected price direction overlaid on the chart as a dashed line
 
 ### 4) Quant Overlay (16-model engine)
 A `QuantEngine` runs 16 institutional-grade models organized in tiers:
@@ -109,10 +111,10 @@ All results are streamed to the UI via WebSocket in real-time.
 - **Light / Dark theme:** toggle with localStorage persistence
 - **World Clock:** 6 financial hubs (NYSE, LSE, SIX, MOEX, TSE, SSE) with market open/close status
 - **Swiss Weather:** live conditions for Zürich
-- **TradingView chart:** live BTC/USDT with multiple timeframes + indicators
+- **TradingView chart:** live BTC/USDT with multiple timeframes + indicators + AI trajectory overlay
 - **16-model Quant Intelligence panel:** collapsible sections with gauges, badges, active signals
 - **Hardware Monitor:** live GPU/CPU utilization, VRAM, temperature
-- **Paper Trading Stats:** equity curve, win/loss, PnL breakdown
+- **Paper Trading Stats:** equity curve, win/loss ratio, cumulative PnL breakdown
 
 ### 6) Paper Trader (simulation)
 - Confidence gate (default `PAPER_MIN_CONFIDENCE = 30`)
@@ -152,6 +154,58 @@ Everything runs locally. External calls:
 - OpenAI / Gemini API for Dr. Nexus AI chat (optional — embedded Qwen 0.5B fallback included)
 
 ---
+
+## 🧠 ML Models — Jamba Hybrid SSM
+
+All models use the **Jamba architecture** (AI21 Labs, 2024) adapted for financial time series:
+- **Mamba blocks** — O(n) selective state space for sequential pattern recognition
+- **Attention blocks** — global context for in-context learning (GQA for memory efficiency)
+- **Mixture of Experts (MoE)** — 4-6 experts with top-k routing for capacity without compute cost
+- **RMSNorm** — faster + more stable than LayerNorm
+- **3-class output:** UP / FLAT / DOWN with configurable ±0.25% threshold
+
+### Available Sizes
+
+| Model | Params | VRAM | Blocks | MoE | Best For |
+|:------|:-------|:-----|:-------|:----|:---------|
+| **SmallJamba** | 4.4M | ~0.2 GB | 3 Mamba + 1 Attention | 4 experts, top-1 | Low VRAM, fast inference |
+| **LiteJamba** | ~12M | ~0.5 GB | 5 Mamba + 1 Attention | 4 experts, top-1 | Balanced speed/accuracy |
+| **MediumJamba** | ~28M | ~1.2 GB | 6 Mamba + 2 Attention | 6 experts, top-2 | Maximum capacity |
+
+### Multi-Model Ensemble (GPU Permitting)
+
+Run **multiple Jamba variants simultaneously** for stronger consensus:
+
+```
+# Example: Small + Lite ensemble
+SmallJamba says:  UP (68%)   ┐
+                             ├─→ Ensemble: UP (71%) ✅ High confidence
+LiteJamba says:   UP (74%)   ┘
+
+SmallJamba says:  UP (55%)   ┐
+                             ├─→ Ensemble: FLAT → skip trade ⏸️
+LiteJamba says:  DOWN (60%)  ┘
+```
+
+GPU memory requirements for common combinations:
+- Small alone: ~0.2 GB
+- Small + Lite: ~0.7 GB
+- Small + Lite + Medium: ~1.9 GB
+- All three: fits comfortably on any modern GPU (4 GB+)
+
+### Training
+
+```powershell
+cd desktop\python_backend
+.\venv\Scripts\Activate.ps1
+
+python train_mamba.py --arch small --skip-download       # SmallJamba (~4.4M params)
+python train_mamba.py --arch lite --skip-download        # LiteJamba (~12M params)
+python train_mamba.py --arch medium --skip-download      # MediumJamba (~28M params)
+python train_mamba.py --arch small --quick --skip-download  # Quick smoke test
+```
+
+Each variant saves to `nexus_{size}_jamba_v1.pth` automatically.
 
 ## 🧩 Feature Set (42 Total — Scale-Invariant)
 
@@ -208,42 +262,6 @@ The 16-model `QuantEngine` provides real-time institutional-grade diagnostics:
 
 ---
 
-## 🧠 ML Models
-
-### XGBoost (Primary)
-Hardcoded parameters (current):
-- objective: `binary:logistic`
-- eval_metric: `logloss`
-- n_estimators: 500
-- max_depth: 6
-- learning_rate: 0.03
-- subsample: 0.8
-- colsample_bytree: 0.7
-- min_child_weight: 5
-- gamma: 0.1
-- reg_alpha: 0.1 (L1)
-- reg_lambda: 1.5 (L2)
-- tree_method: `hist`
-
-Training mechanics:
-- window: last **500,000** 1m candles
-- temporal split: 80% train / 20% test
-- sample weights: exponential recency bias (oldest ~5% weight → newest 100%)
-- calibration: Platt scaling via `CalibratedClassifierCV`
-
-### Transformer (Optional)
-- encoder: d_model=1024, 16 heads, 12 layers, FFN=4096, dropout=0.15
-- seq length: 30 timesteps
-- training: 30 epochs, AdamW, BCEWithLogitsLoss (AMP-safe)
-- GPU: CUDA if available
-
-Ensembling:
-- starts at weight 0
-- only participates if validation accuracy > 52%
-- weight increases with performance (capped)
-
----
-
 ## 💰 Paper Trading Engine (Simulation)
 
 Current implementation (config-driven):
@@ -294,9 +312,9 @@ A walk-forward backtest on ~3.15M candles reported:
 | [Python](https://python.org) | 3.12 (3.10+ works) | ✅ Yes |
 | [Node.js](https://nodejs.org) | 20 LTS+ | ✅ Yes |
 | [Git](https://git-scm.com) | any | Optional |
-| NVIDIA GPU + CUDA | RTX 3060+ | ❌ Optional (only for Transformer) |
+| NVIDIA GPU + CUDA | RTX 3060+ | ✅ Recommended | Required for Jamba training + inference |
 
-> **Note:** XGBoost (the primary model) runs on CPU. GPU is only needed for the optional Transformer/LSTM module.
+> **Note:** SmallJamba can run inference on CPU (~50ms) but GPU is strongly recommended for training and real-time inference (~5ms).
 
 ### Option A: Clone with Git
 
@@ -435,6 +453,10 @@ python run_backtest.py             # single-threaded
 - [x] XGBoost early stopping (eval-set logloss, `early_stopping_rounds=30`, logs trees used)
 - [x] Regime-based trade gating (Hurst filter + vol-regime bounds + regime win-rate gate)
 - [x] Hugging Face Model Sync (cloud save/load to skip initial training)
+- [x] **Jamba Hybrid SSM** — replaced XGBoost/Transformer with Mamba+Attention+MoE architecture
+- [x] **3 model sizes** — SmallJamba (4.4M), LiteJamba (12M), MediumJamba (28M)
+- [x] **AI Trajectory Overlay** — projected price direction on the TradingView chart
+- [ ] Multi-Model ensemble UI (select + run multiple Jamba variants simultaneously)
 - [ ] Time-of-day / day-of-week features (optional)
 
 ---
@@ -453,6 +475,6 @@ Nexus Shadow-Quant is an educational and research tool. It is not financial advi
 
 <div align="center">
 
-**v6.4.2 Beta Stable** · Built locally with ⚡ by **G-luc**
+**v7.0.0 Jamba Edition** · Built locally with ⚡ by **G-luc**
 
 </div>

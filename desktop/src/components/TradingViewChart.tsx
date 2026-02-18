@@ -49,6 +49,14 @@ type ChartRefs = {
     ma7Series: ISeriesApi<'Line'> | null;
     ma25Series: ISeriesApi<'Line'> | null;
     ma99Series: ISeriesApi<'Line'> | null;
+    trajectorySeries: ISeriesApi<'Line'> | null;
+};
+
+type TrajectoryData = {
+    trajectory: { time: number; value: number }[];
+    anchor: { time: number; value: number };
+    direction: 'UP' | 'FLAT' | 'DOWN';
+    confidence: number;
 };
 
 const TIMEFRAMES: { label: string; value: Timeframe }[] = [
@@ -85,12 +93,14 @@ export default function TradingViewChart() {
         ma7Series: null,
         ma25Series: null,
         ma99Series: null,
+        trajectorySeries: null,
     });
 
     const [timeframe, setTimeframe] = useState<Timeframe>('1m');
     const [isLoading, setIsLoading] = useState(true);
     const [error, setError] = useState<string | null>(null);
     const [crosshairData, setCrosshairData] = useState<CandlestickData | null>(null);
+    const [trajectoryInfo, setTrajectoryInfo] = useState<TrajectoryData | null>(null);
     // Granular selectors — chart only re-renders on price/stats changes
     const livePrice = useLivePrice();
     const changePct = useLiveChangePct();
@@ -182,6 +192,17 @@ export default function TradingViewChart() {
             crosshairMarkerVisible: false,
         });
 
+        // AI Trajectory — dashed blue-grey ghost line
+        const trajectorySeries = chart.addSeries(LineSeries, {
+            color: 'rgba(120, 180, 255, 0.6)',
+            lineWidth: 2,
+            lineStyle: 2, // Dashed
+            priceLineVisible: false,
+            lastValueVisible: false,
+            crosshairMarkerVisible: false,
+            pointMarkersVisible: true,
+        });
+
         // Crosshair tooltip
         chart.subscribeCrosshairMove((param) => {
             if (param.time && param.seriesData) {
@@ -194,7 +215,7 @@ export default function TradingViewChart() {
             }
         });
 
-        chartRefs.current = { chart, candleSeries, volumeSeries, ma7Series, ma25Series, ma99Series };
+        chartRefs.current = { chart, candleSeries, volumeSeries, ma7Series, ma25Series, ma99Series, trajectorySeries };
 
         // ResizeObserver for responsive
         const observer = new ResizeObserver(entries => {
@@ -209,6 +230,7 @@ export default function TradingViewChart() {
             chartRefs.current = {
                 chart: null, candleSeries: null, volumeSeries: null,
                 ma7Series: null, ma25Series: null, ma99Series: null,
+                trajectorySeries: null,
             };
         };
     }, []); // Chart created once
@@ -350,6 +372,55 @@ export default function TradingViewChart() {
     }, [livePrice, timeframe]);
 
 
+    // ─── AI Trajectory Polling ────────────────────────
+    useEffect(() => {
+        let cancelled = false;
+
+        const fetchTrajectory = async () => {
+            try {
+                const res = await fetch(`${API_BASE}/api/prediction/trajectory?interval=${timeframe}&steps=5`);
+                if (!res.ok) return;
+                const data: TrajectoryData = await res.json();
+                if (cancelled) return;
+
+                setTrajectoryInfo(data);
+
+                const refs = chartRefs.current;
+                if (!refs.trajectorySeries) return;
+
+                // Build line: anchor point (current price) + projected points
+                const points = [
+                    { time: data.anchor.time as UTCTimestamp, value: data.anchor.value },
+                    ...data.trajectory.map(p => ({
+                        time: p.time as UTCTimestamp,
+                        value: p.value,
+                    })),
+                ];
+
+                // Color based on direction
+                const color = data.direction === 'UP'
+                    ? 'rgba(14, 203, 129, 0.5)'
+                    : data.direction === 'DOWN'
+                        ? 'rgba(246, 70, 93, 0.5)'
+                        : 'rgba(156, 163, 175, 0.5)';
+
+                refs.trajectorySeries.applyOptions({ color });
+                refs.trajectorySeries.setData(points);
+            } catch {
+                // Silently fail — trajectory is non-critical
+            }
+        };
+
+        fetchTrajectory();
+        const interval = setInterval(fetchTrajectory, 30_000); // Every 30s
+
+        return () => {
+            cancelled = true;
+            clearInterval(interval);
+        };
+    }, [timeframe]);
+
+
     // ─── Render ───────────────────────────────────────
     return (
         <div className="tv-chart-wrapper">
@@ -417,6 +488,32 @@ export default function TradingViewChart() {
                 <span style={{ color: '#F0B90B' }}>MA(7)</span>
                 <span style={{ color: '#E040FB' }}>MA(25)</span>
                 <span style={{ color: '#00BCD4' }}>MA(99)</span>
+                {trajectoryInfo && (
+                    <span style={{
+                        color: trajectoryInfo.direction === 'UP' ? 'rgba(14, 203, 129, 0.8)'
+                            : trajectoryInfo.direction === 'DOWN' ? 'rgba(246, 70, 93, 0.8)'
+                                : 'rgba(156, 163, 175, 0.8)',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 4,
+                    }}>
+                        <span style={{
+                            width: 14, height: 2,
+                            borderTop: '2px dashed currentColor',
+                            display: 'inline-block',
+                        }} />
+                        AI Forecast
+                        <span style={{
+                            fontSize: 9,
+                            padding: '1px 4px',
+                            borderRadius: 3,
+                            background: 'rgba(255,255,255,0.08)',
+                            fontWeight: 600,
+                        }}>
+                            {trajectoryInfo.direction} {(trajectoryInfo.confidence * 100).toFixed(0)}%
+                        </span>
+                    </span>
+                )}
             </div>
 
             {/* Chart container */}

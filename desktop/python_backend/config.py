@@ -83,43 +83,47 @@ SYMBOL = "BTC/USDT"
 TIMEFRAME = "1m"
 IS_INSTALLED = _is_installed()
 
-# ── Model Architecture ────────────────────────────────
-# Available transformer architectures (pretrained via pretrain_multi_arch.py)
+# ── Model Architectures (Jamba-only) ──────────────────
 MODEL_ARCHITECTURES = {
-    "nexus_transformer": {
-        "label": "NexusTransformer (Original)",
-        "params": "152M",
-        "vram_gb": 2.5,
-        "description": "Original 12-layer, d_model=1024. High capacity, slower.",
-        "model_file": "nexus_transformer_v2.pth",
-        "pretrained_file": "nexus_transformer_pretrained.pth",
-    },
-    "small_transformer": {
-        "label": "SmallTransformer (4M)",
-        "params": "3.2M",
+    "small_jamba": {
+        "label": "SmallJamba (4.4M)",
+        "params": "4.4M",
         "vram_gb": 0.2,
-        "description": "4-layer, d_model=256. Very fast, 76.9% val acc. Best for low VRAM.",
-        "model_file": "nexus_small_transformer_v1.pth",
-        "pretrained_file": "nexus_small_transformer_v1.pth",
+        "description": "3 Mamba + 1 Attention + MoE. Ultra-fast, ultra-low VRAM.",
+        "model_file": "nexus_small_jamba_v1.pth",
+        "pretrained_file": "nexus_small_jamba_v1.pth",
+        "jamba_size": "small",
     },
-    "medium_transformer": {
-        "label": "MediumTransformer (19M)",
-        "params": "19.1M",
-        "vram_gb": 0.6,
-        "description": "6-layer, d_model=512. Balanced speed/accuracy.",
-        "model_file": "nexus_medium_transformer_v1.pth",
-        "pretrained_file": "nexus_medium_transformer_v1.pth",
+    "lite_jamba": {
+        "label": "LiteJamba (12M)",
+        "params": "~12M",
+        "vram_gb": 0.5,
+        "description": "5 Mamba + 1 Attention + MoE. Balanced speed and capacity.",
+        "model_file": "nexus_lite_jamba_v1.pth",
+        "pretrained_file": "nexus_lite_jamba_v1.pth",
+        "jamba_size": "lite",
     },
-    "midlarge_transformer": {
-        "label": "MidLargeTransformer (32M)",
-        "params": "~32M",
-        "vram_gb": 1.5,
-        "description": "8-layer, d_model=768. Higher capacity, slower training.",
-        "model_file": "nexus_midlarge_transformer_v1.pth",
-        "pretrained_file": "nexus_midlarge_transformer_v1.pth",
+    "medium_jamba": {
+        "label": "MediumJamba (28M)",
+        "params": "~28M",
+        "vram_gb": 1.2,
+        "description": "6 Mamba + 2 Attention + MoE (top-2). Higher capacity.",
+        "model_file": "nexus_medium_jamba_v1.pth",
+        "pretrained_file": "nexus_medium_jamba_v1.pth",
+        "jamba_size": "medium",
+    },
+    # Legacy — kept for backward compat if old .pth exists
+    "small_mamba": {
+        "label": "SmallJamba (Hybrid SSM)",
+        "params": "4.4M",
+        "vram_gb": 0.2,
+        "description": "Legacy alias for SmallJamba. Same architecture.",
+        "model_file": "nexus_small_mamba_v1.pth",
+        "pretrained_file": "nexus_small_mamba_v1.pth",
+        "jamba_size": "small",
     },
 }
-DEFAULT_MODEL_ARCH = "nexus_transformer"  # Default = original for backward compat
+DEFAULT_MODEL_ARCH = "small_jamba"
 
 # ── Beta Features ─────────────────────────────────────
 BETA_FEATURES = {

@@ -1472,6 +1472,99 @@ def get_prediction():
     return JSONResponse(content=data)
 
 
+@app.get("/api/prediction/trajectory")
+def get_prediction_trajectory(steps: int = 5, interval: str = "1m"):
+    """Project future price trajectory based on SmallJamba prediction.
+
+    Returns ~5 future price points for the chart ghost line overlay.
+    The projection uses the model's 3-class prediction (UP/FLAT/DOWN)
+    and confidence to extrapolate a directional trajectory from current price.
+
+    Query params:
+        steps: number of future candles to project (1-10, default 5)
+        interval: timeframe for spacing (1m, 5m, 15m, 1h, 4h, 1d)
+    """
+    import math as _math
+
+    # Clamp steps
+    steps = max(1, min(steps, 10))
+
+    # Get current price
+    price = _get_live_price()
+    if not price or price <= 0:
+        raise HTTPException(503, "No live price available")
+
+    # Get prediction
+    pred = None
+    if predictor is not None:
+        try:
+            pred = predictor.get_prediction()
+        except Exception:
+            pass
+
+    # Default to FLAT if no prediction
+    direction = "FLAT"
+    confidence = 0.33
+    probabilities = {"UP": 0.33, "FLAT": 0.34, "DOWN": 0.33}
+
+    if pred and isinstance(pred, dict):
+        direction = pred.get("direction", pred.get("signal", "FLAT"))
+        confidence = float(pred.get("confidence", 0.33))
+        probabilities = {
+            "UP": float(pred.get("prob_up", pred.get("up_prob", 0.33))),
+            "FLAT": float(pred.get("prob_flat", pred.get("flat_prob", 0.34))),
+            "DOWN": float(pred.get("prob_down", pred.get("down_prob", 0.33))),
+        }
+
+    # Timeframe → seconds per candle
+    tf_seconds = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+    candle_sec = tf_seconds.get(interval, 60)
+
+    # Base move per candle: scale by confidence and recent volatility
+    # Use a conservative 0.05% per minute as baseline, scaled by timeframe
+    base_pct = 0.0005 * _math.sqrt(candle_sec / 60)  # sqrt scaling for timeframe
+
+    # Direction multiplier
+    if direction == "UP":
+        dir_mult = 1.0
+    elif direction == "DOWN":
+        dir_mult = -1.0
+    else:
+        dir_mult = 0.0  # FLAT = no directional move
+
+    # Scale by confidence (how sure the model is)
+    move_pct = base_pct * dir_mult * confidence
+
+    # Build trajectory points
+    now = int(time.time())
+    candle_start = (now // candle_sec) * candle_sec
+    last_candle_time = candle_start  # Current candle's open time
+
+    trajectory = []
+    current_price = price
+    for i in range(1, steps + 1):
+        future_time = last_candle_time + (i * candle_sec)
+        # Apply move with slight diminishing returns (uncertainty grows)
+        decay = 1.0 / (1.0 + 0.1 * i)  # Confidence decays slightly per step
+        current_price = current_price * (1.0 + move_pct * decay)
+        trajectory.append({
+            "time": future_time,
+            "value": round(current_price, 2),
+        })
+
+    data = _sanitize_for_json({
+        "trajectory": trajectory,
+        "anchor": {"time": last_candle_time, "value": round(price, 2)},
+        "direction": direction,
+        "confidence": round(confidence, 4),
+        "probabilities": probabilities,
+        "model": "SmallJamba",
+        "steps": steps,
+        "interval": interval,
+    })
+    return JSONResponse(content=data)
+
+
 # ===== Phase 3: Feature Importance =====
 @app.get("/api/feature-importance")
 def get_feature_importance():

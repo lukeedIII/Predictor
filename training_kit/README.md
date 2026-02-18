@@ -1,6 +1,6 @@
 # ⚡ Nexus Training Kit
 
-> **BTC Transformer Model Trainer** — Train, tune, and deploy neural networks for the Nexus Shadow-Quant prediction engine.
+> **Jamba Model Trainer** — Train SmallJamba, LiteJamba, or MediumJamba for the Nexus Shadow-Quant prediction engine.
 
 ---
 
@@ -8,14 +8,22 @@
 
 A standalone training suite that downloads real Bitcoin data (4M+ candles, 2017–2025) from HuggingFace and trains transformer neural networks to predict price direction — all from a premium web dashboard.
 
-### Built-in Architectures
+### Built-in Architectures (Jamba Hybrid SSM)
 
 | Architecture | Parameters | VRAM | Description |
 |:---|:---|:---|:---|
-| SmallTransformer | 3.2M | 0.2 GB | 4-layer, d256, 8 heads — fast, low VRAM |
-| MediumTransformer | 19M | 0.6 GB | 6-layer, d512, 8 heads — balanced |
-| MidLargeTransformer | 32M | 1.5 GB | 8-layer, d768, 12 heads — higher capacity |
-| NexusTransformer | 152M | 2.5 GB | 12-layer, d1024, 16 heads — maximum capacity |
+| SmallJamba | 4.4M | 0.2 GB | 3 Mamba + 1 Attention + MoE (top-1) — fast, low VRAM |
+| LiteJamba | ~12M | 0.5 GB | 5 Mamba + 1 Attention + MoE (top-1) — balanced |
+| MediumJamba | ~28M | 1.2 GB | 6 Mamba + 2 Attention + MoE (top-2) — higher capacity |
+
+### Standalone Training (CLI)
+
+```powershell
+cd desktop\python_backend
+python train_mamba.py --arch small --skip-download       # SmallJamba
+python train_mamba.py --arch lite --skip-download        # LiteJamba
+python train_mamba.py --arch medium --skip-download      # MediumJamba
+```
 
 ### V2 Features
 

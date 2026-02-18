@@ -415,6 +415,24 @@ def register_custom_arch(name, d_model=256, nhead=8, num_layers=4,
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# MAMBA (Selective State Space Model)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# Import SmallMamba from the main python_backend
+import sys
+from pathlib import Path
+_backend_dir = Path(__file__).parent.parent / "desktop" / "python_backend"
+if _backend_dir.exists() and str(_backend_dir) not in sys.path:
+    sys.path.insert(0, str(_backend_dir))
+
+try:
+    from mamba_model import SmallMamba
+    _MAMBA_AVAILABLE = True
+except ImportError:
+    _MAMBA_AVAILABLE = False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # MODEL FACTORY
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -431,4 +449,8 @@ ARCH_INFO = {
     'midlarge_transformer': {'params': '32M',   'vram_gb': 1.5, 'desc': '8L, d768, 12H — high capacity'},
     'nexus_transformer':    {'params': '152M',  'vram_gb': 2.5, 'desc': '12L, d1024, 16H — maximum power'},
 }
+
+if _MAMBA_AVAILABLE:
+    ARCHITECTURES['small_mamba'] = SmallMamba
+    ARCH_INFO['small_mamba'] = {'params': '2.5M', 'vram_gb': 0.15, 'desc': '4 blocks, d256, SSM — linear-time'}
 

@@ -495,6 +495,11 @@ try:
 except ImportError:
     NexusTransformer = None
 
+try:
+    from mamba_model import SmallMamba
+except ImportError:
+    SmallMamba = None
+
 ARCHITECTURES = {
     'small_transformer': SmallTransformer,
     'medium_transformer': MediumTransformer,
@@ -504,6 +509,8 @@ ARCHITECTURES = {
 }
 if NexusTransformer is not None:
     ARCHITECTURES['nexus_transformer'] = NexusTransformer
+if SmallMamba is not None:
+    ARCHITECTURES['small_mamba'] = SmallMamba
 
 
 def get_model(arch_name: str, input_size: int = 42) -> nn.Module:
