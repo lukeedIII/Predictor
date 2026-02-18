@@ -159,7 +159,7 @@ def check_gpu():
         import torch
         if torch.cuda.is_available():
             name = torch.cuda.get_device_name(0)
-            vram = torch.cuda.get_device_properties(0).total_mem / 1024**3
+            vram = torch.cuda.get_device_properties(0).total_memory / 1024**3
             console.print(f"  ✅  GPU: {name} ({vram:.1f} GB VRAM)", style=SUCCESS)
             return True
         else:
@@ -167,6 +167,9 @@ def check_gpu():
             return False
     except ImportError:
         console.print("  ⚠️   PyTorch not installed yet", style=WARN)
+        return False
+    except Exception as e:
+        console.print(f"  ⚠️   GPU check error: {e}", style=WARN)
         return False
 
 
@@ -453,25 +456,36 @@ def mode_training_kit():
 
 def main():
     while True:
-        console.clear()
+        try:
+            console.clear()
+        except Exception:
+            os.system('cls')
         show_banner()
         show_menu()
 
-        choice = Prompt.ask(
-            f"\n  [{BRAND_COLOR}]Enter choice[/]",
-            choices=["1", "2", "3", "4"],
-            default="1",
-        )
-
-        if choice == "1":
-            mode_trade()
-        elif choice == "2":
-            mode_train()
-        elif choice == "3":
-            mode_training_kit()
-        elif choice == "4":
+        try:
+            choice = Prompt.ask(
+                f"\n  [{BRAND_COLOR}]Enter choice[/]",
+                choices=["1", "2", "3", "4"],
+                default="1",
+            )
+        except (EOFError, KeyboardInterrupt):
             console.print(f"\n  [{BRAND_COLOR}]Goodbye! 👋[/]\n")
             break
+
+        try:
+            if choice == "1":
+                mode_trade()
+            elif choice == "2":
+                mode_train()
+            elif choice == "3":
+                mode_training_kit()
+            elif choice == "4":
+                console.print(f"\n  [{BRAND_COLOR}]Goodbye! 👋[/]\n")
+                break
+        except Exception as e:
+            console.print(f"\n  [bright_red]Error: {e}[/]\n")
+            input("  Press Enter to return to menu...")
 
 
 if __name__ == "__main__":
