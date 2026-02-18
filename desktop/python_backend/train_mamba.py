@@ -397,8 +397,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
     val_ds = TimeSeriesDataset(X_val, y_val, seq_len=SEQ_LEN, stride=1)
 
     # Batch size auto-tuned per model size. RTX 5080 (16GB) target: ~12-13GB.
-    BATCH_SIZES = {"small": 160, "lite": 96, "medium": 48}
-    batch_size = BATCH_SIZES.get(arch, 96)
+    BATCH_SIZES = {"small": 160, "lite": 96, "medium": 48, "large": 24}
+    batch_size = BATCH_SIZES.get(arch, 48)
     grad_accum = max(1, 800 // batch_size)  # Keep effective batch ~800
 
     train_loader = torch.utils.data.DataLoader(
@@ -705,8 +705,8 @@ def main():
         description="Train Jamba (Hybrid SSM) — Small, Lite, or Medium"
     )
     parser.add_argument('--arch', type=str, default='small',
-                        choices=['small', 'lite', 'medium'],
-                        help='Jamba size: small (4.4M), lite (~12M), medium (~28M)')
+                        choices=['small', 'lite', 'medium', 'large'],
+                        help='Jamba size: small (4.4M), lite (~12M), medium (~28M), large (~60M)')
     parser.add_argument('--skip-download', action='store_true')
     parser.add_argument('--epochs', type=int, default=15)
     parser.add_argument('--lr', type=float, default=1e-4)
@@ -726,7 +726,7 @@ def main():
     if args.output is None:
         args.output = f"nexus_{args.arch}_jamba_v1.pth"
 
-    arch_labels = {"small": "SmallJamba", "lite": "LiteJamba", "medium": "MediumJamba"}
+    arch_labels = {"small": "SmallJamba", "lite": "LiteJamba", "medium": "MediumJamba", "large": "LargeJamba"}
     label = arch_labels[args.arch]
 
     log.info("═" * 60)

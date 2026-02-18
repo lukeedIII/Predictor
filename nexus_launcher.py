@@ -119,6 +119,7 @@ def show_arch_menu():
     table.add_row("[1]", "SmallJamba", "4.4M", "Default • ultra-low VRAM")
     table.add_row("[2]", "LiteJamba ⚗️", "~12M", "Experimental • 2021-2026 only")
     table.add_row("[3]", "MediumJamba", "~28M", "Higher capacity")
+    table.add_row("[4]", "LargeJamba 🔥", "~60M", "Maximum • needs 12+ GB VRAM")
 
     console.print(Panel(table, title=f"[bold {ACCENT}]Select Architecture[/]",
                         border_style=ACCENT, padding=(1, 2)))
@@ -368,14 +369,14 @@ def mode_train():
     console.print(Rule(f"[{ACCENT}]Architecture[/]"))
     show_arch_menu()
 
-    arch_map = {"1": "small", "2": "lite", "3": "medium"}
+    arch_map = {"1": "small", "2": "lite", "3": "medium", "4": "large"}
     choice = Prompt.ask(
         f"  [{ACCENT}]Select model[/]",
-        choices=["1", "2", "3"],
+        choices=["1", "2", "3", "4"],
         default="1",
     )
     arch = arch_map[choice]
-    arch_labels = {"small": "SmallJamba", "lite": "LiteJamba ⚗️", "medium": "MediumJamba"}
+    arch_labels = {"small": "SmallJamba", "lite": "LiteJamba ⚗️", "medium": "MediumJamba", "large": "LargeJamba 🔥"}
 
     console.print(f"\n  Selected: [bold]{arch_labels[arch]}[/] (--arch {arch})", style=ACCENT)
 

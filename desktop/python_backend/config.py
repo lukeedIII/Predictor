@@ -112,6 +112,15 @@ MODEL_ARCHITECTURES = {
         "pretrained_file": "nexus_medium_jamba_v1.pth",
         "jamba_size": "medium",
     },
+    "large_jamba": {
+        "label": "LargeJamba (60M)",
+        "params": "~60M",
+        "vram_gb": 3.5,
+        "description": "9 Mamba + 3 Attention + MoE (8 experts, top-2). Maximum capacity.",
+        "model_file": "nexus_large_jamba_v1.pth",
+        "pretrained_file": "nexus_large_jamba_v1.pth",
+        "jamba_size": "large",
+    },
     # Legacy — kept for backward compat if old .pth exists
     "small_mamba": {
         "label": "SmallJamba (Hybrid SSM)",

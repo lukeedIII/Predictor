@@ -546,7 +546,7 @@ class SmallJamba(nn.Module):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# JAMBA SIZE CONFIGS — Small / Lite / Medium
+# JAMBA SIZE CONFIGS — Small / Lite / Medium / Large
 # ═══════════════════════════════════════════════════════════════════════════
 
 JAMBA_CONFIGS = {
@@ -589,6 +589,19 @@ JAMBA_CONFIGS = {
         "n_experts": 6,
         "top_k": 2,
     },
+    "large": {
+        "label": "LargeJamba",
+        "d_model": 768,
+        "n_layers": 12,     # 9 Mamba + 3 Attention
+        "d_state": 16,
+        "d_conv": 4,
+        "expand": 2,
+        "dropout": 0.08,
+        "n_heads": 12,
+        "n_kv_groups": 4,    # GQA: 12 heads / 4 groups = 3 heads per KV group
+        "n_experts": 8,
+        "top_k": 2,
+    },
 }
 
 
@@ -596,7 +609,7 @@ def create_jamba(size: str = "small", input_size: int = 42, num_classes: int = 3
     """Factory function to create a Jamba model of the specified size.
 
     Args:
-        size: 'small', 'lite', or 'medium'
+        size: 'small', 'lite', 'medium', or 'large'
         input_size: Number of input features (default: 42)
         num_classes: 1 for binary, 3 for UP/FLAT/DOWN classification
 

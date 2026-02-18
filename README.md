@@ -170,7 +170,8 @@ All models use the **Jamba architecture** (AI21 Labs, 2024) adapted for financia
 |:------|:-------|:-----|:-------|:----|:---------|
 | **SmallJamba** | 4.4M | ~0.2 GB | 3 Mamba + 1 Attention | 4 experts, top-1 | Low VRAM, fast inference |
 | **LiteJamba** ⚗️ | ~12M | ~0.5 GB | 5 Mamba + 1 Attention | 4 experts, top-1 | **Experimental** — 2021-2026 only |
-| **MediumJamba** | ~28M | ~1.2 GB | 6 Mamba + 2 Attention | 6 experts, top-2 | Maximum capacity |
+| **MediumJamba** | ~28M | ~1.2 GB | 6 Mamba + 2 Attention | 6 experts, top-2 | Balanced capacity |
+| **LargeJamba** 🔥 | ~60M | ~3.5 GB | 9 Mamba + 3 Attention | 8 experts, top-2 | Maximum capacity |
 
 > **⚗️ LiteJamba is experimental:** trained exclusively on 2021-2026 data. The model has **never seen 2018-2020** (pre-bull-run era), making that period a true out-of-distribution (OOD) test set. This tests whether recent market regime knowledge generalizes without historical anchoring.
 
@@ -192,8 +193,9 @@ LiteJamba says:  DOWN (60%)  ┘
 GPU memory requirements for common combinations:
 - Small alone: ~0.2 GB
 - Small + Lite: ~0.7 GB
-- Small + Lite + Medium: ~1.9 GB
-- All three: fits comfortably on any modern GPU (4 GB+)
+- Small + Medium: ~1.4 GB
+- Small + Large: ~3.7 GB
+- All four: ~5.4 GB — fits on any 8 GB+ GPU
 
 ### Training
 
@@ -204,6 +206,7 @@ cd desktop\python_backend
 python train_mamba.py --arch small --skip-download       # SmallJamba (~4.4M params)
 python train_mamba.py --arch lite --skip-download        # LiteJamba (~12M params)
 python train_mamba.py --arch medium --skip-download      # MediumJamba (~28M params)
+python train_mamba.py --arch large --skip-download       # LargeJamba (~60M params)
 python train_mamba.py --arch small --quick --skip-download  # Quick smoke test
 ```
 
