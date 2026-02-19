@@ -121,16 +121,6 @@ MODEL_ARCHITECTURES = {
         "pretrained_file": "nexus_large_jamba_v1.pth",
         "jamba_size": "large",
     },
-    # Legacy — kept for backward compat if old .pth exists
-    "small_mamba": {
-        "label": "SmallJamba (Hybrid SSM)",
-        "params": "4.4M",
-        "vram_gb": 0.2,
-        "description": "Legacy alias for SmallJamba. Same architecture.",
-        "model_file": "nexus_small_mamba_v1.pth",
-        "pretrained_file": "nexus_small_mamba_v1.pth",
-        "jamba_size": "small",
-    },
 }
 DEFAULT_MODEL_ARCH = "small_jamba"
 
@@ -138,7 +128,7 @@ DEFAULT_MODEL_ARCH = "small_jamba"
 BETA_FEATURES = {
     "model_selector": {
         "label": "Model Architecture Selector",
-        "description": "Choose between different Transformer architectures (SmallTransformer, MediumTransformer, etc.)",
+        "description": "Choose between different Jamba SSM architectures (Small, Lite, Medium, Large)",
         "default": False,
     },
     "pretrain": {

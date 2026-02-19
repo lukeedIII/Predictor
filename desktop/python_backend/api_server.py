@@ -966,7 +966,7 @@ def get_models():
 @app.post("/api/models/select")
 def select_model(body: dict):
     """Select a model architecture. Requires restart to take effect.
-    Body: {"arch": "small_transformer"}
+    Body: {"arch": "small_jamba"}
     """
     arch = body.get("arch", "")
     if arch not in config.MODEL_ARCHITECTURES:
@@ -981,7 +981,7 @@ def select_model(body: dict):
             if free < required_vram:
                 return {
                     "status": "warning",
-                    "message": f"⚠️ {arch} needs {required_vram} GB VRAM but only {free:.1f} GB free. Model will auto-fallback to small_transformer at startup.",
+                    "message": f"⚠️ {arch} needs {required_vram} GB VRAM but only {free:.1f} GB free. Model will auto-fallback to {config.DEFAULT_MODEL_ARCH} at startup.",
                     "arch": arch,
                 }
         except Exception:

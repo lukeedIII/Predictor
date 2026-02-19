@@ -368,6 +368,10 @@ type ModelInfo = {
     file_size_mb: number;
     vram_ok: boolean;
     is_active: boolean;
+    best_checkpoint_acc: number | null;
+    epochs_trained: number;
+    checkpoint_count: number;
+    checkpoints: { epoch: number; accuracy: number; filename: string }[];
 };
 
 type ModelsResponse = {
@@ -558,6 +562,70 @@ function ModelSelector() {
                         <div style={{ fontSize: 11, color: 'var(--text-2)', marginLeft: 24, marginBottom: 4 }}>
                             {m.description}
                         </div>
+
+                        {/* Checkpoint Accuracy Stats */}
+                        {m.best_checkpoint_acc != null && m.best_checkpoint_acc > 0 ? (
+                            <div style={{
+                                marginLeft: 24, marginBottom: 4, padding: '6px 10px',
+                                borderRadius: 6, background: 'rgba(34,197,94,0.06)',
+                                border: '1px solid rgba(34,197,94,0.12)',
+                                display: 'flex', alignItems: 'center', gap: 12,
+                            }}>
+                                <div style={{ display: 'flex', alignItems: 'baseline', gap: 4 }}>
+                                    <span style={{ fontSize: 16, fontWeight: 700, color: '#22c55e' }}>
+                                        {m.best_checkpoint_acc.toFixed(1)}%
+                                    </span>
+                                    <span style={{ fontSize: 9, color: 'var(--text-3)' }}>best acc</span>
+                                </div>
+                                <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.08)' }} />
+                                <div style={{ fontSize: 10, color: 'var(--text-3)' }}>
+                                    {m.epochs_trained} epoch{m.epochs_trained !== 1 ? 's' : ''}
+                                </div>
+                                <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.08)' }} />
+                                <div style={{ fontSize: 10, color: 'var(--text-3)' }}>
+                                    {m.checkpoint_count} checkpoint{m.checkpoint_count !== 1 ? 's' : ''}
+                                </div>
+                                {/* Mini sparkline of checkpoint accuracy progression */}
+                                {m.checkpoints.length > 1 && (
+                                    <div style={{
+                                        marginLeft: 'auto', display: 'flex', alignItems: 'flex-end',
+                                        gap: 1, height: 16,
+                                    }}>
+                                        {m.checkpoints.slice(-8).map((ck, i) => {
+                                            const min = Math.min(...m.checkpoints.slice(-8).map(c => c.accuracy));
+                                            const max = Math.max(...m.checkpoints.slice(-8).map(c => c.accuracy));
+                                            const range = max - min || 1;
+                                            const h = Math.max(3, ((ck.accuracy - min) / range) * 14);
+                                            return (
+                                                <div key={i} title={`Epoch ${ck.epoch}: ${ck.accuracy}%`}
+                                                    style={{
+                                                        width: 3, height: h, borderRadius: 1,
+                                                        background: i === m.checkpoints.slice(-8).length - 1
+                                                            ? '#22c55e' : 'rgba(34,197,94,0.35)',
+                                                        transition: 'height 0.3s',
+                                                    }}
+                                                />
+                                            );
+                                        })}
+                                    </div>
+                                )}
+                            </div>
+                        ) : m.has_weights ? (
+                            <div style={{
+                                marginLeft: 24, marginBottom: 4, fontSize: 10,
+                                color: 'var(--text-3)', fontStyle: 'italic',
+                            }}>
+                                Weights loaded — no checkpoint accuracy data yet
+                            </div>
+                        ) : (
+                            <div style={{
+                                marginLeft: 24, marginBottom: 4, fontSize: 10,
+                                color: 'var(--text-3)', fontStyle: 'italic',
+                            }}>
+                                Not trained yet — train to see accuracy stats
+                            </div>
+                        )}
+
                         {m.file_size_mb > 0 && (
                             <div style={{ fontSize: 10, color: 'var(--text-3)', marginLeft: 24 }}>
                                 💾 {m.file_size_mb} MB on disk

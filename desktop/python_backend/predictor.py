@@ -46,25 +46,28 @@ except ImportError:
 # ========== DEEP MODEL SEQUENCE LENGTH ==========
 DEEP_SEQ_LEN = 30  # 30 timesteps per sample — Transformer processes temporal windows
 
-# ========== MULTI-ARCHITECTURE SUPPORT ==========
-# Import right-sized model classes from pretrain_multi_arch.py
+# ========== MULTI-ARCHITECTURE SUPPORT (Jamba SSM) ==========
+# Import Jamba models from mamba_model.py — all sizes use create_jamba() factory
 try:
-    from pretrain_multi_arch import SmallTransformer, MediumTransformer, MidLargeTransformer
-    MULTI_ARCH_AVAILABLE = True
+    from mamba_model import create_jamba
+    JAMBA_AVAILABLE = True
 except ImportError:
-    MULTI_ARCH_AVAILABLE = False
-    logging.warning("Multi-architecture models not available (pretrain_multi_arch.py missing)")
+    JAMBA_AVAILABLE = False
+    logging.warning("Jamba models not available (mamba_model.py missing)")
 
-# Model class registry — maps config key → nn.Module class
+# Model class registry — maps config key → nn.Module constructor
+# Legacy NexusTransformer kept for backward compat if old .pth exists
 MODEL_CLASS_REGISTRY = {
     "nexus_transformer": lambda input_size: NexusTransformer(input_size=input_size),
 }
-if MULTI_ARCH_AVAILABLE:
-    MODEL_CLASS_REGISTRY.update({
-        "small_transformer": lambda input_size: SmallTransformer(input_size=input_size),
-        "medium_transformer": lambda input_size: MediumTransformer(input_size=input_size),
-        "midlarge_transformer": lambda input_size: MidLargeTransformer(input_size=input_size),
-    })
+if JAMBA_AVAILABLE:
+    # All Jamba variants use the same SmallJamba class with different configs
+    for _jamba_key, _jamba_info in config.MODEL_ARCHITECTURES.items():
+        if 'jamba_size' in _jamba_info:
+            _size = _jamba_info['jamba_size']
+            MODEL_CLASS_REGISTRY[_jamba_key] = (
+                lambda input_size, s=_size: create_jamba(size=s, input_size=input_size, num_classes=1)
+            )
 
 
 def _get_model_arch_from_settings() -> str:
@@ -412,9 +415,9 @@ class NexusPredictor:
             logging.warning(
                 f"⚠️ Insufficient VRAM for {self.active_arch}: needs {vram_required} GB, "
                 f"only {vram_free} GB free of {vram_total} GB total. "
-                f"Falling back to small_transformer."
+                f"Falling back to {config.DEFAULT_MODEL_ARCH}."
             )
-            self.active_arch = 'small_transformer'
+            self.active_arch = config.DEFAULT_MODEL_ARCH
         
         # Instantiate the correct model class
         if self.active_arch in MODEL_CLASS_REGISTRY:
