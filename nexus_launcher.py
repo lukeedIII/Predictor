@@ -22,7 +22,7 @@ from pathlib import Path
 ROOT = Path(__file__).parent.resolve()
 DESKTOP = ROOT / "desktop"
 BACKEND = DESKTOP / "python_backend"
-TRAINING_KIT = ROOT / "training_kit"
+TRAINING_KIT = BACKEND / "training_kit"
 VENV_DIR = BACKEND / "venv"
 VENV_PYTHON = VENV_DIR / "Scripts" / "python.exe"
 VENV_PIP = VENV_DIR / "Scripts" / "pip.exe"
@@ -383,12 +383,18 @@ def mode_train():
     # Training options
     console.print(Rule(f"[{ACCENT}]Training Options[/]"))
 
-    epochs = Prompt.ask(f"  [{ACCENT}]Epochs[/]", default="15")
+    epochs = Prompt.ask(f"  [{ACCENT}]Epochs[/]", default="25")
+    lr = Prompt.ask(f"  [{ACCENT}]Learning rate[/]", default="1e-4")
+    stride = Prompt.ask(f"  [{ACCENT}]Window stride[/]", default="5")
     quick = Prompt.ask(f"  [{ACCENT}]Quick test mode? (100K rows, 2 epochs)[/]", choices=["y", "n"], default="n")
     skip_dl = Prompt.ask(f"  [{ACCENT}]Skip data download? (if you already have data)[/]", choices=["y", "n"], default="y")
 
+    # Set CUDA memory allocator for reduced fragmentation
+    os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
     # Build command
-    cmd = [sys.executable, "train_mamba.py", "--arch", arch, "--epochs", epochs]
+    cmd = [sys.executable, "train_mamba.py", "--arch", arch, "--epochs", epochs,
+           "--lr", lr, "--stride", stride]
     if quick == "y":
         cmd.append("--quick")
     if skip_dl == "y":
