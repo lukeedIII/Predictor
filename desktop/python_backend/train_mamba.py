@@ -869,6 +869,8 @@ def main():
                         help='Feature dropout fraction (default: 0.15)')
     parser.add_argument('--stride', type=int, default=5)
     parser.add_argument('--no-revin', action='store_true')
+    parser.add_argument('--no-cache', action='store_true',
+                        help='Force re-engineer features (ignore cache)')
     args = parser.parse_args()
 
     # Auto-set output filename from arch
@@ -897,73 +899,104 @@ def main():
     else:
         log.info("⏭️  Skipping download (--skip-download)")
 
-    # ── Step 2: Load data ──
+    # ── Step 2: Load data (with feature cache) ──
     parquet_files = list(DATA_DIR.glob("*.parquet"))
     if not parquet_files:
         log.error("❌ No parquet files. Run without --skip-download first.")
         sys.exit(1)
 
-    log.info(f"Loading {len(parquet_files)} dataset file(s)...")
-    dfs = []
+    # Build a cache key from source files + settings so cache auto-invalidates
+    import hashlib
+    cache_parts = []
     for fp in sorted(parquet_files):
-        df = pd.read_parquet(fp)
-        log.info(f"  📄 {fp.name}: {len(df):,} rows, {len(df.columns)} columns")
-        cq_cols = [c for c in df.columns if c.startswith('cq_')]
-        if cq_cols:
-            log.info(f"     Shifting {len(cq_cols)} on-chain columns by +1440 min")
-            df[cq_cols] = df[cq_cols].shift(1440)
-        dfs.append(df)
+        cache_parts.append(f"{fp.name}:{fp.stat().st_size}")
+    cache_parts.append(f"arch:{args.arch}")
+    cache_parts.append(f"threshold:{PRICE_THRESHOLD}")
+    cache_parts.append(f"quick:{args.quick}")
+    cache_key = hashlib.md5("|".join(cache_parts).encode()).hexdigest()[:12]
+    cache_path = DATA_DIR / f".feature_cache_{cache_key}.pkl"
 
-    df = max(dfs, key=len)
-    log.info(f"Primary dataset: {len(df):,} rows")
+    if cache_path.exists() and not args.no_cache:
+        # ── FAST PATH: load cached features ──
+        log.info(f"⚡ Loading cached features from {cache_path.name}...")
+        t0 = time.time()
+        cached = pickle.loads(cache_path.read_bytes())
+        df = cached["df"]
+        feature_cols = cached["feature_cols"]
+        elapsed = time.time() - t0
+        log.info(f"✅ Cache loaded in {elapsed:.1f}s — {len(df):,} rows, "
+                 f"{len(feature_cols)} features (skipped ~3 min of feature engineering)")
+    else:
+        # ── SLOW PATH: full feature engineering ──
+        if args.no_cache:
+            log.info("🔄 --no-cache flag: re-engineering features from scratch")
 
-    if args.quick:
-        df = df.head(100_000)
-        args.epochs = 2
-        log.info(f"⚡ Quick mode: {len(df):,} rows, {args.epochs} epochs")
+        log.info(f"Loading {len(parquet_files)} dataset file(s)...")
+        dfs = []
+        for fp in sorted(parquet_files):
+            pf = pd.read_parquet(fp)
+            log.info(f"  📄 {fp.name}: {len(pf):,} rows, {len(pf.columns)} columns")
+            cq_cols = [c for c in pf.columns if c.startswith('cq_')]
+            if cq_cols:
+                log.info(f"     Shifting {len(cq_cols)} on-chain columns by +1440 min")
+                pf[cq_cols] = pf[cq_cols].shift(1440)
+            dfs.append(pf)
 
-    # ── LiteJamba: experimental date filter (2021-2026 only) ──
-    if args.arch == 'lite':
-        if 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'])
-            n_before = len(df)
-            df = df[df['date'] >= '2021-01-01'].reset_index(drop=True)
-            n_dropped = n_before - len(df)
-            log.info(f"⚗️  LiteJamba date filter: kept {len(df):,} rows (2021+), "
-                     f"dropped {n_dropped:,} pre-2021 rows")
-            log.info(f"   Never-seen data: 2017-08 → 2020-12 ({n_dropped:,} candles = OOD test set)")
-        else:
-            log.warning("⚠️  No 'date' column found — skipping date filter")
+        df = max(dfs, key=len)
+        log.info(f"Primary dataset: {len(df):,} rows")
 
-    # ── Step 3: Feature engineering ──
-    # NOTE: engineer_features() internally drops neutral rows (±0.1%).
-    # This removes ~1.7M rows, but all remaining rows have valid features
-    # and maintain correct chronological order. We then overwrite the
-    # binary target with our 3-class target (Fix #2).
-    sys.path.insert(0, str(SCRIPT_DIR))
-    from pretrain_transformer import engineer_features
+        if args.quick:
+            df = df.head(100_000)
+            args.epochs = 2
+            log.info(f"⚡ Quick mode: {len(df):,} rows, {args.epochs} epochs")
 
-    log.info(f"Engineering features from {len(df):,} rows...")
-    n_before_eng = len(df)
-    df, feature_cols = engineer_features(df)
-    n_after_eng = len(df)
-    log.info(f"After feature engineering: {n_after_eng:,} rows "
-             f"({n_before_eng - n_after_eng:,} warmup/neutral rows removed)")
+        # ── LiteJamba: experimental date filter (2021-2026 only) ──
+        if args.arch == 'lite':
+            if 'date' in df.columns:
+                df['date'] = pd.to_datetime(df['date'])
+                n_before = len(df)
+                df = df[df['date'] >= '2021-01-01'].reset_index(drop=True)
+                n_dropped = n_before - len(df)
+                log.info(f"⚗️  LiteJamba date filter: kept {len(df):,} rows (2021+), "
+                         f"dropped {n_dropped:,} pre-2021 rows")
+                log.info(f"   Never-seen data: 2017-08 → 2020-12 ({n_dropped:,} candles = OOD test set)")
+            else:
+                log.warning("⚠️  No 'date' column found — skipping date filter")
 
-    # ── FIX #3: Drop simulated features, merge real data ──
-    dropped = [f for f in SIMULATED_FEATURES if f in feature_cols]
-    feature_cols = [f for f in feature_cols if f not in SIMULATED_FEATURES]
-    log.info(f"🗑️  Dropped {len(dropped)} simulated features: {dropped}")
+        # ── Step 3: Feature engineering ──
+        sys.path.insert(0, str(SCRIPT_DIR))
+        from pretrain_transformer import engineer_features
 
-    # Merge real cross-asset data
-    df, new_features = merge_real_cross_assets(df)
-    feature_cols.extend(new_features)
-    log.info(f"📊 Final feature set: {len(feature_cols)} features")
+        log.info(f"Engineering features from {len(df):,} rows...")
+        n_before_eng = len(df)
+        df, feature_cols = engineer_features(df)
+        n_after_eng = len(df)
+        log.info(f"After feature engineering: {n_after_eng:,} rows "
+                 f"({n_before_eng - n_after_eng:,} warmup/neutral rows removed)")
 
-    # Clean any NaN/inf in new features
-    for col in new_features:
-        if col in df.columns:
-            df[col] = df[col].replace([np.inf, -np.inf], 0).fillna(0)
+        # ── FIX #3: Drop simulated features, merge real data ──
+        dropped = [f for f in SIMULATED_FEATURES if f in feature_cols]
+        feature_cols = [f for f in feature_cols if f not in SIMULATED_FEATURES]
+        log.info(f"🗑️  Dropped {len(dropped)} simulated features: {dropped}")
+
+        # Merge real cross-asset data
+        df, new_features = merge_real_cross_assets(df)
+        feature_cols.extend(new_features)
+        log.info(f"📊 Final feature set: {len(feature_cols)} features")
+
+        # Clean any NaN/inf in new features
+        for col in new_features:
+            if col in df.columns:
+                df[col] = df[col].replace([np.inf, -np.inf], 0).fillna(0)
+
+        # ── Save cache for next run ──
+        log.info(f"💾 Saving feature cache to {cache_path.name}...")
+        t0 = time.time()
+        cache_path.write_bytes(pickle.dumps({
+            "df": df, "feature_cols": feature_cols,
+        }, protocol=pickle.HIGHEST_PROTOCOL))
+        cache_mb = cache_path.stat().st_size / 1024 / 1024
+        log.info(f"✅ Cache saved ({cache_mb:.0f} MB) — next run will skip feature engineering")
 
     # ── FIX #2: Create 3-class target (overwrites binary target) ──
     df = create_3class_target(df)
