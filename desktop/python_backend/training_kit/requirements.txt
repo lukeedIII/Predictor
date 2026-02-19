@@ -1,0 +1,9 @@
+# BaseJamba Training Kit — Requirements
+# Install: pip install -r requirements.txt
+# Tested with Python 3.12+ and CUDA 12.x
+
+torch>=2.4.0
+numpy>=1.26
+pandas>=2.0
+scikit-learn>=1.4
+huggingface-hub>=0.20
