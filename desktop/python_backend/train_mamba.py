@@ -336,7 +336,7 @@ class TimeSeriesDataset(torch.utils.data.Dataset):
 # GPU AUTO BATCH SIZE (probes real forward+backward pass)
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _auto_batch_size(arch: str, n_features: int, device, target_vram_frac: float = 0.55):
+def _auto_batch_size(arch: str, n_features: int, device, target_vram_frac: float = 0.40):
     """Find the largest batch size that fits in target_vram_frac of GPU memory.
 
     Uses binary search with FULL forward+backward+optimizer.step() to capture
@@ -421,7 +421,7 @@ def _auto_batch_size(arch: str, n_features: int, device, target_vram_frac: float
 
         # Round down to multiple of 8, then apply 80% safety margin
         best_batch = max(8, (best_batch // 8) * 8)
-        best_batch = max(8, int(best_batch * 0.80))  # 20% safety margin
+        best_batch = max(8, int(best_batch * 0.65))  # 35% safety margin for fragmentation
         best_batch = (best_batch // 8) * 8  # re-align
 
         log.info(f"✅ Auto batch size: {best_batch} "
