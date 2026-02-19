@@ -333,99 +333,96 @@ class TimeSeriesDataset(torch.utils.data.Dataset):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# GPU AUTO BATCH SIZE (probes real forward+backward pass)
+# GPU AUTO BATCH SIZE — uses torch.cuda.mem_get_info() for REAL measurement
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _auto_batch_size(arch: str, n_features: int, device, target_vram_frac: float = 0.40):
-    """Find the largest batch size that fits in target_vram_frac of GPU memory.
+def _auto_batch_size(arch: str, n_features: int, device):
+    """Find the largest batch size that keeps real GPU VRAM under 70% of total.
 
-    Uses binary search with FULL forward+backward+optimizer.step() to capture
-    all real VRAM usage including Adam optimizer states (2x model params).
+    Uses torch.cuda.mem_get_info() which reads ACTUAL free/total memory from
+    the GPU driver — unlike max_memory_allocated() which only tracks the
+    Python-side view and misses the CUDA caching allocator overhead.
     """
     from mamba_model import create_jamba
 
-    total_vram = torch.cuda.get_device_properties(0).total_memory
-    target_bytes = int(total_vram * target_vram_frac)
-    total_gb = total_vram / 1024**3
-
-    log.info(f"🔍 Auto-tuning batch size for {arch} on {total_gb:.0f} GB GPU "
-             f"(target: {target_vram_frac:.0%} = {target_bytes / 1024**3:.1f} GB)...")
-
-    # Safe fallbacks
     SAFE_DEFAULTS = {"small": 64, "lite": 48, "medium": 32, "large": 16}
 
     try:
-        torch.cuda.empty_cache()
-        torch.cuda.reset_peak_memory_stats()
+        free_start, total = torch.cuda.mem_get_info()
+        total_gb = total / 1024**3
+        # We want to keep 30% of total VRAM free (OS, display, other apps)
+        max_usable = int(total * 0.70)
 
-        # Create temp model + optimizer + scaler (full pipeline)
+        log.info(f"🔍 Auto batch size: {arch} on {total_gb:.1f} GB GPU "
+                 f"(max usable: {max_usable / 1024**3:.1f} GB, "
+                 f"free now: {free_start / 1024**3:.1f} GB)")
+
+        torch.cuda.empty_cache()
+
+        # Step 1: Load model + optimizer + do one step (baseline memory)
         probe_model = create_jamba(size=arch, input_size=n_features, num_classes=3).to(device)
-        probe_optimizer = torch.optim.AdamW(probe_model.parameters(), lr=1e-4)
+        probe_opt = torch.optim.AdamW(probe_model.parameters(), lr=1e-4)
         probe_scaler = GradScaler()
 
-        # First: warm up optimizer states with a tiny batch so Adam buffers are allocated
+        # Warm up optimizer states (Adam allocates 2x params on first step)
         probe_model.train()
-        probe_optimizer.zero_grad(set_to_none=True)
-        tiny_x = torch.randn(2, SEQ_LEN, n_features, device=device)
+        tiny = torch.randn(2, SEQ_LEN, n_features, device=device)
         tiny_y = torch.randint(0, 3, (2,), device=device)
         with autocast('cuda', dtype=torch.float16):
-            out = probe_model(tiny_x, return_logits=True)
-            lo_ss = nn.CrossEntropyLoss()(out, tiny_y)
-        probe_scaler.scale(lo_ss).backward()
-        probe_scaler.step(probe_optimizer)  # <-- allocates Adam state buffers
+            out = probe_model(tiny, return_logits=True)
+            loss = nn.CrossEntropyLoss()(out, tiny_y)
+        probe_scaler.scale(loss).backward()
+        probe_scaler.step(probe_opt)
         probe_scaler.update()
-        del tiny_x, tiny_y, out, lo_ss
+        del tiny, tiny_y, out, loss
+        probe_opt.zero_grad(set_to_none=True)
         torch.cuda.empty_cache()
 
-        # Now binary search with optimizer states already in memory
-        lo, hi = 16, 512
-        best_batch = SAFE_DEFAULTS.get(arch, 32)
+        # Measure baseline: model + optimizer states sitting in VRAM
+        free_after_model, _ = torch.cuda.mem_get_info()
+        baseline_used = total - free_after_model
+        log.info(f"   Model + optimizer baseline: {baseline_used / 1024**3:.2f} GB")
 
-        while lo <= hi:
-            mid = (lo + hi) // 2
-            try:
-                torch.cuda.empty_cache()
-                torch.cuda.reset_peak_memory_stats()
-                probe_optimizer.zero_grad(set_to_none=True)
+        # Step 2: Measure per-sample cost with a known batch
+        test_batch = 16
+        torch.cuda.empty_cache()
+        free_before_fwd, _ = torch.cuda.mem_get_info()
 
-                dummy_x = torch.randn(mid, SEQ_LEN, n_features, device=device)
-                dummy_y = torch.randint(0, 3, (mid,), device=device)
+        probe_opt.zero_grad(set_to_none=True)
+        x = torch.randn(test_batch, SEQ_LEN, n_features, device=device)
+        y = torch.randint(0, 3, (test_batch,), device=device)
+        with autocast('cuda', dtype=torch.float16):
+            logits = probe_model(x, return_logits=True)
+            loss = nn.CrossEntropyLoss()(logits, y)
+        probe_scaler.scale(loss).backward()
 
-                with autocast('cuda', dtype=torch.float16):
-                    logits = probe_model(dummy_x, return_logits=True)
-                    loss = nn.CrossEntropyLoss()(logits, dummy_y)
+        free_after_fwd, _ = torch.cuda.mem_get_info()
+        batch_cost = free_before_fwd - free_after_fwd  # real bytes used for this batch
 
-                probe_scaler.scale(loss).backward()
-                probe_scaler.step(probe_optimizer)
-                probe_scaler.update()
+        del x, y, logits, loss
+        probe_opt.zero_grad(set_to_none=True)
+        torch.cuda.empty_cache()
 
-                peak = torch.cuda.max_memory_allocated()
+        # Step 3: Calculate max batch from per-sample cost
+        per_sample = max(batch_cost / test_batch, 1024)  # bytes per sample
+        available_for_batches = max_usable - baseline_used
+        max_batch = int(available_for_batches / per_sample)
 
-                del dummy_x, dummy_y, logits, loss
-                probe_optimizer.zero_grad(set_to_none=True)
-                torch.cuda.empty_cache()
-
-                if peak <= target_bytes:
-                    best_batch = mid
-                    lo = mid + 1
-                else:
-                    hi = mid - 1
-
-            except RuntimeError:  # OOM
-                hi = mid - 1
-                torch.cuda.empty_cache()
+        log.info(f"   Batch {test_batch} cost: {batch_cost / 1024**2:.0f} MB "
+                 f"({per_sample / 1024**2:.1f} MB/sample)")
+        log.info(f"   Budget for batches: {available_for_batches / 1024**3:.1f} GB")
 
         # Cleanup
-        del probe_model, probe_optimizer, probe_scaler
+        del probe_model, probe_opt, probe_scaler
         torch.cuda.empty_cache()
 
-        # Round down to multiple of 8, then apply 80% safety margin
-        best_batch = max(8, (best_batch // 8) * 8)
-        best_batch = max(8, int(best_batch * 0.65))  # 35% safety margin for fragmentation
-        best_batch = (best_batch // 8) * 8  # re-align
+        # Clamp and align
+        best_batch = max(8, min(max_batch, 512))
+        best_batch = (best_batch // 8) * 8
 
         log.info(f"✅ Auto batch size: {best_batch} "
-                 f"(target: {target_bytes / 1024**3:.1f} GB / {total_gb:.0f} GB total)")
+                 f"(target VRAM: {(baseline_used + best_batch * per_sample) / 1024**3:.1f} GB "
+                 f"/ {total_gb:.1f} GB)")
         return best_batch
 
     except Exception as e:
