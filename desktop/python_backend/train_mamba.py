@@ -657,8 +657,16 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
             epoch_correct_gpu += (preds == y_batch).sum()
             epoch_total += len(y_batch)
 
-            # Progress logging (every ~5% of epoch) — only sync here
-            log_interval = max(10, len(train_loader) // 20)
+            # ── First-batch timing (so user knows training is alive) ──
+            if batch_idx == 0 and epoch == 0:
+                first_batch_time = time.time() - t0
+                est_epoch_min = first_batch_time * len(train_loader) / 60
+                log.info(f"⏱️  First batch done in {first_batch_time:.1f}s "
+                         f"(est. epoch: ~{est_epoch_min:.0f} min, "
+                         f"{len(train_loader)} batches)")
+
+            # Progress logging (every ~5% of epoch, capped at 100 batches)
+            log_interval = max(10, min(100, len(train_loader) // 20))
             if batch_idx > 0 and batch_idx % log_interval == 0:
                 progress = batch_idx / len(train_loader) * 100
                 speed = epoch_total / (time.time() - t0)
