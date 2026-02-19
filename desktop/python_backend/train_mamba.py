@@ -34,6 +34,7 @@ References:
 import os
 import sys
 import time
+import platform
 import logging
 import argparse
 import pickle
@@ -44,6 +45,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch.amp import autocast, GradScaler
 from pathlib import Path
+from sklearn.metrics import f1_score, classification_report, confusion_matrix
 
 # ═══════════════════════════════════════════════════════════════════════════
 # SETUP
@@ -536,14 +538,22 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
 
     # torch.compile: fuses small kernels into optimized Triton kernels.
     # Requires Triton which is Linux-only. On Windows, falls back gracefully.
-    if device.type == 'cuda':
+    _compile_status = "disabled (--no-compile)"
+    _no_compile = getattr(sys, '_train_no_compile', False)
+    if device.type == 'cuda' and not _no_compile:
         try:
             import triton  # noqa: F401 — check if Triton is installed
             model = torch.compile(model, mode='max-autotune')
+            _compile_status = "✅ enabled (max-autotune + Triton)"
             log.info("🚀 torch.compile enabled (max-autotune) — first batch will be slow (compiling)")
         except (ImportError, Exception) as e:
-            log.info(f"ℹ️  torch.compile not available ({type(e).__name__}), using standard mode")
-            log.info("   (Triton requires Linux — this is normal on Windows)")
+            _os = platform.system()
+            _compile_status = f"unavailable ({_os} — no Triton)"
+            log.info(f"ℹ️  torch.compile not available on {_os} ({type(e).__name__})")
+            if _os == 'Windows':
+                log.info("   💡 Tip: run in WSL2 Ubuntu for Triton + torch.compile (5-10x faster)")
+    elif _no_compile:
+        log.info("ℹ️  torch.compile disabled by --no-compile flag")
 
     # RevIN layer
     revin = RevIN(num_features=n_features).to(device) if use_revin else None
@@ -602,7 +612,18 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
     patience_counter = 0
     patience_limit = 7
 
-    log.info(f"\n{'═' * 60}")
+    # ── Kernel & Config Banner ──
+    _fused_adamw = 'fused' if optimizer.defaults.get('fused', False) or (device.type == 'cuda') else 'standard'
+    log.info(f"\n╔══ ENGINE CONFIG {'═' * 42}╗")
+    log.info(f"║  SelectiveScan:  chunked_v2 (CHUNK=8, JIT-scripted)")
+    log.info(f"║  MoELayer:       vectorized_bmm ({model.blocks[0].moe.n_experts if hasattr(model, 'blocks') and hasattr(model.blocks[0], 'moe') and model.blocks[0].moe else '?'} experts)")
+    log.info(f"║  torch.compile:  {_compile_status}")
+    log.info(f"║  AdamW:          fused={device.type == 'cuda'}")
+    log.info(f"║  AMP:            fp16 (GradScaler)")
+    log.info(f"║  DataLoader:     {n_workers} workers, pin_memory, persistent")
+    log.info(f"║  Platform:       {platform.system()} {platform.release()}")
+    log.info(f"╚{'═' * 59}╝")
+    log.info(f"")
     log.info(f"Training Config:")
     log.info(f"  SEQ_LEN: {SEQ_LEN} (2 hours) | Threshold: ±{PRICE_THRESHOLD*100:.2f}%")
     log.info(f"  LR: {lr} | WD: 0.05 | Batch: {batch_size}×{grad_accum}={batch_size*grad_accum}")
@@ -672,16 +693,25 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
             # ── First-batch timing (so user knows training is alive) ──
             if batch_idx == 0 and epoch == 0:
                 first_batch_time = time.time() - t0
+                micro_sps = batch_size / first_batch_time
                 est_epoch_min = first_batch_time * len(train_loader) / 60
-                log.info(f"⏱️  First batch done in {first_batch_time:.1f}s "
-                         f"(est. epoch: ~{est_epoch_min:.0f} min, "
-                         f"{len(train_loader)} batches)")
+                log.info(f"⏱️  First μbatch: {first_batch_time:.2f}s "
+                         f"({micro_sps:.0f} μbatch-samples/s) "
+                         f"→ est. epoch: ~{est_epoch_min:.0f} min "
+                         f"({len(train_loader)} batches)")
 
             # Progress logging (every ~5% of epoch, capped at 100 batches)
             log_interval = max(10, min(100, len(train_loader) // 20))
             if batch_idx > 0 and batch_idx % log_interval == 0:
                 progress = batch_idx / len(train_loader) * 100
-                speed = epoch_total / (time.time() - t0)
+                elapsed_so_far = time.time() - t0
+                # Unambiguous throughput: μbatch-level and optimizer-step-level
+                micro_sps = epoch_total / elapsed_so_far
+                opt_sps = micro_sps  # same if grad_accum=1
+                if grad_accum > 1:
+                    opt_steps_done = (batch_idx + 1) // grad_accum
+                    if opt_steps_done > 0:
+                        opt_sps = (opt_steps_done * batch_size * grad_accum) / elapsed_so_far
                 current_lr = scheduler.get_last_lr()[0]
                 # Sync GPU→CPU only at log intervals (not every batch)
                 epoch_loss_val = epoch_loss_gpu.item()
@@ -694,7 +724,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 log.info(
                     f"  Epoch {epoch+1}/{epochs} | {progress:5.1f}% | "
                     f"Loss: {epoch_loss_val / (batch_idx + 1):.4f} | Acc: {epoch_correct_val/epoch_total:.1%} | "
-                    f"LR: {current_lr:.2e} | {speed:.0f} s/s | VRAM: {vram_used:.1f} GB"
+                    f"LR: {current_lr:.2e} | {micro_sps:.0f} μbatch-s/s | "
+                    f"{micro_sps/batch_size:.2f}s/μbatch | VRAM: {vram_used:.1f} GB"
                 )
 
         # ── Epoch summary (sync GPU→CPU once per epoch) ──
@@ -743,12 +774,34 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
             for c in range(NUM_CLASSES)
         )
 
+        # ── Per-class F1 metrics ──
+        val_all_preds = []
+        val_all_labels = []
+        with torch.no_grad():
+            for x_f1, y_f1 in val_loader:
+                x_f1 = x_f1.to(device, non_blocking=True)
+                with autocast('cuda', dtype=torch.float16):
+                    out_f1 = model(x_f1, return_logits=True)
+                val_all_preds.extend(out_f1.logits.argmax(dim=-1).cpu().numpy())
+                val_all_labels.extend(y_f1.numpy())
+        val_all_preds = np.array(val_all_preds)
+        val_all_labels = np.array(val_all_labels)
+        val_f1_macro = f1_score(val_all_labels, val_all_preds, average='macro', zero_division=0)
+        val_f1_per = f1_score(val_all_labels, val_all_preds, average=None, labels=[0,1,2], zero_division=0)
+        f1_str = f"DOWN={val_f1_per[0]:.3f} | FLAT={val_f1_per[1]:.3f} | UP={val_f1_per[2]:.3f}"
+
+        # Epoch throughput
+        epoch_micro_sps = epoch_total / elapsed
+
         log.info(
             f"╔══ Epoch {epoch+1}/{epochs} Complete ({arch.capitalize()}Jamba {NUM_CLASSES}-class) ════════╗\n"
             f"║  Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.1%}\n"
             f"║  Val Loss:   {avg_val_loss:.4f} | Val Acc:   {val_acc:.1%}\n"
+            f"║  Val F1 (macro): {val_f1_macro:.3f}\n"
+            f"║  Val F1 (class): {f1_str}\n"
             f"║  Preds: {pred_dist}\n"
-            f"║  Time: {elapsed:.0f}s | LR: {scheduler.get_last_lr()[0]:.2e} | Step: {global_step}\n"
+            f"║  Speed: {epoch_micro_sps:.0f} μbatch-samples/s | Time: {elapsed:.0f}s\n"
+            f"║  LR: {scheduler.get_last_lr()[0]:.2e} | Step: {global_step}\n"
             f"╚═══════════════════════════════════════════════════════════════╝"
         )
 
@@ -803,6 +856,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         if revin:
             revin.eval()
 
+        test_all_preds = []
+        test_all_labels = []
         test_correct = 0
         test_total = 0
         test_class_correct = np.zeros(NUM_CLASSES)
@@ -819,18 +874,45 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 preds = test_out.logits.argmax(dim=-1)
                 test_correct += (preds == y_t).sum().item()
                 test_total += len(y_t)
+                test_all_preds.extend(preds.cpu().numpy())
+                test_all_labels.extend(y_t.cpu().numpy())
                 for c in range(NUM_CLASSES):
                     mask = (y_t == c)
                     test_class_correct[c] += ((preds == c) & mask).sum().item()
                     test_class_total[c] += mask.sum().item()
 
+        test_all_preds = np.array(test_all_preds)
+        test_all_labels = np.array(test_all_labels)
         test_acc = test_correct / max(test_total, 1)
+
+        # Per-class F1
+        test_f1_macro = f1_score(test_all_labels, test_all_preds, average='macro', zero_division=0)
+        test_f1_per = f1_score(test_all_labels, test_all_preds, average=None, labels=[0,1,2], zero_division=0)
+
         log.info(f"📋 Test Accuracy: {test_acc:.1%} ({test_total:,} samples)")
+        log.info(f"   F1 (macro): {test_f1_macro:.3f}")
+        log.info(f"   F1 (class): DOWN={test_f1_per[0]:.3f} | FLAT={test_f1_per[1]:.3f} | UP={test_f1_per[2]:.3f}")
         for c in range(NUM_CLASSES):
             if test_class_total[c] > 0:
                 cls_acc = test_class_correct[c] / test_class_total[c]
                 log.info(f"   {CLASS_NAMES[c]:>5}: {cls_acc:.1%} "
                          f"({int(test_class_total[c]):,} samples)")
+
+        # Full classification report + confusion matrix
+        log.info(f"\n─── Classification Report (Test) ───")
+        report = classification_report(
+            test_all_labels, test_all_preds,
+            target_names=[CLASS_NAMES[c] for c in range(NUM_CLASSES)],
+            zero_division=0,
+        )
+        for line in report.strip().split('\n'):
+            log.info(f"  {line}")
+
+        cm = confusion_matrix(test_all_labels, test_all_preds, labels=[0,1,2])
+        log.info(f"\n─── Confusion Matrix (Test) ───")
+        log.info(f"  {'':>8} {'DOWN':>7} {'FLAT':>7} {'UP':>7}")
+        for i, row_name in enumerate(["DOWN", "FLAT", "UP"]):
+            log.info(f"  {row_name:>8} {cm[i,0]:>7} {cm[i,1]:>7} {cm[i,2]:>7}")
 
     # ── Final summary ──
     file_size = pretrained_path.stat().st_size / 1e6 if pretrained_path.exists() else 0
@@ -871,7 +953,12 @@ def main():
     parser.add_argument('--no-revin', action='store_true')
     parser.add_argument('--no-cache', action='store_true',
                         help='Force re-engineer features (ignore cache)')
+    parser.add_argument('--no-compile', action='store_true',
+                        help='Disable torch.compile (for debugging)')
     args = parser.parse_args()
+
+    # Pass --no-compile flag via sys module (avoids threading through all calls)
+    sys._train_no_compile = args.no_compile
 
     # Auto-set output filename from arch
     if args.output is None:
