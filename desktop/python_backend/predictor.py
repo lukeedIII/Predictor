@@ -81,14 +81,40 @@ except ImportError:
 MODEL_CLASS_REGISTRY = {
     "nexus_transformer": lambda input_size: NexusTransformer(input_size=input_size),
 }
+
+def _detect_num_classes(model_file: str) -> int:
+    """Peek at a .pth checkpoint to detect num_classes from the head layer shape.
+    Returns 3 if 3-class checkpoint, else 1 (binary regression default)."""
+    try:
+        if os.path.exists(model_file):
+            sd = torch.load(model_file, map_location='cpu', weights_only=True)
+            # head.3.weight has shape [num_classes, hidden]
+            if 'head.3.weight' in sd:
+                return sd['head.3.weight'].shape[0]
+            # model_state_dict wrapper
+            if 'model_state_dict' in sd:
+                inner = sd['model_state_dict']
+                if 'head.3.weight' in inner:
+                    return inner['head.3.weight'].shape[0]
+    except Exception:
+        pass
+    return 1  # default: binary regression
+
 if JAMBA_AVAILABLE:
     # All Jamba variants use the same SmallJamba class with different configs
     for _jamba_key, _jamba_info in config.MODEL_ARCHITECTURES.items():
         if 'jamba_size' in _jamba_info:
             _size = _jamba_info['jamba_size']
-            MODEL_CLASS_REGISTRY[_jamba_key] = (
-                lambda input_size, s=_size: create_jamba(size=s, input_size=input_size, num_classes=1)
+            _model_file = os.path.join(
+                os.path.dirname(__file__),
+                _jamba_info.get('model_file', f'nexus_{_size}_jamba_v1.pth')
             )
+            _nc = _detect_num_classes(_model_file)
+            MODEL_CLASS_REGISTRY[_jamba_key] = (
+                lambda input_size, s=_size, nc=_nc: create_jamba(size=s, input_size=input_size, num_classes=nc)
+            )
+            if _nc == 3:
+                logging.info(f"🧠 {_jamba_key}: detected 3-class checkpoint → UP/FLAT/DOWN mode")
 
 
 def _get_model_arch_from_settings() -> str:
@@ -1840,9 +1866,24 @@ class NexusPredictor:
                         # ModelOut contract: Jamba returns ModelOut; NexusTransformer returns plain tensor
                         from mamba_model import ModelOut as _ModelOut
                         if isinstance(raw_out, _ModelOut):
-                            lstm_prob = raw_out.logits.item()
+                            logits = raw_out.logits
                         else:
-                            lstm_prob = raw_out.item()
+                            logits = raw_out
+
+                        # Handle 3-class (UP/FLAT/DOWN) vs 1-class (binary) output
+                        if logits.dim() >= 1 and logits.shape[-1] == 3:
+                            # 3-class: convert to ensemble-compatible probability
+                            # Class 0=UP, 1=FLAT, 2=DOWN (from training pipeline)
+                            probs = torch.softmax(logits.float(), dim=-1).squeeze()
+                            p_up   = probs[0].item()
+                            p_flat = probs[1].item()
+                            p_down = probs[2].item()
+                            # Map to 0-1 scale: 1.0=strong UP, 0.5=neutral, 0.0=strong DOWN
+                            lstm_prob = 0.5 + (p_up - p_down) / 2.0
+                            lstm_prob = max(0.0, min(1.0, lstm_prob))
+                            logging.debug(f"PREDICT [jamba-3class] UP={p_up:.3f} FLAT={p_flat:.3f} DOWN={p_down:.3f} → prob={lstm_prob:.4f}")
+                        else:
+                            lstm_prob = logits.item()
                     logging.debug(f"PREDICT [stage=transformer] prob={lstm_prob:.4f}")
                 except Exception as e:
                     logging.warning(f"PREDICT [stage=lstm] failed: {e}")
@@ -2012,7 +2053,23 @@ class NexusPredictor:
         from torch.amp import autocast, GradScaler
         
         self.lstm.train()
-        criterion = nn.BCEWithLogitsLoss()  # AMP-safe (expects raw logits)
+
+        # Auto-detect 3-class model (head.3.weight shape = [num_classes, hidden])
+        _is_3class = False
+        try:
+            if hasattr(self.lstm, 'head'):
+                _head_w = list(self.lstm.head.parameters())
+                if _head_w and _head_w[-1].shape[0] == 3:
+                    _is_3class = True
+        except Exception:
+            pass
+
+        if _is_3class:
+            criterion = nn.CrossEntropyLoss()
+            logging.info("🧠 3-class model detected: using CrossEntropyLoss for live fine-tuning")
+        else:
+            criterion = nn.BCEWithLogitsLoss()
+
         optimizer = torch.optim.AdamW(self.lstm.parameters(), lr=5e-4, weight_decay=0.01, betas=(0.9, 0.98))
         amp_scaler = GradScaler()
         
@@ -2028,7 +2085,12 @@ class NexusPredictor:
         
         # Full tensors on GPU
         X_tensor = torch.FloatTensor(X_windows).to(self.lstm_device)
-        y_tensor = torch.FloatTensor(y_windows).unsqueeze(1).to(self.lstm_device)
+        if _is_3class:
+            # Map binary labels: 0 → class 2 (DOWN), 1 → class 0 (UP)
+            y_mapped = np.where(y_windows == 1, 0, 2).astype(np.int64)
+            y_tensor = torch.LongTensor(y_mapped).to(self.lstm_device)
+        else:
+            y_tensor = torch.FloatTensor(y_windows).unsqueeze(1).to(self.lstm_device)
         
         batch_size = min(256, len(X_windows))
         best_loss = float('inf')

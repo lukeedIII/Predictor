@@ -122,7 +122,7 @@ MODEL_ARCHITECTURES = {
         "jamba_size": "large",
     },
 }
-DEFAULT_MODEL_ARCH = "small_jamba"
+DEFAULT_MODEL_ARCH = "large_jamba"
 
 # ── Beta Features ─────────────────────────────────────
 BETA_FEATURES = {
