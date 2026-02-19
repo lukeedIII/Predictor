@@ -354,6 +354,9 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         gpu_name = torch.cuda.get_device_name(0)
         vram = torch.cuda.get_device_properties(0).total_memory / 1e9
         log.info(f"GPU: {gpu_name} ({vram:.1f} GB VRAM)")
+        # ── Performance: enable cuDNN auto-tuner ──
+        torch.backends.cudnn.benchmark = True
+        log.info("cuDNN benchmark: enabled (auto-tuning kernels)")
 
     # ── Prepare data arrays ──
     X_all = df[feature_cols].values.astype(np.float32)
@@ -401,13 +404,17 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
     batch_size = BATCH_SIZES.get(arch, 48)
     grad_accum = max(1, 800 // batch_size)  # Keep effective batch ~800
 
+    # DataLoader workers: 4 parallel prefetch threads for faster data loading
+    n_workers = 4 if device.type == 'cuda' else 0
     train_loader = torch.utils.data.DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=0, pin_memory=True, drop_last=True,
+        num_workers=n_workers, pin_memory=True, drop_last=True,
+        persistent_workers=(n_workers > 0),
     )
     val_loader = torch.utils.data.DataLoader(
         val_ds, batch_size=batch_size * 2, shuffle=False,
-        num_workers=0, pin_memory=True,
+        num_workers=n_workers, pin_memory=True,
+        persistent_workers=(n_workers > 0),
     )
 
     log.info(f"Train windows: {len(train_ds):,} (stride={stride}) | Val windows: {len(val_ds):,}")
@@ -502,11 +509,11 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         epoch_correct = 0
         epoch_total = 0
         t0 = time.time()
-        optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
 
         for batch_idx, (x_batch, y_batch) in enumerate(train_loader):
-            x_batch = x_batch.to(device)
-            y_batch = y_batch.to(device)  # (B,) — class indices
+            x_batch = x_batch.to(device, non_blocking=True)
+            y_batch = y_batch.to(device, non_blocking=True)  # (B,) — class indices
 
             # Feature Dropout + Gaussian noise (FIX #1)
             x_batch = augment_batch(x_batch, noise_std=noise_std,
@@ -568,8 +575,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
 
         with torch.no_grad():
             for x_val, y_val_batch in val_loader:
-                x_val = x_val.to(device)
-                y_val_batch = y_val_batch.to(device)
+                x_val = x_val.to(device, non_blocking=True)
+                y_val_batch = y_val_batch.to(device, non_blocking=True)
 
                 if revin:
                     x_val = revin(x_val)
