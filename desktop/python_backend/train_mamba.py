@@ -634,7 +634,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 x_batch = revin(x_batch)
 
             with autocast('cuda', dtype=torch.float16):
-                logits, aux_loss = model(x_batch, return_logits=True)  # unpack (B,3), scalar
+                out = model(x_batch, return_logits=True)  # ModelOut(logits, aux_loss)
+                logits, aux_loss = out.logits, out.aux_loss
                 ce_loss = criterion(logits, y_batch)
                 # MoE load-balancing loss (encourages uniform expert usage, λ=0.01)
                 loss = (ce_loss + aux_loss * 0.01) / grad_accum
@@ -649,6 +650,14 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 optimizer.zero_grad(set_to_none=True)
                 scheduler.step()
                 global_step += 1
+
+                # Log CE + aux every 50 steps for observability
+                if global_step % 50 == 0:
+                    logging.info(
+                        f"[STEP {global_step}] ce={ce_loss.item():.4f} "
+                        f"aux={aux_loss.item():.5f} "
+                        f"loss={loss.item()*grad_accum:.4f}"
+                    )
 
             # Accumulate on GPU (no CPU-GPU sync per batch!)
             epoch_loss_gpu += loss.detach() * grad_accum
@@ -710,7 +719,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                     x_val = revin(x_val)
 
                 with autocast('cuda', dtype=torch.float16):
-                    logits, _ = model(x_val, return_logits=True)  # unpack; discard aux in eval
+                    out = model(x_val, return_logits=True)  # ModelOut; discard aux in eval
+                    logits = out.logits
                     loss = criterion(logits, y_val_batch)
 
                 val_loss_gpu += loss.detach()

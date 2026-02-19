@@ -16,9 +16,27 @@ No external dependencies beyond torch — works on Windows + CUDA.
 """
 
 import math
+from dataclasses import dataclass
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# MODEL OUTPUT CONTRACT
+# ═══════════════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class ModelOut:
+    """Stable output contract for all Jamba model variants.
+
+    logits:   (B, num_classes) — raw logits or activated probabilities.
+    aux_loss: scalar tensor on the same device — MoE load-balancing loss.
+               Always defined (zero tensor when MoE is disabled), so call
+               sites never need conditional logic.
+    """
+    logits: torch.Tensor
+    aux_loss: torch.Tensor
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -534,13 +552,13 @@ class SmallJamba(nn.Module):
         # Classify
         logits = self.head(x)                 # (B, num_classes)
         if return_logits:
-            return logits, aux_loss
+            return ModelOut(logits=logits, aux_loss=aux_loss)
 
         # Apply appropriate activation
         if self.num_classes == 1:
-            return self.sigmoid(logits), aux_loss
+            return ModelOut(logits=self.sigmoid(logits), aux_loss=aux_loss)
         else:
-            return F.softmax(logits, dim=-1), aux_loss
+            return ModelOut(logits=F.softmax(logits, dim=-1), aux_loss=aux_loss)
 
     @property
     def num_parameters(self):

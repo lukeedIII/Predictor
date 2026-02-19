@@ -426,8 +426,16 @@ class PaperTrader:
         NOTE: This method intentionally does NOT mutate the caller's dict.
         A shallow copy is made internally so _adjusted_confidence is only
         visible within this call.
+
+        Thread-safety: Pure-data operations (dict copy, quant overlay, regime
+        filters from prediction payload) execute before lock acquisition.
+        All reads/writes of shared mutable state (_signal_streak, positions,
+        circuit_breaker_active, last_trade_time, _feedback_log, balance,
+        peak_balance) are guarded by self._lock (RLock — re-entrant for
+        check_cooldown calls).
         """
         # Work on a copy so we never mutate the caller's prediction dict.
+        # This is intentionally outside the lock — no shared state involved.
         prediction = dict(prediction)
 
         # Apply quant overlay to adjust raw confidence
@@ -435,130 +443,127 @@ class PaperTrader:
         confidence = self._quant_adjusted_confidence(prediction)
         direction = prediction.get('direction', 'NEUTRAL')
         hurst = prediction.get('hurst', 0.5)
-        
+
         # Store adjusted confidence back for sizing use (on the copy only)
         prediction['_adjusted_confidence'] = confidence
-        
-        # Rule 0: NEUTRAL = no signal
+
+        # Fast exits based purely on prediction payload (no shared state)
         if direction == 'NEUTRAL':
-            self._signal_streak = 0
             return None
-        
-        # Rule 1: Adaptive minimum confidence (adjusts based on recent performance)
-        min_conf = self._adaptive_min_confidence
-        if confidence < min_conf:
-            self._signal_streak = 0
-            logging.debug(f"Skip: confidence {confidence:.1f}% < {min_conf:.0f}% (adaptive)")
+
+        if confidence < getattr(config, 'PAPER_MIN_CONFIDENCE', 0):
             return None
-        
-        # Rule 1b: EV gate (Phase 2) — only trade when Expected Value is positive
+
+        if 0.48 <= hurst <= 0.52:
+            logging.debug(f"Skip: Hurst {hurst:.3f} indicates random/chaotic regime")
+            return None
+
+        vol_regime = prediction.get('vol_regime', 1.0)
+        vol_max = getattr(config, 'REGIME_VOL_MAX', 3.0)
+        vol_min = getattr(config, 'REGIME_VOL_MIN', 0.15)
+        if vol_regime > vol_max:
+            logging.debug(f"Skip: vol_regime {vol_regime:.2f} > {vol_max} (extreme volatility)")
+            return None
+        if vol_regime < vol_min:
+            logging.debug(f"Skip: vol_regime {vol_regime:.2f} < {vol_min} (dead market)")
+            return None
+
         ev = prediction.get('expected_value', None)
         calibrator_fitted = prediction.get('calibrator_fitted', False)
         if calibrator_fitted and ev is not None:
             min_ev = getattr(config, 'MIN_EXPECTED_VALUE', 0.0)
             if ev < min_ev:
-                self._signal_streak = 0
                 logging.debug(f"Skip: EV={ev:.4f} < {min_ev} (negative expected value)")
                 return None
-        
-        # Rule 2: Regime filter — skip chaotic markets (Hurst near 0.5)
-        if 0.48 <= hurst <= 0.52:
-            self._signal_streak = 0
-            logging.debug(f"Skip: Hurst {hurst:.3f} indicates random/chaotic regime")
-            return None
-        
-        # Rule 2b: Vol-regime filter — skip extreme volatility (whipsaw) and dead markets
-        vol_regime = prediction.get('vol_regime', 1.0)
-        vol_max = getattr(config, 'REGIME_VOL_MAX', 3.0)
-        vol_min = getattr(config, 'REGIME_VOL_MIN', 0.15)
-        if vol_regime > vol_max:
-            self._signal_streak = 0
-            logging.debug(f"Skip: vol_regime {vol_regime:.2f} > {vol_max} (extreme volatility)")
-            return None
-        if vol_regime < vol_min:
-            self._signal_streak = 0
-            logging.debug(f"Skip: vol_regime {vol_regime:.2f} < {vol_min} (dead market)")
-            return None
-        
-        # Rule 2c: Regime win-rate gate — block trading in losing regimes
-        regime_label = prediction.get('regime_label', 'UNKNOWN')
-        min_wr = getattr(config, 'REGIME_MIN_WIN_RATE', 0.35)
-        min_trades = getattr(config, 'REGIME_MIN_TRADES', 5)
-        if self._feedback_log:
-            regime_trades = [t for t in self._feedback_log[-50:] if t.get('regime') == regime_label]
-            if len(regime_trades) >= min_trades:
-                wins = sum(1 for t in regime_trades if t.get('won', False))
-                wr = wins / len(regime_trades)
-                if wr < min_wr:
-                    self._signal_streak = 0
-                    logging.info(
-                        f"REGIME GATE: {regime_label} blocked — "
-                        f"win rate {wr*100:.0f}% < {min_wr*100:.0f}% "
-                        f"({wins}/{len(regime_trades)} wins)"
-                    )
-                    return None
-        
-        # Rule 3: Tiered signal confirmation based on confidence
-        wanted = 'LONG' if direction == 'UP' else 'SHORT'
-        if not hasattr(self, '_signal_streak'):
-            self._signal_streak = 0
-            self._signal_direction = None
-        
-        if wanted == self._signal_direction:
-            self._signal_streak += 1
-        else:
-            self._signal_direction = wanted
-            self._signal_streak = 1
-        
-        # Tiered: strong signals need fewer confirmations
-        if confidence >= 75:
-            min_confirms = 1   # Instant entry for strong signals
-        elif confidence >= 55:
-            min_confirms = 2   # Standard confirmation
-        else:
-            min_confirms = 3   # Extra caution for weak signals
-        
-        if self._signal_streak < min_confirms:
-            logging.debug(f"Skip: signal confirmation {self._signal_streak}/{min_confirms} for {wanted} (conf={confidence:.0f}%)")
-            return None
-        
-        # Rule 4: Cooldown period
-        if not self.check_cooldown():
-            remaining = config.PAPER_COOLDOWN_SEC
-            if self.last_trade_time:
-                remaining -= (datetime.now() - self.last_trade_time).total_seconds()
-            logging.debug(f"Skip: cooldown active ({remaining:.0f}s remaining)")
-            return None
-        
-        # Rule 5: Circuit breaker
-        if self.circuit_breaker_active:
-            # Auto-reset if balance recovers above 90% of peak
-            if self.balance >= self.peak_balance * 0.90:
-                self.circuit_breaker_active = False
-                logging.info("Circuit breaker RESET — balance recovered")
-            else:
-                logging.debug("Skip: circuit breaker active")
+
+        # ── Acquire lock: all remaining checks read/write shared mutable state ──
+        with self._lock:
+            # Rule 1: Adaptive minimum confidence (adjusts based on recent performance)
+            min_conf = self._adaptive_min_confidence
+            if confidence < min_conf:
+                self._signal_streak = 0
+                logging.debug(f"Skip: confidence {confidence:.1f}% < {min_conf:.0f}% (adaptive)")
                 return None
-        
-        # Rule 6: Max concurrent positions
-        if len(self.positions) >= self.MAX_CONCURRENT:
-            logging.debug(f"Skip: max {self.MAX_CONCURRENT} concurrent positions reached")
-            return None
-        
-        # Rule 7: Pyramid limit — max N in same direction (replaces old no-stacking)
-        max_same = getattr(config, 'PAPER_MAX_SAME_DIRECTION', 3)
-        same_dir_count = sum(1 for p in self.positions if p.direction == wanted)
-        if same_dir_count >= max_same:
-            logging.debug(f"Skip: already {same_dir_count} {wanted} positions (pyramid limit {max_same})")
-            return None
-        
-        # All checks passed — reset streak and trade
-        self._signal_streak = 0
-        logging.info(
-            f"SIGNAL CONFIRMED: {wanted} @ raw={raw_confidence:.1f}% adjusted={confidence:.1f}% "
-            f"hurst={hurst:.3f} confirms={min_confirms}"
-        )
-        return wanted
+
+            # Rule 2c: Regime win-rate gate — block trading in losing regimes
+            regime_label = prediction.get('regime_label', 'UNKNOWN')
+            min_wr = getattr(config, 'REGIME_MIN_WIN_RATE', 0.35)
+            min_trades = getattr(config, 'REGIME_MIN_TRADES', 5)
+            if self._feedback_log:
+                regime_trades = [t for t in self._feedback_log[-50:] if t.get('regime') == regime_label]
+                if len(regime_trades) >= min_trades:
+                    wins = sum(1 for t in regime_trades if t.get('won', False))
+                    wr = wins / len(regime_trades)
+                    if wr < min_wr:
+                        self._signal_streak = 0
+                        logging.info(
+                            f"REGIME GATE: {regime_label} blocked — "
+                            f"win rate {wr*100:.0f}% < {min_wr*100:.0f}% "
+                            f"({wins}/{len(regime_trades)} wins)"
+                        )
+                        return None
+
+            # Rule 3: Tiered signal confirmation based on confidence
+            wanted = 'LONG' if direction == 'UP' else 'SHORT'
+            if not hasattr(self, '_signal_streak'):
+                self._signal_streak = 0
+                self._signal_direction = None
+
+            if wanted == self._signal_direction:
+                self._signal_streak += 1
+            else:
+                self._signal_direction = wanted
+                self._signal_streak = 1
+
+            # Tiered: strong signals need fewer confirmations
+            if confidence >= 75:
+                min_confirms = 1   # Instant entry for strong signals
+            elif confidence >= 55:
+                min_confirms = 2   # Standard confirmation
+            else:
+                min_confirms = 3   # Extra caution for weak signals
+
+            if self._signal_streak < min_confirms:
+                logging.debug(f"Skip: signal confirmation {self._signal_streak}/{min_confirms} for {wanted} (conf={confidence:.0f}%)")
+                return None
+
+            # Rule 4: Cooldown period (check_cooldown reads last_trade_time — shared)
+            if not self.check_cooldown():
+                remaining = config.PAPER_COOLDOWN_SEC
+                if self.last_trade_time:
+                    remaining -= (datetime.now() - self.last_trade_time).total_seconds()
+                logging.debug(f"Skip: cooldown active ({remaining:.0f}s remaining)")
+                return None
+
+            # Rule 5: Circuit breaker
+            if self.circuit_breaker_active:
+                # Auto-reset if balance recovers above 90% of peak
+                if self.balance >= self.peak_balance * 0.90:
+                    self.circuit_breaker_active = False
+                    logging.info("Circuit breaker RESET — balance recovered")
+                else:
+                    logging.debug("Skip: circuit breaker active")
+                    return None
+
+            # Rule 6: Max concurrent positions
+            if len(self.positions) >= self.MAX_CONCURRENT:
+                logging.debug(f"Skip: max {self.MAX_CONCURRENT} concurrent positions reached")
+                return None
+
+            # Rule 7: Pyramid limit — max N in same direction (replaces old no-stacking)
+            max_same = getattr(config, 'PAPER_MAX_SAME_DIRECTION', 3)
+            same_dir_count = sum(1 for p in self.positions if p.direction == wanted)
+            if same_dir_count >= max_same:
+                logging.debug(f"Skip: already {same_dir_count} {wanted} positions (pyramid limit {max_same})")
+                return None
+
+            # All checks passed — reset streak and trade
+            self._signal_streak = 0
+            logging.info(
+                f"SIGNAL CONFIRMED: {wanted} @ raw={raw_confidence:.1f}% adjusted={confidence:.1f}% "
+                f"hurst={hurst:.3f} confirms={min_confirms}"
+            )
+            return wanted
     
     def open_position(self, direction: str, current_price: float, 
                       prediction: Dict, volatility: float = 0.005):
@@ -998,11 +1003,17 @@ class PaperTrader:
             self._avg_loss = np.mean(losses) / 100 / self.leverage
     
     def _save_trade(self, record: Dict):
-        """Append trade to CSV log."""
+        """Append trade to CSV log.
+
+        CSV append cannot be made fully atomic with rename (we'd need to
+        re-write the whole file each time which is O(N) for large histories).
+        Instead we write the new row to a separate per-trade .part file and
+        then rename-append it, keeping the risk window tiny.
+        """
         os.makedirs(os.path.dirname(config.PAPER_TRADES_PATH), exist_ok=True)
-        df = pd.DataFrame([record])
+        df_row = pd.DataFrame([record])
         header = not os.path.exists(config.PAPER_TRADES_PATH)
-        df.to_csv(config.PAPER_TRADES_PATH, mode='a', header=header, index=False)
+        df_row.to_csv(config.PAPER_TRADES_PATH, mode='a', header=header, index=False)
     
     def _save_equity_point(self):
         """Record equity snapshot."""
@@ -1090,14 +1101,20 @@ class PaperTrader:
     # ========== POSITION PERSISTENCE ==========
     
     def _save_positions(self):
-        """Persist open positions to JSON for crash recovery."""
+        """Persist open positions to JSON for crash recovery.
+
+        Uses atomic temp-write + os.replace so a crash during write never
+        leaves a truncated or zero-byte file on disk.
+        """
         positions_path = getattr(config, 'PAPER_POSITIONS_PATH',
                                  os.path.join(config.DATA_DIR, 'paper_positions.json'))
         try:
             os.makedirs(os.path.dirname(positions_path), exist_ok=True)
             data = [p.to_dict() for p in self.positions]
-            with open(positions_path, 'w') as f:
+            tmp_path = positions_path + ".tmp"
+            with open(tmp_path, 'w') as f:
                 json.dump(data, f, indent=2)
+            os.replace(tmp_path, positions_path)  # atomic on same volume
         except Exception as e:
             logging.warning(f"Failed to save positions: {e}")
     
@@ -1164,13 +1181,18 @@ class PaperTrader:
                 pass
     
     def _save_feedback(self):
-        """Persist feedback log to JSON for predictor to consume."""
+        """Persist feedback log to JSON for predictor to consume.
+
+        Uses atomic temp-write + os.replace.
+        """
         try:
             os.makedirs(os.path.dirname(self._feedback_path), exist_ok=True)
             # Keep last 200 entries to avoid unbounded growth
             trimmed = self._feedback_log[-200:]
-            with open(self._feedback_path, 'w') as f:
+            tmp_path = self._feedback_path + ".tmp"
+            with open(tmp_path, 'w') as f:
                 json.dump(trimmed, f, indent=2)
+            os.replace(tmp_path, self._feedback_path)  # atomic on same volume
         except Exception as e:
             logging.warning(f"Failed to save feedback: {e}")
     

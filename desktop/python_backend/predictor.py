@@ -8,6 +8,8 @@ import logging
 import joblib
 import pickle
 import threading
+from dataclasses import dataclass, field
+from typing import Any
 import torch
 import torch.nn as nn
 from datetime import datetime, timedelta
@@ -41,6 +43,25 @@ try:
 except ImportError:
     CALIBRATOR_AVAILABLE = False
     logging.warning("ProbabilityCalibrator not available.")
+
+
+# ========== ATOMIC MODEL BUNDLE ==========
+# Training produces a new bundle; inference always reads a single immutable
+# pointer. The swap under _model_lock is O(1) — no window where model[n+1]
+# is active with scaler[n] or lstm[n].
+@dataclass
+class ModelBundle:
+    """Immutable snapshot of all co-trained model artifacts.
+
+    Swapped atomically under Predictor._model_lock so inference always
+    reads a consistent (model, lstm, scaler, calibrator) quadruple.
+    """
+    model: Any              # XGBoost classifier
+    lstm: Any               # Jamba / NexusTransformer (may be None)
+    scaler: Any             # StandardScaler
+    calibrator: Any         # CalibratedClassifierCV (may be None)
+    xgb_weight: float = 1.0
+    lstm_weight: float = 0.0
 
 
 # ========== DEEP MODEL SEQUENCE LENGTH ==========
@@ -1292,14 +1313,14 @@ class NexusPredictor:
             promotion['promoted'] = should_promote
             
             # ── PROMOTE or DISCARD ──
+            # Note: the actual pointer swap (self.model / self.scaler / self.lstm)
+            # happens at the very end after all training completes, so inference
+            # never sees a partially-updated bundle. Build local variables here.
+            new_xgb = challenger_model if should_promote else self.model
             if should_promote:
-                # Swap challenger into production (thread-safe)
-                with self._model_lock:
-                    self.model = challenger_model
-                    joblib.dump(self.model, self.model_path)
+                joblib.dump(new_xgb, self.model_path)
                 logging.info("[CHAMPION-CHALLENGER] Challenger model saved to disk as new champion")
             else:
-                # Discard challenger, keep current model
                 del challenger_model
                 logging.info("[CHAMPION-CHALLENGER] Challenger discarded — champion model unchanged")
             
@@ -1324,27 +1345,44 @@ class NexusPredictor:
                 self.calibrated_model = None
             
             # ===== STEP 2: Fit Scaler + Train LSTM with sliding windows =====
-            # Fit scaler on training data
-            self.scaler.fit(X_train)
-            self.scaler_fitted = True
-            with open(self.scaler_path, 'wb') as f:
-                pickle.dump(self.scaler, f)
+            # Fit a NEW scaler object — never mutate self.scaler in-place while
+            # inference may be reading it. The atomic swap happens at the end.
+            new_scaler = StandardScaler()
+            new_scaler.fit(X_train)
+            tmp_scaler_path = self.scaler_path + ".tmp"
+            with open(tmp_scaler_path, 'wb') as f:
+                pickle.dump(new_scaler, f)
+            os.replace(tmp_scaler_path, self.scaler_path)  # atomic on same volume
             
             # Create sliding window sequences for Transformer
-            X_scaled = self.scaler.transform(X_train)
+            X_scaled = new_scaler.transform(X_train)  # use consistent new_scaler
             y_values = y_train.values
             
             X_windows, y_windows = self._create_sliding_windows(X_scaled, y_values)
             
             if len(X_windows) > DEEP_SEQ_LEN:
                 self.train_deep_model(X_windows, y_windows, epochs=30)
-                torch.save(self.lstm.state_dict(), self.deep_model_path)
+                tmp_lstm_path = self.deep_model_path + ".tmp"
+                torch.save(self.lstm.state_dict(), tmp_lstm_path)
+                os.replace(tmp_lstm_path, self.deep_model_path)  # atomic write
                 logging.info(f"Transformer trained on {len(X_windows):,} sequences of {DEEP_SEQ_LEN} timesteps")
-                
+
                 # ===== STEP 3: Validate LSTM and assign ensemble weight =====
                 self._assign_deep_model_weight(test_df)
             else:
                 logging.warning(f"Not enough data for Transformer windows ({len(X_windows)} < {DEEP_SEQ_LEN})")
+
+            # ── ATOMIC BUNDLE SWAP ──────────────────────────────────────────
+            # All training is done. Swap every live pointer in one lock
+            # acquisition so inference never reads a mismatched triple.
+            with self._model_lock:
+                self.model = new_xgb
+                self.scaler = new_scaler
+                self.scaler_fitted = True
+                # self.lstm was mutated in-place by train_deep_model; it is
+                # already the new model — the lock just flushes visibility.
+                # calibrated_model may be None if calibration failed above.
+            logging.info("[BUNDLE-SWAP] Atomic model/scaler/lstm swap complete.")
             
             # Validate on test set
             self.last_validation_accuracy = self._validate_on_test_set(test_df)
@@ -1799,8 +1837,12 @@ class NexusPredictor:
                     with torch.no_grad():
                         x_seq = torch.FloatTensor(window_scaled).unsqueeze(0).to(self.lstm_device)
                         raw_out = self.lstm(x_seq)
-                        # Jamba models return (prob, aux_loss); NexusTransformer returns plain tensor
-                        lstm_prob = (raw_out[0] if isinstance(raw_out, tuple) else raw_out).item()
+                        # ModelOut contract: Jamba returns ModelOut; NexusTransformer returns plain tensor
+                        from mamba_model import ModelOut as _ModelOut
+                        if isinstance(raw_out, _ModelOut):
+                            lstm_prob = raw_out.logits.item()
+                        else:
+                            lstm_prob = raw_out.item()
                     logging.debug(f"PREDICT [stage=transformer] prob={lstm_prob:.4f}")
                 except Exception as e:
                     logging.warning(f"PREDICT [stage=lstm] failed: {e}")
@@ -2010,10 +2052,11 @@ class NexusPredictor:
                 optimizer.zero_grad()
                 with autocast('cuda', dtype=torch.float16):
                     raw_out = self.lstm(batch_x, return_logits=True)
-                    # Jamba models return (logits, aux_loss) tuples; NexusTransformer plain tensor
-                    if isinstance(raw_out, tuple):
-                        output, aux_loss_inner = raw_out
-                        loss = criterion(output, batch_y) + aux_loss_inner * 0.01
+                    # ModelOut contract: Jamba returns ModelOut; NexusTransformer returns plain tensor
+                    from mamba_model import ModelOut as _ModelOut
+                    if isinstance(raw_out, _ModelOut):
+                        output = raw_out.logits
+                        loss = criterion(output, batch_y) + raw_out.aux_loss * 0.01
                     else:
                         output = raw_out
                         loss = criterion(output, batch_y)

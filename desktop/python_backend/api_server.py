@@ -694,34 +694,55 @@ async def _ws_push_loop():
 
 app = FastAPI(title="Nexus Shadow-Quant API", version=config.VERSION, lifespan=lifespan)
 
+# Strict CORS: allow only Electron renderer and local dev server origins.
+# 'allow_origins=["*"]' would expose the local API to any webpage the user
+# opens in a browser tab — a significant CSRF/SSRF risk.
+_ALLOWED_ORIGINS = [
+    "file://",                  # Electron renderer (file:// scheme)
+    "null",                     # Electron on some platforms sends 'null' origin
+    "http://localhost",
+    "http://localhost:5173",    # Vite dev server
+    "http://localhost:5174",
+    "http://127.0.0.1",
+    "http://127.0.0.1:5173",
+]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
+    allow_origins=_ALLOWED_ORIGINS,
+    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
     allow_headers=["*"],
 )
 
 
 @app.middleware("http")
 async def boot_gate_middleware(request, call_next):
-    """Hold all non-status requests until engines are fully initialized.
+    """Return 503 (not a hang) for all non-status requests until boot is done.
 
-    This prevents 'predictor is None' / 500 errors during startup.
-    The /api/boot-status endpoint is explicitly excluded so the UI can
-    continue to poll boot progress while the gate is active.
-    WebSocket upgrade requests are also passed through immediately.
+    Returning 503 is deterministic: the frontend splash screen already polls
+    /api/boot-status and retries; clients get a clear signal with Retry-After
+    rather than an opaque connection timeout.
+    WebSocket upgrade requests are also passed through so the WS module can
+    gate them itself with a 1013 close frame.
+    /health/live is always passed through (liveness vs. readiness split).
     """
     passthrough = (
         request.url.path.startswith("/api/boot-status")
-        or request.url.path == "/ws"          # WebSocket handshake
+        or request.url.path == "/health/live"   # liveness always passes
+        or request.url.path.startswith("/ws")   # WS handshake — WS module gates
         or request.url.path.startswith("/api/ws")
     )
     if not passthrough and not _boot_gate.is_set():
-        try:
-            await asyncio.wait_for(_boot_gate.wait(), timeout=120.0)
-        except asyncio.TimeoutError:
-            logging.warning("[BOOT-GATE] Timeout waiting for boot — releasing gate")
-            _boot_gate.set()
+        return JSONResponse(
+            {
+                "status": "booting",
+                "stage": boot_status.get("stage"),
+                "progress": boot_status.get("progress"),
+                "message": "Service is initialising. Retry shortly.",
+            },
+            status_code=503,
+            headers={"Retry-After": "2"},
+        )
     return await call_next(request)
 
 
@@ -745,6 +766,36 @@ class CloseRequest(BaseModel):
 def get_boot_status():
     """Real-time boot progress for the splash screen."""
     return boot_status
+
+
+@app.get("/health/live", tags=["health"])
+def health_live():
+    """Liveness probe — always 200 while the process is alive.
+
+    Kubernetes / Docker can use this to detect crash-loops.
+    Deliberately never returns 503: if the process responds at all, it's live.
+    """
+    return {"status": "alive", "uptime_seconds": round(time.time() - _app_boot_time, 1)}
+
+
+@app.get("/health/ready", tags=["health"])
+def health_ready():
+    """Readiness probe — 200 when boot is complete, 503 while initialising.
+
+    Clients / load-balancers poll this endpoint to know when to start
+    sending real traffic. It complements /health/live which is always 200.
+    """
+    if _boot_gate.is_set():
+        return {"status": "ready", "stage": boot_status.get("stage")}
+    raise HTTPException(
+        status_code=503,
+        detail={
+            "status": "initialising",
+            "stage": boot_status.get("stage"),
+            "progress": boot_status.get("progress"),
+        },
+        headers={"Retry-After": "2"},
+    )
 
 
 # ── Settings persistence (JSON file) ─────────────────
