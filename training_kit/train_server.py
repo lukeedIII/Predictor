@@ -236,34 +236,38 @@ def engineer_features(df):
     # Volatility
     df['volatility'] = close.pct_change().rolling(20, min_periods=1).std().fillna(0)
 
-    # Fourier cycles
+    # Fourier cycles — vectorized with sliding_window_view (was Python loop)
     ret_series = close.pct_change().fillna(0).values
     cycle_1 = np.zeros(len(df))
     cycle_2 = np.zeros(len(df))
     window = 64
-    for i in range(window, len(ret_series)):
-        segment = ret_series[i - window:i]
-        fft = np.fft.rfft(segment)
-        magnitudes = np.abs(fft[1:])
-        if len(magnitudes) >= 2:
-            cycle_1[i] = magnitudes[0] / (np.sum(magnitudes) + 1e-10)
-            cycle_2[i] = magnitudes[1] / (np.sum(magnitudes) + 1e-10)
+    if len(ret_series) > window:
+        from numpy.lib.stride_tricks import sliding_window_view
+        windows_fft = sliding_window_view(ret_series, window)
+        ffts = np.fft.rfft(windows_fft, axis=1)
+        magnitudes = np.abs(ffts[:, 1:])
+        mag_sum = magnitudes.sum(axis=1) + 1e-10
+        if magnitudes.shape[1] >= 2:
+            cycle_1[window:window + len(mag_sum)] = magnitudes[:, 0] / mag_sum
+            cycle_2[window:window + len(mag_sum)] = magnitudes[:, 1] / mag_sum
     df['cycle_1'] = cycle_1
     df['cycle_2'] = cycle_2
 
-    # Hurst exponent
+    # Hurst exponent — vectorized with sliding_window_view (was Python loop)
     hurst_window = 100
     hurst = np.full(len(df), 0.5)
     returns = close.pct_change().fillna(0).values
-    for i in range(hurst_window, len(returns)):
-        seg = returns[i - hurst_window:i]
-        mean_r = np.mean(seg)
-        dev = np.cumsum(seg - mean_r)
-        r_range = np.max(dev) - np.min(dev)
-        s = np.std(seg) + 1e-10
+    if len(returns) > hurst_window:
+        from numpy.lib.stride_tricks import sliding_window_view
+        windows_h = sliding_window_view(returns, hurst_window)
+        mean_r = windows_h.mean(axis=1, keepdims=True)
+        dev = np.cumsum(windows_h - mean_r, axis=1)
+        r_range = dev.max(axis=1) - dev.min(axis=1)
+        s = windows_h.std(axis=1) + 1e-10
         rs_val = r_range / s
-        if rs_val > 0:
-            hurst[i] = np.log(rs_val + 1e-10) / np.log(hurst_window)
+        valid = rs_val > 0
+        h_vals = np.where(valid, np.log(rs_val + 1e-10) / np.log(hurst_window), 0.5)
+        hurst[hurst_window:hurst_window + len(h_vals)] = h_vals
     df['hurst'] = np.clip(hurst, 0, 1)
 
     # Kalman error
@@ -454,8 +458,9 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     scaler = StandardScaler()
     features = scaler.fit_transform(features)
 
-    # Create sliding windows
-    X_all = np.array([features[i:i+SEQ_LEN] for i in range(n)])
+    # Create sliding windows — zero-copy with stride_tricks (was Python list comp)
+    from numpy.lib.stride_tricks import sliding_window_view
+    X_all = sliding_window_view(features, (SEQ_LEN, features.shape[1])).squeeze(axis=1)[:n].copy()
     y_all = labels_valid.values[SEQ_LEN:SEQ_LEN+n].astype(np.float32)
 
     # Train/val split (80/20)
@@ -517,11 +522,17 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     add_log(f"   Batch size: {batch_size}")
 
     # ── Build DataLoaders (may be rebuilt if OOM triggers batch halving) ──
+    n_workers = 4 if device == 'cuda' else 0
+    grad_accum = max(1, 512 // batch_size)  # Target effective batch ~512
+    add_log(f"   Gradient accumulation: {grad_accum}x (effective batch: {batch_size * grad_accum})")
+
     def build_loaders(bs):
         tl = torch.utils.data.DataLoader(train_ds, batch_size=bs, shuffle=True,
-                                          num_workers=0, pin_memory=(device == 'cuda'))
-        vl = torch.utils.data.DataLoader(val_ds, batch_size=bs * 2, num_workers=0,
-                                          pin_memory=(device == 'cuda'))
+                                          num_workers=n_workers, pin_memory=(device == 'cuda'),
+                                          persistent_workers=(n_workers > 0), drop_last=True)
+        vl = torch.utils.data.DataLoader(val_ds, batch_size=bs * 2,
+                                          num_workers=n_workers, pin_memory=(device == 'cuda'),
+                                          persistent_workers=(n_workers > 0))
         return tl, vl
 
     train_loader, val_loader = build_loaders(batch_size)
@@ -559,38 +570,41 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
             return False  # Not finished
 
         model.train()
-        epoch_loss = 0.0
-        epoch_correct = 0
+        epoch_loss_gpu = torch.tensor(0.0, device=device)
+        epoch_correct_gpu = torch.tensor(0, dtype=torch.long, device=device)
         epoch_total = 0
         batch_count = len(train_loader)
         epoch_start = time.time()
+        optimizer.zero_grad(set_to_none=True)
         oom_retry = False  # Flag: if True, skip end-of-epoch and re-run this epoch
 
         for bi, (xb, yb) in enumerate(train_loader):
             if stop_requested.is_set():
                 break
 
-            xb, yb = xb.to(device), yb.to(device)
+            xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
 
-            optimizer.zero_grad(set_to_none=True)
-
-            # ── OOM-safe forward pass ──
+            # ── OOM-safe forward pass with gradient accumulation ──
             try:
                 if scaler:
                     with autocast('cuda'):
                         logits = model(xb, return_logits=True)
-                        loss = criterion(logits, yb)
+                        loss = criterion(logits, yb) / grad_accum
                     scaler.scale(loss).backward()
-                    scaler.unscale_(optimizer)
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                    scaler.step(optimizer)
-                    scaler.update()
+                    if (bi + 1) % grad_accum == 0:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                        scaler.step(optimizer)
+                        scaler.update()
+                        optimizer.zero_grad(set_to_none=True)
                 else:
                     logits = model(xb, return_logits=True)
-                    loss = criterion(logits, yb)
+                    loss = criterion(logits, yb) / grad_accum
                     loss.backward()
-                    torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
-                    optimizer.step()
+                    if (bi + 1) % grad_accum == 0:
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
+                        optimizer.step()
+                        optimizer.zero_grad(set_to_none=True)
             except (torch.cuda.OutOfMemoryError, RuntimeError) as oom_err:
                 if 'out of memory' not in str(oom_err).lower() and 'CUDA' not in str(oom_err):
                     raise  # Re-raise non-OOM RuntimeErrors
@@ -605,6 +619,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
                     return False
                 add_log(f"⚠️ OOM detected! Auto-halving batch: {batch_size} → {new_bs}")
                 batch_size = new_bs
+                grad_accum = max(1, 512 // batch_size)
                 train_loader, val_loader = build_loaders(batch_size)
                 # Re-create GradScaler to avoid stale scale factor from failed step
                 if device == 'cuda':
@@ -612,20 +627,21 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
                 oom_retry = True
                 break  # Exit batch loop — epoch will be re-run (see below)
 
-            epoch_loss += loss.item() * xb.size(0)
+            # Accumulate on GPU (no CPU-GPU sync per batch!)
+            epoch_loss_gpu += loss.detach() * grad_accum * xb.size(0)
             preds = (torch.sigmoid(logits) > 0.5).float()
-            epoch_correct += (preds == yb).sum().item()
+            epoch_correct_gpu += (preds == yb).sum()
             epoch_total += xb.size(0)
 
-            # Update progress every 5 batches
-            if bi % 5 == 0:
+            # Update progress every 20 batches (sync GPU→CPU only here)
+            if bi % 20 == 0:
                 vram = torch.cuda.memory_allocated(0) / 1e9 if device == 'cuda' else 0
                 elapsed = time.time() - epoch_start
                 speed = epoch_total / max(elapsed, 0.01)
                 update_state(
                     batch_progress=round((bi + 1) / batch_count * 100, 1),
-                    train_loss=round(epoch_loss / max(epoch_total, 1), 4),
-                    train_acc=round(epoch_correct / max(epoch_total, 1) * 100, 1),
+                    train_loss=round(epoch_loss_gpu.item() / max(epoch_total, 1), 4),
+                    train_acc=round(epoch_correct_gpu.item() / max(epoch_total, 1) * 100, 1),
                     lr=optimizer.param_groups[0]['lr'],
                     speed=round(speed),
                     vram_used_gb=round(vram, 2),
@@ -641,29 +657,29 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
             # the model weights weren't updated (OOM happened during forward/backward).
             continue  # Skip validation, checkpointing, and go to next epoch iteration
 
-        # End of epoch
+        # End of epoch — sync GPU→CPU once
         scheduler.step()
-        avg_train_loss = epoch_loss / max(epoch_total, 1)
-        avg_train_acc = epoch_correct / max(epoch_total, 1)
+        avg_train_loss = epoch_loss_gpu.item() / max(epoch_total, 1)
+        avg_train_acc = epoch_correct_gpu.item() / max(epoch_total, 1)
 
-        # Validation
+        # Validation — GPU-side accumulation
         model.eval()
-        val_loss_sum = 0.0
-        val_correct = 0
+        val_loss_gpu = torch.tensor(0.0, device=device)
+        val_correct_gpu = torch.tensor(0, dtype=torch.long, device=device)
         val_total = 0
         with torch.no_grad():
             for xb, yb in val_loader:
-                xb, yb = xb.to(device), yb.to(device)
+                xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
                 with autocast('cuda') if device == 'cuda' else torch.no_grad():
                     logits = model(xb, return_logits=True)
                     loss = criterion(logits, yb)
-                val_loss_sum += loss.item() * xb.size(0)
+                val_loss_gpu += loss.detach() * xb.size(0)
                 preds = (torch.sigmoid(logits) > 0.5).float()
-                val_correct += (preds == yb).sum().item()
+                val_correct_gpu += (preds == yb).sum()
                 val_total += xb.size(0)
 
-        avg_val_loss = val_loss_sum / max(val_total, 1)
-        val_acc = val_correct / max(val_total, 1)
+        avg_val_loss = val_loss_gpu.item() / max(val_total, 1)
+        val_acc = val_correct_gpu.item() / max(val_total, 1)
 
         epoch_time = time.time() - epoch_start
         remaining_epochs = epochs - epoch - 1

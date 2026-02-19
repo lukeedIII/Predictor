@@ -697,8 +697,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         if revin:
             revin.eval()
 
-        val_loss = 0.0
-        val_correct = 0
+        val_loss_gpu = torch.tensor(0.0, device=device)
+        val_correct_gpu = torch.tensor(0, dtype=torch.long, device=device)
         val_total = 0
         val_class_preds = np.zeros(NUM_CLASSES)
 
@@ -714,15 +714,15 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                     logits = model(x_val, return_logits=True)
                     loss = criterion(logits, y_val_batch)
 
-                val_loss += loss.item()
+                val_loss_gpu += loss.detach()
                 preds = logits.argmax(dim=-1)
-                val_correct += (preds == y_val_batch).sum().item()
+                val_correct_gpu += (preds == y_val_batch).sum()
                 for c in range(NUM_CLASSES):
                     val_class_preds[c] += (preds == c).sum().item()
                 val_total += len(y_val_batch)
 
-        avg_val_loss = val_loss / max(len(val_loader), 1)
-        val_acc = val_correct / max(val_total, 1)
+        avg_val_loss = val_loss_gpu.item() / max(len(val_loader), 1)
+        val_acc = val_correct_gpu.item() / max(val_total, 1)
 
         # Prediction distribution
         pred_dist = " | ".join(
