@@ -78,6 +78,10 @@ DATA_COLLECT_INTERVAL_SEC = 60  # Collect every minute
 # App boot timestamp — used by agent for lifetime awareness
 _app_boot_time = time.time()
 
+# Boot-gate: all HTTP requests (except /api/boot-status) are held until
+# _init_engines() completes, preventing "predictor is None" 500 errors.
+_boot_gate: asyncio.Event = asyncio.Event()
+
 
 def _check_system_requirements():
     """Validate GPU and disk space before launching engines.
@@ -196,6 +200,10 @@ def _init_engines():
         boot_status = {"stage": "error", "progress": -1, "message": f"Init error: {str(e)[:200]}"}
         logging.error(f"Engine init failed: {e}")
         traceback.print_exc()
+    finally:
+        # Always release the gate so requests don't hang forever on error.
+        _boot_gate.set()
+        logging.info("[BOOT-GATE] Released — API now accepting requests.")
 
 
 def _continuous_data_collect():
@@ -692,6 +700,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def boot_gate_middleware(request, call_next):
+    """Hold all non-status requests until engines are fully initialized.
+
+    This prevents 'predictor is None' / 500 errors during startup.
+    The /api/boot-status endpoint is explicitly excluded so the UI can
+    continue to poll boot progress while the gate is active.
+    WebSocket upgrade requests are also passed through immediately.
+    """
+    passthrough = (
+        request.url.path.startswith("/api/boot-status")
+        or request.url.path == "/ws"          # WebSocket handshake
+        or request.url.path.startswith("/api/ws")
+    )
+    if not passthrough and not _boot_gate.is_set():
+        try:
+            await asyncio.wait_for(_boot_gate.wait(), timeout=120.0)
+        except asyncio.TimeoutError:
+            logging.warning("[BOOT-GATE] Timeout waiting for boot — releasing gate")
+            _boot_gate.set()
+    return await call_next(request)
 
 
 # ============================================================

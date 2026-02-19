@@ -513,8 +513,9 @@ class SmallJamba(nn.Module):
             return_logits: If True, return raw logits
 
         Returns:
-            num_classes=1: (B, 1) — probability or logit
-            num_classes=3: (B, 3) — class probabilities or logits
+            Tuple of (output, aux_loss) where:
+              output: num_classes=1 → (B, 1), num_classes=3 → (B, 3)
+              aux_loss: scalar MoE load-balancing loss (0 if no MoE blocks)
         """
         # Project input features to model dimension
         x = self.input_proj(x)                # (B, L, d_model)
@@ -527,16 +528,19 @@ class SmallJamba(nn.Module):
         x = self.norm_f(x)                    # (B, L, d_model)
         x = x.mean(dim=1)                     # (B, d_model)
 
+        # Collect MoE load-balancing loss from all blocks
+        aux_loss = self.get_aux_loss()
+
         # Classify
         logits = self.head(x)                 # (B, num_classes)
         if return_logits:
-            return logits
+            return logits, aux_loss
 
         # Apply appropriate activation
         if self.num_classes == 1:
-            return self.sigmoid(logits)
+            return self.sigmoid(logits), aux_loss
         else:
-            return F.softmax(logits, dim=-1)
+            return F.softmax(logits, dim=-1), aux_loss
 
     @property
     def num_parameters(self):

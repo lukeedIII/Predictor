@@ -1798,7 +1798,9 @@ class NexusPredictor:
                     self.lstm.eval()
                     with torch.no_grad():
                         x_seq = torch.FloatTensor(window_scaled).unsqueeze(0).to(self.lstm_device)
-                        lstm_prob = self.lstm(x_seq).item()
+                        raw_out = self.lstm(x_seq)
+                        # Jamba models return (prob, aux_loss); NexusTransformer returns plain tensor
+                        lstm_prob = (raw_out[0] if isinstance(raw_out, tuple) else raw_out).item()
                     logging.debug(f"PREDICT [stage=transformer] prob={lstm_prob:.4f}")
                 except Exception as e:
                     logging.warning(f"PREDICT [stage=lstm] failed: {e}")
@@ -2007,8 +2009,14 @@ class NexusPredictor:
                 
                 optimizer.zero_grad()
                 with autocast('cuda', dtype=torch.float16):
-                    output = self.lstm(batch_x, return_logits=True)  # Raw logits for AMP
-                    loss = criterion(output, batch_y)
+                    raw_out = self.lstm(batch_x, return_logits=True)
+                    # Jamba models return (logits, aux_loss) tuples; NexusTransformer plain tensor
+                    if isinstance(raw_out, tuple):
+                        output, aux_loss_inner = raw_out
+                        loss = criterion(output, batch_y) + aux_loss_inner * 0.01
+                    else:
+                        output = raw_out
+                        loss = criterion(output, batch_y)
                 
                 amp_scaler.scale(loss).backward()
                 amp_scaler.unscale_(optimizer)

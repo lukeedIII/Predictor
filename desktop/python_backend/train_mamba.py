@@ -634,11 +634,10 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 x_batch = revin(x_batch)
 
             with autocast('cuda', dtype=torch.float16):
-                logits = model(x_batch, return_logits=True)  # (B, 3)
+                logits, aux_loss = model(x_batch, return_logits=True)  # unpack (B,3), scalar
                 ce_loss = criterion(logits, y_batch)
-                # MoE load-balancing loss (encourages uniform expert usage)
-                aux_loss = model.get_aux_loss() * 0.01
-                loss = (ce_loss + aux_loss) / grad_accum
+                # MoE load-balancing loss (encourages uniform expert usage, λ=0.01)
+                loss = (ce_loss + aux_loss * 0.01) / grad_accum
 
             amp_scaler.scale(loss).backward()
 
@@ -711,7 +710,7 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                     x_val = revin(x_val)
 
                 with autocast('cuda', dtype=torch.float16):
-                    logits = model(x_val, return_logits=True)
+                    logits, _ = model(x_val, return_logits=True)  # unpack; discard aux in eval
                     loss = criterion(logits, y_val_batch)
 
                 val_loss_gpu += loss.detach()

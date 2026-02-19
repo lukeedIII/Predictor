@@ -18,8 +18,10 @@ import json
 import os
 import time
 import logging
+import threading
 import numpy as np
 import pandas as pd
+from collections import deque
 from datetime import datetime, timedelta
 from typing import Dict, Optional, Tuple
 
@@ -181,6 +183,11 @@ class PaperTrader:
     MAX_CONCURRENT = 6
 
     def __init__(self, starting_balance: float = None, default_leverage: int = None):
+        # Thread-safety lock: protects all balance and position mutations.
+        # Using RLock so the same thread can re-acquire (e.g. close_position called
+        # from a method that already holds the lock).
+        self._lock = threading.RLock()
+
         self.starting_balance = starting_balance or config.PAPER_STARTING_BALANCE
         self.balance = self.starting_balance
         self.peak_balance = self.starting_balance
@@ -213,10 +220,11 @@ class PaperTrader:
         self._signal_direction = None
         
         # ===== PHASE 2: Feedback Loop =====
-        # Trade feedback log — persisted to JSON for predictor to consume
+        # Trade feedback log — persisted to JSON for predictor to consume.
+        # Bounded deque (max 2000 entries) prevents unbounded memory growth.
         self._feedback_path = os.path.join(config.DATA_ROOT, 'feedback', 'trade_feedback.json')
         self._adaptive_path = os.path.join(config.DATA_ROOT, 'feedback', 'adaptive_config.json')
-        self._feedback_log = []
+        self._feedback_log: deque = deque(maxlen=2000)
         self._adaptive_min_confidence = config.PAPER_MIN_CONFIDENCE  # starts at default
         self._load_feedback()
         
@@ -414,14 +422,21 @@ class PaperTrader:
         Evaluate the AI prediction and decide whether to trade.
         v2.0: Tiered confirmation, pyramiding, quant-overlay confidence adjustment.
         Returns "LONG", "SHORT", or None.
+
+        NOTE: This method intentionally does NOT mutate the caller's dict.
+        A shallow copy is made internally so _adjusted_confidence is only
+        visible within this call.
         """
+        # Work on a copy so we never mutate the caller's prediction dict.
+        prediction = dict(prediction)
+
         # Apply quant overlay to adjust raw confidence
         raw_confidence = prediction.get('confidence', 0)
         confidence = self._quant_adjusted_confidence(prediction)
         direction = prediction.get('direction', 'NEUTRAL')
         hurst = prediction.get('hurst', 0.5)
         
-        # Store adjusted confidence back for sizing use
+        # Store adjusted confidence back for sizing use (on the copy only)
         prediction['_adjusted_confidence'] = confidence
         
         # Rule 0: NEUTRAL = no signal
@@ -548,6 +563,12 @@ class PaperTrader:
     def open_position(self, direction: str, current_price: float, 
                       prediction: Dict, volatility: float = 0.005):
         """Open a new paper trading position with dynamic leverage and confidence-scaled sizing."""
+        with self._lock:
+            return self._open_position_locked(direction, current_price, prediction, volatility)
+
+    def _open_position_locked(self, direction: str, current_price: float,
+                              prediction: Dict, volatility: float = 0.005):
+        """Internal: open_position body, called under self._lock."""
         if len(self.positions) >= self.MAX_CONCURRENT:
             logging.warning(f"Cannot open: max {self.MAX_CONCURRENT} positions reached")
             return False
@@ -623,6 +644,11 @@ class PaperTrader:
         return True
     
     def close_position(self, current_price: float, reason: str = "MANUAL", pos: 'Position' = None) -> Dict:
+        """Close a specific position (or first position if none specified)."""
+        with self._lock:
+            return self._close_position_locked(current_price, reason, pos)
+
+    def _close_position_locked(self, current_price: float, reason: str = "MANUAL", pos: 'Position' = None) -> Dict:
         """Close a specific position (or first position if none specified)."""
         if pos is None:
             # Legacy compat: close first position
