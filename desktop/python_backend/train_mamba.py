@@ -333,6 +333,91 @@ class TimeSeriesDataset(torch.utils.data.Dataset):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
+# GPU AUTO BATCH SIZE (probes real forward+backward pass)
+# ═══════════════════════════════════════════════════════════════════════════
+
+def _auto_batch_size(arch: str, n_features: int, device, target_vram_frac: float = 0.70):
+    """Find the largest batch size that fits in target_vram_frac of GPU memory.
+
+    Uses binary search with real forward+backward passes to measure actual VRAM.
+    Falls back to safe defaults if probing fails.
+    """
+    from mamba_model import create_jamba
+
+    total_vram = torch.cuda.get_device_properties(0).total_memory
+    target_bytes = int(total_vram * target_vram_frac)
+    total_gb = total_vram / 1024**3
+
+    log.info(f"🔍 Auto-tuning batch size for {arch} on {total_gb:.0f} GB GPU (target: {target_vram_frac:.0%} VRAM)...")
+
+    # Safe fallbacks per model size
+    SAFE_DEFAULTS = {"small": 64, "lite": 48, "medium": 32, "large": 16}
+
+    try:
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats()
+
+        # Create a temporary model for probing
+        probe_model = create_jamba(size=arch, input_size=n_features, num_classes=3).to(device)
+        probe_optimizer = torch.optim.AdamW(probe_model.parameters(), lr=1e-4)
+
+        # Binary search: test batch sizes from 16 to 1024
+        lo, hi = 16, 1024
+        best_batch = SAFE_DEFAULTS.get(arch, 32)
+
+        while lo <= hi:
+            mid = (lo + hi) // 2
+            try:
+                torch.cuda.empty_cache()
+                torch.cuda.reset_peak_memory_stats()
+                probe_model.train()
+                probe_optimizer.zero_grad(set_to_none=True)
+
+                dummy_x = torch.randn(mid, SEQ_LEN, n_features, device=device)
+                dummy_y = torch.randint(0, 3, (mid,), device=device)
+
+                with autocast('cuda', dtype=torch.float16):
+                    logits = probe_model(dummy_x, return_logits=True)
+                    loss = nn.CrossEntropyLoss()(logits, dummy_y)
+
+                GradScaler().scale(loss).backward()
+
+                peak = torch.cuda.max_memory_allocated()
+
+                del dummy_x, dummy_y, logits, loss
+                probe_optimizer.zero_grad(set_to_none=True)
+                torch.cuda.empty_cache()
+
+                if peak <= target_bytes:
+                    best_batch = mid
+                    lo = mid + 1
+                else:
+                    hi = mid - 1
+
+            except RuntimeError:  # OOM
+                hi = mid - 1
+                torch.cuda.empty_cache()
+
+        # Cleanup probe model
+        del probe_model, probe_optimizer
+        torch.cuda.empty_cache()
+
+        # Round to nearest multiple of 8 for GPU efficiency
+        best_batch = max(8, (best_batch // 8) * 8)
+        peak_gb = torch.cuda.max_memory_allocated() / 1024**3
+
+        log.info(f"✅ Auto batch size: {best_batch} (peak VRAM: {peak_gb:.1f} GB / {total_gb:.0f} GB)")
+        return best_batch
+
+    except Exception as e:
+        log.warning(f"⚠️  Auto batch probe failed: {e}")
+        fallback = SAFE_DEFAULTS.get(arch, 32)
+        log.warning(f"   Using safe fallback: batch_size={fallback}")
+        torch.cuda.empty_cache()
+        return fallback
+
+
+# ═══════════════════════════════════════════════════════════════════════════
 # TRAINING LOOP
 # ═══════════════════════════════════════════════════════════════════════════
 
@@ -399,13 +484,13 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
     train_ds = TimeSeriesDataset(X_train, y_train, seq_len=SEQ_LEN, stride=stride)
     val_ds = TimeSeriesDataset(X_val, y_val, seq_len=SEQ_LEN, stride=1)
 
-    # Batch size auto-tuned per model size. RTX 5080 (16GB) target: ~12-13GB.
-    BATCH_SIZES = {"small": 160, "lite": 96, "medium": 48, "large": 24}
-    batch_size = BATCH_SIZES.get(arch, 48)
-    # Gradient accumulation: target effective batch of ~256-384 for better convergence
-    # (too large effective batch = too few optimizer steps = slow learning)
-    TARGET_EFFECTIVE = 256
-    grad_accum = max(1, TARGET_EFFECTIVE // batch_size)
+    # ── Auto batch size: probe GPU to find optimal batch ──
+    if device.type == 'cuda':
+        batch_size = _auto_batch_size(arch, n_features, device)
+    else:
+        batch_size = 32  # CPU fallback
+    # Gradient accumulation: target effective batch ~256
+    grad_accum = max(1, 256 // batch_size)
 
     # DataLoader workers: 4 parallel prefetch threads for faster data loading
     n_workers = 4 if device.type == 'cuda' else 0
