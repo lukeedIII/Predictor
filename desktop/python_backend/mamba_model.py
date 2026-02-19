@@ -48,6 +48,7 @@ class RMSNorm(nn.Module):
 # SELECTIVE SSM SCAN (S6) — Core of Mamba
 # ═══════════════════════════════════════════════════════════════════════════
 
+@torch.jit.script
 def selective_scan(x: torch.Tensor, delta: torch.Tensor, A: torch.Tensor,
                    B: torch.Tensor, C: torch.Tensor, D_skip: torch.Tensor) -> torch.Tensor:
     """

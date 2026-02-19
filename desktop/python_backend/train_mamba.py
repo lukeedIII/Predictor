@@ -531,15 +531,16 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
     log.info(f"Batch size: {batch_size} × {grad_accum} grad_accum = {batch_size * grad_accum} effective")
     log.info(f"Samples/param ratio: {len(train_ds) / model.num_parameters:.1f}x")
 
-    # torch.compile: fuses ALL small kernels across entire forward pass into
-    # optimized Triton/Inductor kernels. This is THE fix for low GPU utilization
-    # with sequential scan ops. Works on Windows since PyTorch 2.1+.
+    # torch.compile: fuses small kernels into optimized Triton kernels.
+    # Requires Triton which is Linux-only. On Windows, falls back gracefully.
     if device.type == 'cuda':
         try:
+            import triton  # noqa: F401 — check if Triton is installed
             model = torch.compile(model, mode='max-autotune')
             log.info("🚀 torch.compile enabled (max-autotune) — first batch will be slow (compiling)")
-        except Exception as e:
-            log.warning(f"⚠️ torch.compile unavailable, running uncompiled: {e}")
+        except (ImportError, Exception) as e:
+            log.info(f"ℹ️  torch.compile not available ({type(e).__name__}), using standard mode")
+            log.info("   (Triton requires Linux — this is normal on Windows)")
 
     # RevIN layer
     revin = RevIN(num_features=n_features).to(device) if use_revin else None
