@@ -402,7 +402,10 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
     # Batch size auto-tuned per model size. RTX 5080 (16GB) target: ~12-13GB.
     BATCH_SIZES = {"small": 160, "lite": 96, "medium": 48, "large": 24}
     batch_size = BATCH_SIZES.get(arch, 48)
-    grad_accum = max(1, 800 // batch_size)  # Keep effective batch ~800
+    # Gradient accumulation: target effective batch of ~256-384 for better convergence
+    # (too large effective batch = too few optimizer steps = slow learning)
+    TARGET_EFFECTIVE = 256
+    grad_accum = max(1, TARGET_EFFECTIVE // batch_size)
 
     # DataLoader workers: 4 parallel prefetch threads for faster data loading
     n_workers = 4 if device.type == 'cuda' else 0
@@ -469,15 +472,17 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
     criterion = nn.CrossEntropyLoss(weight=class_weights_tensor)
     amp_scaler = GradScaler()
 
-    # ── LR schedule: cosine with proportional warmup ──
+    # ── LR schedule: cosine with SHORT warmup ──
     total_steps = (len(train_loader) // grad_accum) * epochs
-    warmup_steps = min(2000, max(1, int(total_steps * 0.10)))  # 10% of total, never > total
+    # Warmup: max 500 steps or 5% of total — never more than half an epoch
+    max_warmup = max(1, len(train_loader) // grad_accum // 2)  # half epoch
+    warmup_steps = min(500, max(1, int(total_steps * 0.05)), max_warmup)
 
     def lr_lambda(step):
         if step < warmup_steps:
-            return step / warmup_steps
+            return max(0.01, step / warmup_steps)  # start from 1% not 0%
         progress = (step - warmup_steps) / max(total_steps - warmup_steps, 1)
-        return max(0.1, 0.5 * (1 + np.cos(np.pi * progress)))
+        return max(0.05, 0.5 * (1 + np.cos(np.pi * progress)))  # min 5% of peak LR
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
 
@@ -537,7 +542,7 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 torch.nn.utils.clip_grad_norm_(all_params, max_norm=1.0)
                 amp_scaler.step(optimizer)
                 amp_scaler.update()
-                optimizer.zero_grad()
+                optimizer.zero_grad(set_to_none=True)
                 scheduler.step()
                 global_step += 1
 
@@ -546,8 +551,9 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
             epoch_correct += (preds == y_batch).sum().item()
             epoch_total += len(y_batch)
 
-            # Progress logging
-            if batch_idx > 0 and batch_idx % 50 == 0:
+            # Progress logging (every ~5% of epoch)
+            log_interval = max(10, len(train_loader) // 20)
+            if batch_idx > 0 and batch_idx % log_interval == 0:
                 progress = batch_idx / len(train_loader) * 100
                 speed = epoch_total / (time.time() - t0)
                 current_lr = scheduler.get_last_lr()[0]
