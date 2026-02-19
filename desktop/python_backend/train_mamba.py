@@ -313,8 +313,9 @@ class TimeSeriesDataset(torch.utils.data.Dataset):
 
     def __init__(self, X: np.ndarray, y: np.ndarray, seq_len: int = 120,
                  stride: int = 1):
-        self.X = X
-        self.y = y
+        # Pre-convert to tensors ONCE (avoids numpy→tensor per __getitem__)
+        self.X = torch.from_numpy(X).float()
+        self.y = torch.from_numpy(y).long()
         self.seq_len = seq_len
         self.stride = stride
         self.total = max(0, (len(X) - seq_len) // stride)
@@ -324,12 +325,7 @@ class TimeSeriesDataset(torch.utils.data.Dataset):
 
     def __getitem__(self, idx):
         real_idx = idx * self.stride
-        x_window = self.X[real_idx:real_idx + self.seq_len]
-        y_label = self.y[real_idx + self.seq_len]
-        return (
-            torch.from_numpy(x_window).float(),
-            torch.tensor(y_label, dtype=torch.long),  # long for CrossEntropyLoss
-        )
+        return self.X[real_idx:real_idx + self.seq_len], self.y[real_idx + self.seq_len]
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -611,8 +607,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         if revin:
             revin.train()
 
-        epoch_loss = 0.0
-        epoch_correct = 0
+        epoch_loss_gpu = torch.tensor(0.0, device=device)
+        epoch_correct_gpu = torch.tensor(0, dtype=torch.long, device=device)
         epoch_total = 0
         t0 = time.time()
         optimizer.zero_grad(set_to_none=True)
@@ -647,18 +643,21 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 scheduler.step()
                 global_step += 1
 
-            epoch_loss += loss.item() * grad_accum
-            preds = logits.argmax(dim=-1)  # (B,) — predicted class
-            epoch_correct += (preds == y_batch).sum().item()
+            # Accumulate on GPU (no CPU-GPU sync per batch!)
+            epoch_loss_gpu += loss.detach() * grad_accum
+            preds = logits.argmax(dim=-1)
+            epoch_correct_gpu += (preds == y_batch).sum()
             epoch_total += len(y_batch)
 
-            # Progress logging (every ~5% of epoch)
+            # Progress logging (every ~5% of epoch) — only sync here
             log_interval = max(10, len(train_loader) // 20)
             if batch_idx > 0 and batch_idx % log_interval == 0:
                 progress = batch_idx / len(train_loader) * 100
                 speed = epoch_total / (time.time() - t0)
                 current_lr = scheduler.get_last_lr()[0]
-                # Use mem_get_info for REAL GPU memory (not caching allocator)
+                # Sync GPU→CPU only at log intervals (not every batch)
+                epoch_loss_val = epoch_loss_gpu.item()
+                epoch_correct_val = epoch_correct_gpu.item()
                 if device.type == 'cuda':
                     free, tot = torch.cuda.mem_get_info()
                     vram_used = (tot - free) / 1e9
@@ -666,11 +665,13 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                     vram_used = 0
                 log.info(
                     f"  Epoch {epoch+1}/{epochs} | {progress:5.1f}% | "
-                    f"Loss: {epoch_loss / (batch_idx + 1):.4f} | Acc: {epoch_correct/epoch_total:.1%} | "
+                    f"Loss: {epoch_loss_val / (batch_idx + 1):.4f} | Acc: {epoch_correct_val/epoch_total:.1%} | "
                     f"LR: {current_lr:.2e} | {speed:.0f} s/s | VRAM: {vram_used:.1f} GB"
                 )
 
-        # ── Epoch summary ──
+        # ── Epoch summary (sync GPU→CPU once per epoch) ──
+        epoch_loss = epoch_loss_gpu.item()
+        epoch_correct = epoch_correct_gpu.item()
         train_loss = epoch_loss / max(len(train_loader), 1)
         train_acc = epoch_correct / max(epoch_total, 1)
         elapsed = time.time() - t0
