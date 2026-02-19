@@ -658,7 +658,12 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 progress = batch_idx / len(train_loader) * 100
                 speed = epoch_total / (time.time() - t0)
                 current_lr = scheduler.get_last_lr()[0]
-                vram_used = torch.cuda.memory_allocated() / 1e9 if device.type == 'cuda' else 0
+                # Use mem_get_info for REAL GPU memory (not caching allocator)
+                if device.type == 'cuda':
+                    free, tot = torch.cuda.mem_get_info()
+                    vram_used = (tot - free) / 1e9
+                else:
+                    vram_used = 0
                 log.info(
                     f"  Epoch {epoch+1}/{epochs} | {progress:5.1f}% | "
                     f"Loss: {epoch_loss / (batch_idx + 1):.4f} | Acc: {epoch_correct/epoch_total:.1%} | "
@@ -709,7 +714,7 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         )
 
         log.info(
-            f"╔══ Epoch {epoch+1}/{epochs} Complete (SmallJamba 3-class) ════════╗\n"
+            f"╔══ Epoch {epoch+1}/{epochs} Complete ({arch.capitalize()}Jamba {NUM_CLASSES}-class) ════════╗\n"
             f"║  Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.1%}\n"
             f"║  Val Loss:   {avg_val_loss:.4f} | Val Acc:   {val_acc:.1%}\n"
             f"║  Preds: {pred_dist}\n"
