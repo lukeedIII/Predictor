@@ -93,9 +93,10 @@ def selective_scan(x: torch.Tensor, delta: torch.Tensor, A: torch.Tensor,
     N = A.shape[1]
     CHUNK: int = 8
 
-    # Discretize all at once (fully vectorized, 2 kernel launches)
-    delta_A = torch.exp(delta.unsqueeze(-1) * A)        # (B, L, D, N)
-    delta_B = delta.unsqueeze(-1) * B.unsqueeze(2)      # (B, L, D, N)
+    # ── MEMORY FIX: compute delta_A / delta_B PER CHUNK ──
+    # Previously pre-allocated (B, L, D, N) for the full sequence — that's
+    # ~180 MB per Mamba block for LiteJamba at batch 16, causing OOM on
+    # 16 GB GPUs.  Now we only need (B, CHUNK, D, N) = ~12 MB per block.
 
     y = torch.empty(B_batch, L, D_dim, device=x.device, dtype=x.dtype)
     h = torch.zeros(B_batch, D_dim, N, device=x.device, dtype=x.dtype)
@@ -103,9 +104,10 @@ def selective_scan(x: torch.Tensor, delta: torch.Tensor, A: torch.Tensor,
     # Process in chunks to amortize Python dispatch overhead
     for t0 in range(0, L, CHUNK):
         t1 = min(t0 + CHUNK, L)
-        # Slice the chunk (no copy, just view)
-        dA_chunk = delta_A[:, t0:t1]      # (B, chunk, D, N)
-        dB_chunk = delta_B[:, t0:t1]      # (B, chunk, D, N)
+
+        # Compute discretized params INSIDE the chunk (avoids O(B*L*D*N) peak)
+        dA_chunk = torch.exp(delta[:, t0:t1].unsqueeze(-1) * A)           # (B, chunk, D, N)
+        dB_chunk = delta[:, t0:t1].unsqueeze(-1) * B[:, t0:t1].unsqueeze(2)  # (B, chunk, D, N)
         x_chunk  = x[:, t0:t1]            # (B, chunk, D)
         C_chunk  = C[:, t0:t1]            # (B, chunk, N)
 
@@ -469,10 +471,11 @@ class SmallJamba(nn.Module):
     def __init__(self, input_size=42, d_model=256, n_layers=4,
                  d_state=16, d_conv=4, expand=2, dropout=0.15,
                  num_classes=1, n_heads=4, n_kv_groups=2,
-                 n_experts=4, top_k=1):
+                 n_experts=4, top_k=1, use_grad_checkpoint=False):
         super().__init__()
         self.d_model = d_model
         self.num_classes = num_classes
+        self.use_grad_checkpoint = use_grad_checkpoint
 
         # Input projection: features → model dimension
         self.input_proj = nn.Sequential(
@@ -549,7 +552,14 @@ class SmallJamba(nn.Module):
 
         # Pass through Jamba blocks (Mamba + Attention hybrid)
         for block in self.blocks:
-            x = block(x)                      # (B, L, d_model)
+            if self.use_grad_checkpoint and self.training:
+                # Gradient checkpointing: recompute forward in backward pass
+                # Saves ~30-50% VRAM at ~20-30% speed cost
+                x = torch.utils.checkpoint.checkpoint(
+                    block, x, use_reentrant=False
+                )
+            else:
+                x = block(x)                  # (B, L, d_model)
 
         # Final norm + mean pool over time
         x = self.norm_f(x)                    # (B, L, d_model)
@@ -638,13 +648,15 @@ JAMBA_CONFIGS = {
 }
 
 
-def create_jamba(size: str = "small", input_size: int = 42, num_classes: int = 3) -> SmallJamba:
+def create_jamba(size: str = "small", input_size: int = 42, num_classes: int = 3,
+                 use_grad_checkpoint: bool = False) -> SmallJamba:
     """Factory function to create a Jamba model of the specified size.
 
     Args:
         size: 'small', 'lite', 'medium', or 'large'
         input_size: Number of input features (default: 42)
         num_classes: 1 for binary, 3 for UP/FLAT/DOWN classification
+        use_grad_checkpoint: Enable gradient checkpointing (saves VRAM, trades compute)
 
     Returns:
         Configured SmallJamba instance
@@ -669,6 +681,7 @@ def create_jamba(size: str = "small", input_size: int = 42, num_classes: int = 3
         n_kv_groups=cfg["n_kv_groups"],
         n_experts=cfg["n_experts"],
         top_k=cfg["top_k"],
+        use_grad_checkpoint=use_grad_checkpoint,
     )
 
 

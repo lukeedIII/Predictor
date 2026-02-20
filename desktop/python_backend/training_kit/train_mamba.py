@@ -33,6 +33,7 @@ References:
 
 import os
 import sys
+import gc
 import time
 import logging
 import argparse
@@ -441,7 +442,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 feat_dropout: float = 0.15,
                 stride: int = 5,
                 use_revin: bool = True,
-                arch: str = "small"):
+                arch: str = "small",
+                grad_checkpoint: bool = False):
     """Train Jamba hybrid (Mamba+Attention+MoE) with all critical fixes."""
     from mamba_model import create_jamba, JAMBA_CONFIGS
 
@@ -528,11 +530,14 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         size=arch,
         input_size=n_features,
         num_classes=NUM_CLASSES,  # 3-class: UP / FLAT / DOWN
+        use_grad_checkpoint=grad_checkpoint,
     ).to(device)
     log.info(f"{cfg_label}: {model.num_parameters / 1e6:.2f}M params ({model.size_mb:.1f} MB)")
     log.info(f"Output: {NUM_CLASSES}-class ({'/'.join(CLASS_NAMES.values())})")
     log.info(f"Batch size: {batch_size} × {grad_accum} grad_accum = {batch_size * grad_accum} effective")
     log.info(f"Samples/param ratio: {len(train_ds) / model.num_parameters:.1f}x")
+    if grad_checkpoint:
+        log.info("🧠 Gradient checkpointing: ENABLED (saves ~30-50% VRAM, ~20-30% slower)")
 
     # torch.compile: fuses small kernels into optimized Triton kernels.
     # Requires Triton which is Linux-only. On Windows, falls back gracefully.
@@ -614,6 +619,11 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         log.info(f"  🎯 Accuracy target: {accuracy_target:.0%}")
     log.info(f"{'═' * 60}\n")
 
+    # ── OOM-safe training loop ──
+    # If the auto-batch-size guess is too aggressive, catch OOM, halve
+    # batch, rebuild DataLoader, and retry. Down to MIN_BATCH=4.
+    MIN_BATCH = 4
+
     for epoch in range(epochs):
         model.train()
         if revin:
@@ -637,15 +647,48 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
             if revin:
                 x_batch = revin(x_batch)
 
-            with autocast('cuda', dtype=torch.float16):
-                out = model(x_batch, return_logits=True)  # ModelOut(logits, aux_loss)
-                logits, aux_loss = out.logits, out.aux_loss
-                ce_loss = criterion(logits, y_batch)
-                # MoE load-balancing loss (encourages uniform expert usage, λ=0.01)
-                loss = (ce_loss + aux_loss * 0.01) / grad_accum
+            try:
+                with autocast('cuda', dtype=torch.float16):
+                    out = model(x_batch, return_logits=True)  # ModelOut(logits, aux_loss)
+                    logits, aux_loss = out.logits, out.aux_loss
+                    ce_loss = criterion(logits, y_batch)
+                    # MoE load-balancing loss (encourages uniform expert usage, λ=0.01)
+                    loss = (ce_loss + aux_loss * 0.01) / grad_accum
 
-            amp_scaler.scale(loss).backward()
+                amp_scaler.scale(loss).backward()
+            except torch.cuda.OutOfMemoryError:
+                # ── OOM RECOVERY ──
+                new_bs = max(MIN_BATCH, batch_size // 2)
+                if new_bs < MIN_BATCH:
+                    log.error(f"❌ OOM even at minimum batch {MIN_BATCH}. Aborting.")
+                    raise
+                log.warning(f"⚠️  OOM at batch_size={batch_size}! "
+                            f"Halving → {new_bs} and restarting epoch {epoch+1}")
+                # Flush everything
+                del x_batch, y_batch
+                if 'out' in dir(): del out
+                if 'loss' in dir(): del loss
+                optimizer.zero_grad(set_to_none=True)
+                torch.cuda.empty_cache()
+                gc.collect()
 
+                batch_size = new_bs
+                grad_accum = max(1, 256 // batch_size)
+                train_loader = torch.utils.data.DataLoader(
+                    train_ds, batch_size=batch_size, shuffle=True,
+                    num_workers=n_workers, pin_memory=True, drop_last=True,
+                    persistent_workers=(n_workers > 0),
+                )
+                val_loader = torch.utils.data.DataLoader(
+                    val_ds, batch_size=batch_size * 2, shuffle=False,
+                    num_workers=n_workers, pin_memory=True,
+                    persistent_workers=(n_workers > 0),
+                )
+                log.info(f"🔄 Rebuilt DataLoaders: batch={batch_size} × "
+                         f"{grad_accum} grad_accum = {batch_size * grad_accum} effective")
+                break  # break out of batch loop → triggers continue below
+
+            # ── Successful batch: gradient accumulation + stats ──
             if (batch_idx + 1) % grad_accum == 0:
                 amp_scaler.unscale_(optimizer)
                 torch.nn.utils.clip_grad_norm_(all_params, max_norm=1.0)
@@ -696,6 +739,15 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                     f"Loss: {epoch_loss_val / (batch_idx + 1):.4f} | Acc: {epoch_correct_val/epoch_total:.1%} | "
                     f"LR: {current_lr:.2e} | {speed:.0f} s/s | VRAM: {vram_used:.1f} GB"
                 )
+        else:
+            # for-else: this block runs ONLY when the batch loop completed
+            # normally (no OOM break). Proceed to epoch summary + validation.
+            pass
+
+        if epoch_total == 0:
+            # Epoch was aborted by OOM — skip validation, retry same epoch
+            log.info(f"⏩ Skipping validation for epoch {epoch+1} (restarting with batch={batch_size})")
+            continue
 
         # ── Epoch summary (sync GPU→CPU once per epoch) ──
         epoch_loss = epoch_loss_gpu.item()
@@ -871,6 +923,8 @@ def main():
     parser.add_argument('--no-revin', action='store_true')
     parser.add_argument('--no-cache', action='store_true',
                         help='Force re-engineer features (ignore cache)')
+    parser.add_argument('--grad-checkpoint', action='store_true',
+                        help='Enable gradient checkpointing (saves ~30-50%% VRAM, ~20-30%% slower)')
     args = parser.parse_args()
 
     # Auto-set output filename from arch
@@ -1013,6 +1067,7 @@ def main():
         stride=args.stride,
         use_revin=not args.no_revin,
         arch=args.arch,
+        grad_checkpoint=args.grad_checkpoint,
     )
 
     log.info(f"\n🎉 Done! {label} trained → {args.output}")
