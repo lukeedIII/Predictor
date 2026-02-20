@@ -70,6 +70,7 @@ log = logging.getLogger(__name__)
 
 # ── Flask App ──
 app = Flask(__name__)
+app.json.sort_keys = False  # Preserve insertion order for preset display
 
 # ══════════════════════════════════════════════════════════════════════════
 # GLOBAL STATE (thread-safe via lock)
@@ -101,6 +102,7 @@ state = {
     "epoch_history": [],       # [{epoch, train_loss, train_acc, val_loss, val_acc}]
     "started_at": None,
     "elapsed": "",
+    "batch_size": 0,
 }
 
 stop_requested = threading.Event()
@@ -559,6 +561,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
         else:
             batch_size = 128
     add_log(f"   Batch size: {batch_size}")
+    update_state(batch_size=batch_size)
 
     # ── Build DataLoaders (may be rebuilt if OOM triggers batch halving) ──
     n_workers = 4 if device == 'cuda' else 0
@@ -660,6 +663,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
                     return False
                 add_log(f"⚠️ OOM detected! Auto-halving batch: {batch_size} → {new_bs}")
                 batch_size = new_bs
+                update_state(batch_size=new_bs)
                 grad_accum = max(1, 512 // batch_size)
                 train_loader, val_loader = build_loaders(batch_size)
                 # Re-create GradScaler to avoid stale scale factor from failed step

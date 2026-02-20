@@ -1269,7 +1269,7 @@
         function updateUI(s) {
             // GPU
             if (s.gpu_name && s.gpu_name !== 'N/A') {
-                document.getElementById('gpuName').textContent = s.gpu_name + ' \u00b7 ' + s.vram_total_gb + 'GB';
+                document.getElementById('gpuName').textContent = s.gpu_name + ' \u00b7 ' + s.vram_total_gb + ' GB';
                 document.getElementById('gpuDot').style.background = s.status === 'training' ? 'var(--green)' : 'var(--amber)';
             }
 
@@ -1309,9 +1309,14 @@
             document.getElementById('sLoss').textContent = s.train_loss ? s.train_loss.toFixed(4) : '\u2014';
             document.getElementById('sSpeed').textContent = s.speed ? s.speed + '/s' : '\u2014';
             document.getElementById('sVRAM').textContent = s.vram_used_gb ? s.vram_used_gb + '/' + s.vram_total_gb : '\u2014';
+            var vramStatEl = document.getElementById('sVRAM');
+            if (s.vram_used_gb && s.vram_total_gb) {
+                var vramRatio = s.vram_used_gb / s.vram_total_gb;
+                vramStatEl.style.color = vramRatio >= 0.85 ? 'var(--red)' : vramRatio >= 0.6 ? 'var(--amber)' : 'var(--green)';
+            }
             document.getElementById('sLR').textContent = s.lr ? s.lr.toExponential(1) : '\u2014';
             document.getElementById('sETA').textContent = s.eta || '\u2014';
-            document.getElementById('sBatch').textContent = s.batch_progress ? s.batch_progress.toFixed(0) + '%' : '\u2014';
+            document.getElementById('sBatch').textContent = s.batch_size ? s.batch_size : '\u2014';
 
             var valEl = document.getElementById('sValAcc');
             valEl.style.color = s.val_acc >= 75 ? 'var(--green)' : s.val_acc >= 60 ? 'var(--amber)' : 'var(--text-2)';

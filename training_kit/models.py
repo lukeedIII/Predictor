@@ -93,12 +93,14 @@ def _estimate_jamba_params(cfg, input_size=36, num_classes=3):
     head = d * (d // 2) + (d // 2) + (d // 2) * num_classes + num_classes + d  # + final RMSNorm
 
     total = proj + total_layers + head
-    vram_mb = total * 4 / (1024 * 1024)  # float32
+    vram_mb = total * 4 / (1024 * 1024)  # float32 model weights only
+    # Training VRAM ≈ 4× weights: model + optimizer momenta (2×) + gradients (1×)
+    training_vram_mb = vram_mb * 4
     return {
         'params': total,
         'params_human': f"{total / 1e6:.1f}M" if total >= 1e6 else f"{total / 1e3:.0f}K",
-        'vram_mb': round(vram_mb, 1),
-        'vram_gb': round(vram_mb / 1024, 2),
+        'vram_mb': round(training_vram_mb, 1),
+        'vram_gb': round(training_vram_mb / 1024, 2),
     }
 
 
