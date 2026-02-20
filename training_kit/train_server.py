@@ -468,7 +468,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     n_down = (y_preview == CLASS_DOWN).sum()
     add_log(f"   UP: {n_up:,} ({n_up/n*100:.1f}%) | FLAT: {n_flat:,} ({n_flat/n*100:.1f}%) | DOWN: {n_down:,} ({n_down/n*100:.1f}%)")
 
-    # Create feature matrix
+    # Create feature matrix (flat — ~700 MB for 4.3M × 42 float32)
     features = df_valid[feature_cols].values.astype(np.float32)
 
     # Standardize
@@ -476,15 +476,12 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     scaler = StandardScaler()
     features = scaler.fit_transform(features)
 
-    # Create sliding windows — zero-copy with stride_tricks
-    from numpy.lib.stride_tricks import sliding_window_view
-    X_all = sliding_window_view(features, (SEQ_LEN, features.shape[1])).squeeze(axis=1)[:n].copy()
     y_all = labels_valid.values[SEQ_LEN:SEQ_LEN+n].astype(np.int64)
 
-    # Train/val split (80/20)
+    # Train/val split (80/20) — split the INDEX, not the data
     split = int(0.8 * n)
-    X_train, X_val = X_all[:split], X_all[split:]
-    y_train, y_val = y_all[:split], y_all[split:]
+    y_train = y_all[:split]
+    y_val = y_all[split:]
 
     # Per-class weights for imbalanced data
     from collections import Counter
@@ -494,17 +491,27 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
         [total_count / (NUM_CLASSES * max(counts.get(c, 1), 1)) for c in range(NUM_CLASSES)],
         dtype=torch.float32
     )
-    add_log(f"   Train: {len(X_train):,} | Val: {len(X_val):,}")
+    add_log(f"   Train: {len(y_train):,} | Val: {len(y_val):,}")
     add_log(f"   Class weights: DOWN={class_weights[0]:.2f}, FLAT={class_weights[1]:.2f}, UP={class_weights[2]:.2f}")
 
-    # Tensors (CPU-resident — DataLoader pins+moves batches to GPU on demand)
-    X_train_t = torch.tensor(X_train)
-    y_train_t = torch.tensor(y_train)  # long for CrossEntropyLoss
-    X_val_t = torch.tensor(X_val)
-    y_val_t = torch.tensor(y_val)
+    # Lazy Dataset — slices windows on-the-fly, never materializes the full 3D array
+    # Stores only the flat feature matrix (~700 MB) + label vector (~17 MB)
+    class LazyWindowDataset(torch.utils.data.Dataset):
+        def __init__(self, X_flat, y, seq_len, offset=0):
+            self.X = torch.from_numpy(X_flat).float()
+            self.y = torch.from_numpy(y).long()
+            self.seq_len = seq_len
+            self.offset = offset  # start index into X_flat
 
-    train_ds = torch.utils.data.TensorDataset(X_train_t, y_train_t)
-    val_ds = torch.utils.data.TensorDataset(X_val_t, y_val_t)
+        def __len__(self):
+            return len(self.y)
+
+        def __getitem__(self, idx):
+            real_idx = self.offset + idx
+            return self.X[real_idx:real_idx + self.seq_len], self.y[idx]
+
+    train_ds = LazyWindowDataset(features, y_train, SEQ_LEN, offset=0)
+    val_ds = LazyWindowDataset(features, y_val, SEQ_LEN, offset=split)
 
     # Model — loaded BEFORE batch sizing so VRAM measurement is accurate
     ModelFactory = ARCHITECTURES[arch_name]
