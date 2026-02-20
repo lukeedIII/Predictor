@@ -454,8 +454,14 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     if device == 'cuda':
         gpu_name = torch.cuda.get_device_name(0)
         vram_total = torch.cuda.get_device_properties(0).total_memory / 1e9
+        # Hard-cap VRAM at 90% — NEVER spill into shared memory (system RAM via PCIe)
+        # This prevents the PC from lagging. OOM recovery will halve batch instead.
+        try:
+            torch.cuda.set_per_process_memory_fraction(0.90, 0)
+        except RuntimeError:
+            pass  # Already set from a previous run in same process
         update_state(gpu_name=gpu_name, vram_total_gb=round(vram_total, 1))
-        add_log(f"🖥️  GPU: {gpu_name} ({vram_total:.1f} GB VRAM)")
+        add_log(f"🖥️  GPU: {gpu_name} ({vram_total:.1f} GB VRAM, capped at 90%)")
     else:
         add_log("⚠️ No GPU found! Training on CPU (very slow)")
 
@@ -536,9 +542,12 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     if batch_size is None:
         if device == 'cuda':
             torch.cuda.empty_cache()
-            free_bytes = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)
+            total_bytes = torch.cuda.get_device_properties(0).total_memory
+            capped_bytes = int(total_bytes * 0.90)  # Match the 90% hard cap
+            used_bytes = torch.cuda.memory_allocated(0)
+            free_bytes = capped_bytes - used_bytes
             free_gb = free_bytes / 1e9
-            add_log(f"   Free VRAM (post-model): {free_gb:.1f} GB")
+            add_log(f"   Free VRAM (post-model, 90% cap): {free_gb:.1f} GB")
 
             # Reserve for AdamW optimizer (2 momentum buffers) + gradient buffer + CUDA workspace
             optimizer_reserve = model.num_parameters * 4 * 3
