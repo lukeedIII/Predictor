@@ -509,17 +509,33 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
     # Gradient accumulation: target effective batch ~256
     grad_accum = max(1, 256 // batch_size)
 
-    # DataLoader workers: 4 parallel prefetch threads for faster data loading
-    n_workers = 4 if device.type == 'cuda' else 0
+    # DataLoader workers: auto-scale based on system RAM
+    # Each worker forks the full process (imports numpy/torch) → ~1-2 GB RAM each.
+    # On systems with <32 GB RAM, 4+4 workers (train+val) can cause OpenBLAS OOM.
+    try:
+        import psutil
+        sys_ram_gb = psutil.virtual_memory().total / (1024**3)
+    except ImportError:
+        sys_ram_gb = 16  # conservative fallback
+        log.info("⚠️  psutil not installed — assuming 16 GB RAM (pip install psutil)")
+    if device.type == 'cuda' and sys_ram_gb >= 32:
+        n_workers = 4
+    elif device.type == 'cuda' and sys_ram_gb >= 16:
+        n_workers = 2
+    else:
+        n_workers = 0
+    log.info(f"System RAM: {sys_ram_gb:.0f} GB → DataLoader workers: {n_workers}")
+
     train_loader = torch.utils.data.DataLoader(
         train_ds, batch_size=batch_size, shuffle=True,
         num_workers=n_workers, pin_memory=True, drop_last=True,
         persistent_workers=(n_workers > 0),
     )
+    # Val/test loaders: always 0 workers — fast enough single-threaded,
+    # and avoids the double-worker RAM exhaustion that crashed RTX 3090 systems.
     val_loader = torch.utils.data.DataLoader(
         val_ds, batch_size=batch_size * 2, shuffle=False,
-        num_workers=n_workers, pin_memory=True,
-        persistent_workers=(n_workers > 0),
+        num_workers=0, pin_memory=True,
     )
 
     log.info(f"Train windows: {len(train_ds):,} (stride={stride}) | Val windows: {len(val_ds):,}")
@@ -849,7 +865,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         log.info("\n─── Test Set Evaluation ───")
         test_ds = TimeSeriesDataset(X_test, y_test, seq_len=SEQ_LEN, stride=1)
         test_loader = torch.utils.data.DataLoader(
-            test_ds, batch_size=batch_size * 2, shuffle=False, pin_memory=True,
+            test_ds, batch_size=batch_size * 2, shuffle=False,
+            num_workers=0, pin_memory=True,  # 0 workers — avoid RAM OOM
         )
 
         model.eval()
