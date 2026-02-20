@@ -557,7 +557,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
             # Activation memory per sample scales with model complexity (depth × width × expand).
             # Empirical: ~3 bytes per model parameter per sample (verified on RTX 3090 with Jamba).
             activation_per_sample = model.num_parameters * 3
-            batch_size = max(32, int(available / activation_per_sample))
+            batch_size = max(16, int(available / activation_per_sample))
             batch_size = (batch_size // 32) * 32  # Round to multiple of 32
             batch_size = min(batch_size, 2048)
         else:
@@ -658,7 +658,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
                 torch.cuda.empty_cache()
                 torch.cuda.synchronize()  # Wait for all CUDA ops to finish
                 import gc; gc.collect()
-                new_bs = max(batch_size // 2, 64)
+                new_bs = max(batch_size // 2, 16)
                 if new_bs == batch_size:
                     add_log(f"❌ OOM at minimum batch size ({batch_size}) — cannot train this architecture")
                     return False
