@@ -101,9 +101,10 @@ def selective_scan(x: torch.Tensor, delta: torch.Tensor, A: torch.Tensor,
     y = torch.empty(B_batch, L, D_dim, device=x.device, dtype=x.dtype)
     h = torch.zeros(B_batch, D_dim, N, device=x.device, dtype=x.dtype)
 
-    # Process in chunks to amortize Python dispatch overhead
+    # Process in chunks — VECTORIZED inner scan (no Python per-timestep loop)
     for t0 in range(0, L, CHUNK):
         t1 = min(t0 + CHUNK, L)
+        chunk_len = t1 - t0
 
         # Compute discretized params INSIDE the chunk (avoids O(B*L*D*N) peak)
         dA_chunk = torch.exp(delta[:, t0:t1].unsqueeze(-1) * A)           # (B, chunk, D, N)
@@ -111,10 +112,46 @@ def selective_scan(x: torch.Tensor, delta: torch.Tensor, A: torch.Tensor,
         x_chunk  = x[:, t0:t1]            # (B, chunk, D)
         C_chunk  = C[:, t0:t1]            # (B, chunk, N)
 
-        # Sequential scan within chunk (unavoidable recurrence)
-        for dt in range(t1 - t0):
-            h = dA_chunk[:, dt] * h + dB_chunk[:, dt] * x_chunk[:, dt].unsqueeze(-1)
-            y[:, t0 + dt] = (h * C_chunk[:, dt].unsqueeze(1)).sum(dim=-1)
+        # ── VECTORIZED parallel prefix scan within chunk ──
+        # Recurrence: h[t] = dA[t] * h[t-1] + dB[t] * x[t]
+        # We compute the cumulative product of dA factors, then use it to
+        # propagate h(t0-1) and all dB*x contributions in one shot.
+        #
+        # For a chunk [0..K-1]:
+        #   h[k] = prod(dA[0..k]) * h_prev + sum_{j=0}^{k} prod(dA[j+1..k]) * (dB*x)[j]
+        #
+        # The inner sum is a "reversed cumsum of log-weighted inputs" which we
+        # vectorize with cumprod.
+
+        # Input contribution at each timestep: (B, chunk, D, N)
+        inp = dB_chunk * x_chunk.unsqueeze(-1)
+
+        # Cumulative product of decay factors: cumprod along chunk dim
+        # cum_dA[k] = dA[0] * dA[1] * ... * dA[k]   shape: (B, chunk, D, N)
+        cum_dA = torch.cumprod(dA_chunk, dim=1)
+
+        # Propagate previous hidden state through the chunk:
+        # h_carry[k] = cum_dA[k] * h_prev   → (B, chunk, D, N)
+        h_carry = cum_dA * h.unsqueeze(1)  # broadcast h_prev across chunk
+
+        # For each position k, sum contributions from all j <= k:
+        # contrib[k] = sum_{j=0}^{k} (cum_dA[k] / cum_dA[j]) * inp[j]
+        #            = cum_dA[k] * sum_{j=0}^{k} inp[j] / cum_dA[j]
+        # We compute inp_normalized = inp / cum_dA, then cumsum, then multiply.
+        # Clamp to avoid division by zero in cum_dA.
+        inp_norm = inp / cum_dA.clamp(min=1e-8)  # (B, chunk, D, N)
+        inp_cumsum = torch.cumsum(inp_norm, dim=1)  # (B, chunk, D, N)
+        h_input = cum_dA * inp_cumsum  # (B, chunk, D, N)
+
+        # Total hidden state at each position in the chunk
+        h_chunk = h_carry + h_input  # (B, chunk, D, N)
+
+        # Output: y[k] = sum_n( h[k] * C[k] )
+        # h_chunk: (B, chunk, D, N), C_chunk: (B, chunk, N) → need (B, chunk, D)
+        y[:, t0:t1] = (h_chunk * C_chunk.unsqueeze(2)).sum(dim=-1)
+
+        # Update carry state for next chunk: h = h_chunk[:, -1, :, :]
+        h = h_chunk[:, -1]  # (B, D, N)
 
     y = y + x * D_skip
     return y

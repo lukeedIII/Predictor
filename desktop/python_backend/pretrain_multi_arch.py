@@ -16,6 +16,7 @@ All architectures reuse the same feature engineering as pretrain_transformer.py.
 
 import os
 import sys
+import gc
 import time
 import logging
 import argparse
@@ -596,8 +597,8 @@ def pretrain(df: pd.DataFrame, feature_cols: list, arch_name: str,
     total_windows = len(X_all) - SEQ_LEN
     log.info(f"Total windows: {total_windows:,}")
 
-    batch_size = 512
-    grad_accum = 2  # Effective batch = 1024
+    batch_size = 256  # lowered from 512 — OOM-retry will halve if needed
+    grad_accum = 4   # Effective batch = 1024
 
     # Split: 95% train, 5% val
     val_start = int(total_windows * 0.95)
@@ -624,61 +625,78 @@ def pretrain(df: pd.DataFrame, feature_cols: list, arch_name: str,
         log.info(f"🎯 Accuracy target: {accuracy_target:.0%} — will stop early if reached")
 
     for epoch in range(epochs):
-        model.train()
-        epoch_loss = 0
-        epoch_correct = 0
-        epoch_total = 0
+        # ── OOM-RETRY LOOP: halve batch & restart epoch on OOM ──
+        while True:
+            try:
+                model.train()
+                epoch_loss = 0
+                epoch_correct = 0
+                epoch_total = 0
 
-        train_indices = np.random.permutation(val_start)
-        t0 = time.time()
-        optimizer.zero_grad()
-
-        for batch_start in range(0, val_start, batch_size):
-            batch_idx = train_indices[batch_start:batch_start + batch_size]
-
-            batch_X = np.array([X_all[i:i + SEQ_LEN] for i in batch_idx if i + SEQ_LEN < len(X_all)])
-            batch_y = np.array([y_all[i + SEQ_LEN] for i in batch_idx if i + SEQ_LEN < len(y_all)])
-
-            if len(batch_X) == 0:
-                continue
-
-            x_tensor = torch.FloatTensor(batch_X).to(device)
-            y_tensor = torch.FloatTensor(batch_y).unsqueeze(1).to(device)
-
-            with autocast('cuda', dtype=torch.float16):
-                output = model(x_tensor, return_logits=True)
-                loss = criterion(output, y_tensor) / grad_accum
-
-            scaler.scale(loss).backward()
-
-            if (batch_start // batch_size + 1) % grad_accum == 0:
-                scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
-                scaler.step(optimizer)
-                scaler.update()
+                train_indices = np.random.permutation(val_start)
+                t0 = time.time()
                 optimizer.zero_grad()
-                scheduler.step()
-                global_step += 1
 
-            epoch_loss += loss.item() * grad_accum
-            predictions = (output > 0.5).float()
-            epoch_correct += (predictions == y_tensor).sum().item()
-            epoch_total += len(y_tensor)
+                for batch_start in range(0, val_start, batch_size):
+                    batch_idx = train_indices[batch_start:batch_start + batch_size]
 
-            # Progress logging
-            if batch_start % (batch_size * 20) == 0 and batch_start > 0:
-                progress = batch_start / val_start * 100
-                speed = batch_start / (time.time() - t0)
-                current_lr = scheduler.get_last_lr()[0]
-                vram_used = torch.cuda.memory_allocated() / 1e9 if device.type == 'cuda' else 0
-                log.info(
-                    f"  Epoch {epoch + 1}/{epochs} | {progress:5.1f}% | "
-                    f"Loss: {epoch_loss / (batch_start // batch_size + 1):.4f} | "
-                    f"Acc: {epoch_correct / epoch_total:.1%} | "
-                    f"LR: {current_lr:.2e} | "
-                    f"Speed: {speed:.0f} samples/s | "
-                    f"VRAM: {vram_used:.1f} GB"
-                )
+                    batch_X = np.array([X_all[i:i + SEQ_LEN] for i in batch_idx if i + SEQ_LEN < len(X_all)])
+                    batch_y = np.array([y_all[i + SEQ_LEN] for i in batch_idx if i + SEQ_LEN < len(y_all)])
+
+                    if len(batch_X) == 0:
+                        continue
+
+                    x_tensor = torch.FloatTensor(batch_X).to(device)
+                    y_tensor = torch.FloatTensor(batch_y).unsqueeze(1).to(device)
+
+                    with autocast('cuda', dtype=torch.float16):
+                        output = model(x_tensor, return_logits=True)
+                        loss = criterion(output, y_tensor) / grad_accum
+
+                    scaler.scale(loss).backward()
+
+                    if (batch_start // batch_size + 1) % grad_accum == 0:
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+                        scaler.step(optimizer)
+                        scaler.update()
+                        optimizer.zero_grad()
+                        scheduler.step()
+                        global_step += 1
+
+                    epoch_loss += loss.item() * grad_accum
+                    predictions = (output > 0.5).float()
+                    epoch_correct += (predictions == y_tensor).sum().item()
+                    epoch_total += len(y_tensor)
+
+                    # Progress logging
+                    if batch_start % (batch_size * 20) == 0 and batch_start > 0:
+                        progress = batch_start / val_start * 100
+                        speed = batch_start / (time.time() - t0)
+                        current_lr = scheduler.get_last_lr()[0]
+                        vram_used = torch.cuda.memory_allocated() / 1e9 if device.type == 'cuda' else 0
+                        log.info(
+                            f"  Epoch {epoch + 1}/{epochs} | {progress:5.1f}% | "
+                            f"Loss: {epoch_loss / (batch_start // batch_size + 1):.4f} | "
+                            f"Acc: {epoch_correct / epoch_total:.1%} | "
+                            f"LR: {current_lr:.2e} | "
+                            f"Speed: {speed:.0f} samples/s | "
+                            f"VRAM: {vram_used:.1f} GB"
+                        )
+
+                break  # epoch completed successfully
+
+            except torch.cuda.OutOfMemoryError:
+                old_bs = batch_size
+                batch_size = max(16, batch_size // 2)
+                log.warning(f"💥 OOM detected! Auto-halving batch size: {old_bs} → {batch_size}")
+                optimizer.zero_grad(set_to_none=True)
+                torch.cuda.empty_cache()
+                gc.collect()
+                if batch_size <= 16:
+                    log.error(f"❌ OOM even at batch_size=16 — aborting")
+                    raise
+                log.info(f"🔄 Retrying epoch {epoch + 1} with batch_size={batch_size}...")
 
         # Epoch summary
         train_loss = epoch_loss / max(epoch_total // batch_size, 1)
