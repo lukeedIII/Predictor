@@ -455,7 +455,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
     if device == 'cuda':
         gpu_name = torch.cuda.get_device_name(0)
-        vram_total = torch.cuda.get_device_properties(0).total_memory / 1e9
+        vram_total = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)  # GiB
         update_state(gpu_name=gpu_name, vram_total_gb=round(vram_total, 1))
         add_log(f"🖥️  GPU: {gpu_name} ({vram_total:.1f} GB VRAM)")
     else:
@@ -540,22 +540,31 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
             torch.cuda.empty_cache()
             # Use driver-level query for REAL free VRAM (includes context, OS, other apps)
             free_bytes, total_bytes = torch.cuda.mem_get_info(0)
-            free_gb = free_bytes / 1e9
-            add_log(f"   Real free VRAM (driver): {free_gb:.1f} / {total_bytes/1e9:.1f} GB")
+            free_gib = free_bytes / (1024 ** 3)
+            total_gib = total_bytes / (1024 ** 3)
+            add_log(f"   Real free VRAM (driver): {free_gib:.1f} / {total_gib:.1f} GB")
 
-            # Target 75% of real free VRAM — leave 25% for OS, display, fragmentation
-            usable_bytes = int(free_bytes * 0.75)
+            # Target 60% of real free VRAM — leave 40% for fragmentation, spikes, OS
+            usable_bytes = int(free_bytes * 0.60)
 
             # Reserve for AdamW optimizer (2 momentum buffers) + gradient buffer
             optimizer_reserve = model.num_parameters * 4 * 3
-            available = max(usable_bytes - optimizer_reserve, 512 * 1024 * 1024)  # At least 512 MB
+            available = max(usable_bytes - optimizer_reserve, 256 * 1024 * 1024)  # At least 256 MB
 
-            # Activation memory per sample scales with model complexity.
-            # Empirical: ~3 bytes per model parameter per sample for Jamba (Mamba + MoE + Attn).
-            activation_per_sample = model.num_parameters * 3
+            # Activation memory scales with params AND sequence length.
+            # Mamba stores per-timestep states; attention stores QKV caches.
+            # Empirical: ~(params × 3) + (SEQ_LEN × d_model × expand × 4) per sample
+            activation_per_sample = model.num_parameters * 3 + SEQ_LEN * 512 * 4  # conservative
             batch_size = max(16, int(available / activation_per_sample))
             batch_size = (batch_size // 16) * 16  # Round to multiple of 16
-            batch_size = min(batch_size, 2048)
+
+            # ── Arch-specific hard caps (proven safe on 16 GB cards) ──
+            ARCH_MAX = {
+                'small_jamba': 256, 'lite_jamba': 192,
+                'medium_jamba': 128, 'large_jamba': 48,
+            }
+            arch_cap = ARCH_MAX.get(arch_name, 128)
+            batch_size = min(batch_size, arch_cap)
             if batch_size < 16:
                 batch_size = 16
         else:
@@ -680,7 +689,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
 
             # Update progress every 20 batches (sync GPU→CPU only here)
             if bi % 20 == 0:
-                vram = torch.cuda.memory_allocated(0) / 1e9 if device == 'cuda' else 0
+                vram = torch.cuda.memory_allocated(0) / (1024 ** 3) if device == 'cuda' else 0
                 elapsed = time.time() - epoch_start
                 speed = epoch_total / max(elapsed, 0.01)
                 update_state(
@@ -805,7 +814,7 @@ def training_worker(arch_queue, epochs, lr):
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()
                 gc.collect()
-                freed_to = torch.cuda.memory_allocated(0) / 1e9
+                freed_to = torch.cuda.memory_allocated(0) / (1024 ** 3)
                 add_log(f"🧹 VRAM cleanup between archs — {freed_to:.2f} GB still allocated")
 
             if stop_requested.is_set():
@@ -1015,12 +1024,12 @@ def clear_vram():
     if state['status'] == 'training':
         return jsonify({'error': 'Cannot clear VRAM while training is active'}), 400
 
-    before = torch.cuda.memory_allocated(0) / 1e9
+    before = torch.cuda.memory_allocated(0) / (1024 ** 3)
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
     import gc
     gc.collect()
-    after = torch.cuda.memory_allocated(0) / 1e9
+    after = torch.cuda.memory_allocated(0) / (1024 ** 3)
 
     freed = before - after
     add_log(f"🧹 VRAM cleared: {before:.2f} GB → {after:.2f} GB (freed {freed:.2f} GB)")
@@ -1155,7 +1164,7 @@ if __name__ == '__main__':
     # GPU check
     if torch.cuda.is_available():
         gpu = torch.cuda.get_device_name(0)
-        vram = torch.cuda.get_device_properties(0).total_memory / 1e9
+        vram = torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)  # GiB
         log.info(f"🖥️  GPU: {gpu} ({vram:.1f} GB VRAM)")
         update_state(gpu_name=gpu, vram_total_gb=round(vram, 1))
     else:
