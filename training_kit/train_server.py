@@ -454,14 +454,8 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     if device == 'cuda':
         gpu_name = torch.cuda.get_device_name(0)
         vram_total = torch.cuda.get_device_properties(0).total_memory / 1e9
-        # Hard-cap VRAM at 90% — NEVER spill into shared memory (system RAM via PCIe)
-        # This prevents the PC from lagging. OOM recovery will halve batch instead.
-        try:
-            torch.cuda.set_per_process_memory_fraction(0.90, 0)
-        except RuntimeError:
-            pass  # Already set from a previous run in same process
         update_state(gpu_name=gpu_name, vram_total_gb=round(vram_total, 1))
-        add_log(f"🖥️  GPU: {gpu_name} ({vram_total:.1f} GB VRAM, capped at 90%)")
+        add_log(f"🖥️  GPU: {gpu_name} ({vram_total:.1f} GB VRAM)")
     else:
         add_log("⚠️ No GPU found! Training on CPU (very slow)")
 
@@ -542,24 +536,26 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     if batch_size is None:
         if device == 'cuda':
             torch.cuda.empty_cache()
-            total_bytes = torch.cuda.get_device_properties(0).total_memory
-            capped_bytes = int(total_bytes * 0.90)  # Match the 90% hard cap
-            used_bytes = torch.cuda.memory_allocated(0)
-            free_bytes = capped_bytes - used_bytes
+            # Use driver-level query for REAL free VRAM (includes context, OS, other apps)
+            free_bytes, total_bytes = torch.cuda.mem_get_info(0)
             free_gb = free_bytes / 1e9
-            add_log(f"   Free VRAM (post-model, 90% cap): {free_gb:.1f} GB")
+            add_log(f"   Real free VRAM (driver): {free_gb:.1f} / {total_bytes/1e9:.1f} GB")
 
-            # Reserve for AdamW optimizer (2 momentum buffers) + gradient buffer + CUDA workspace
+            # Target 75% of real free VRAM — leave 25% for OS, display, fragmentation
+            usable_bytes = int(free_bytes * 0.75)
+
+            # Reserve for AdamW optimizer (2 momentum buffers) + gradient buffer
             optimizer_reserve = model.num_parameters * 4 * 3
-            workspace_reserve = 2_000_000_000  # 2 GB headroom for CUDA kernels / fragmentation
-            available = max(free_bytes - optimizer_reserve - workspace_reserve, 1 << 30)
+            available = max(usable_bytes - optimizer_reserve, 512 * 1024 * 1024)  # At least 512 MB
 
-            # Activation memory per sample scales with model complexity (depth × width × expand).
-            # Empirical: ~3 bytes per model parameter per sample (verified on RTX 3090 with Jamba).
+            # Activation memory per sample scales with model complexity.
+            # Empirical: ~3 bytes per model parameter per sample for Jamba (Mamba + MoE + Attn).
             activation_per_sample = model.num_parameters * 3
             batch_size = max(16, int(available / activation_per_sample))
-            batch_size = (batch_size // 32) * 32  # Round to multiple of 32
+            batch_size = (batch_size // 16) * 16  # Round to multiple of 16
             batch_size = min(batch_size, 2048)
+            if batch_size < 16:
+                batch_size = 16
         else:
             batch_size = 128
     add_log(f"   Batch size: {batch_size}")
