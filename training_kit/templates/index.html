@@ -842,16 +842,16 @@
                         <div class="slider-row"><label>d_model</label><input type="range" id="sl_d_model" min="64"
                                 max="1024" step="64" value="256"><span class="slider-val" id="sv_d_model">256</span>
                         </div>
-                        <div class="slider-row"><label>Layers</label><input type="range" id="sl_num_layers" min="1"
-                                max="24" step="1" value="4"><span class="slider-val" id="sv_num_layers">4</span></div>
-                        <div class="slider-row"><label>Heads</label><input type="range" id="sl_nhead" min="1" max="16"
-                                step="1" value="8"><span class="slider-val" id="sv_nhead">8</span></div>
-                        <div class="slider-row"><label>FFN mult</label><input type="range" id="sl_ffn_mult" min="2"
-                                max="8" step="1" value="4"><span class="slider-val" id="sv_ffn_mult">4x</span></div>
+                        <div class="slider-row"><label>Layers</label><input type="range" id="sl_n_layers" min="1"
+                                max="24" step="1" value="4"><span class="slider-val" id="sv_n_layers">4</span></div>
+                        <div class="slider-row"><label>Experts</label><input type="range" id="sl_n_experts" min="1" max="16"
+                                step="1" value="4"><span class="slider-val" id="sv_n_experts">4</span></div>
+                        <div class="slider-row"><label>Expand</label><input type="range" id="sl_expand" min="1"
+                                max="8" step="1" value="2"><span class="slider-val" id="sv_expand">2x</span></div>
+                        <div class="slider-row"><label>Attn Heads</label><input type="range" id="sl_n_heads" min="1" max="16"
+                                step="1" value="4"><span class="slider-val" id="sv_n_heads">4</span></div>
                         <div class="slider-row"><label>Dropout</label><input type="range" id="sl_dropout" min="0"
                                 max="50" step="5" value="15"><span class="slider-val" id="sv_dropout">0.15</span></div>
-                        <div class="slider-row"><label>Seq Length</label><input type="range" id="sl_seq_len" min="10"
-                                max="120" step="5" value="30"><span class="slider-val" id="sv_seq_len">30</span></div>
                     </div>
                     <div class="estimate-bar" id="estimateBar">
                         <div>
@@ -996,10 +996,10 @@
                 archData = await res.json();
             } catch (e) {
                 archData = {
-                    'small_transformer': { params: '3.2M', vram_gb: 0.2, desc: '4L, d256, 8H' },
-                    'medium_transformer': { params: '19M', vram_gb: 0.6, desc: '6L, d512, 8H' },
-                    'midlarge_transformer': { params: '32M', vram_gb: 1.5, desc: '8L, d768, 12H' },
-                    'nexus_transformer': { params: '152M', vram_gb: 2.5, desc: '12L, d1024, 16H' },
+                    'small_jamba': { params: '6.2M', vram_gb: 0.02, desc: '4L, d256, 4 exp' },
+                    'lite_jamba': { params: '20.2M', vram_gb: 0.08, desc: '6L, d384, 4 exp' },
+                    'medium_jamba': { params: '61.6M', vram_gb: 0.23, desc: '8L, d512, 6 exp' },
+                    'large_jamba': { params: '250.1M', vram_gb: 0.93, desc: '12L, d768, 8 exp' },
                 };
             }
             buildPresetList();
@@ -1013,13 +1013,14 @@
         function buildPresetList() {
             const list = document.getElementById('presetList');
             list.innerHTML = '';
+            var isFirst = true;
             for (const [key, info] of Object.entries(archData)) {
                 const el = document.createElement('div');
-                el.className = 'preset selected';
+                el.className = isFirst ? 'preset selected' : 'preset';
                 el.dataset.arch = key;
                 el.innerHTML = '<div class="preset-info"><h3>' + key.replace(/_/g, ' ').replace(/\b\w/g, function (c) { return c.toUpperCase() }) + (info.custom ? ' &#127959;' : '') + '</h3><div class="desc">' + info.desc + '</div></div><div class="preset-meta"><div>' + info.params + '</div><div class="vram">' + info.vram_gb + ' GB</div></div>';
                 el.onclick = function () { togglePreset(key, el); };
-                selectedArchs.add(key);
+                if (isFirst) { selectedArchs.add(key); isFirst = false; }
                 list.appendChild(el);
             }
         }
@@ -1031,7 +1032,7 @@
 
         // =================== SLIDERS ===================
         function setupSliders() {
-            ['d_model', 'num_layers', 'nhead', 'ffn_mult', 'dropout', 'seq_len'].forEach(function (name) {
+            ['d_model', 'n_layers', 'n_experts', 'expand', 'n_heads', 'dropout'].forEach(function (name) {
                 document.getElementById('sl_' + name).addEventListener('input', function () {
                     updateSliderDisplay(name);
                     debouncedEstimate();
@@ -1043,15 +1044,15 @@
             var slider = document.getElementById('sl_' + name);
             var display = document.getElementById('sv_' + name);
             var v = slider.value;
-            if (name === 'ffn_mult') display.textContent = v + 'x';
+            if (name === 'expand') display.textContent = v + 'x';
             else if (name === 'dropout') display.textContent = (v / 100).toFixed(2);
             else display.textContent = v;
 
             var d = parseInt(document.getElementById('sl_d_model').value);
-            var h = parseInt(document.getElementById('sl_nhead').value);
+            var h = parseInt(document.getElementById('sl_n_heads').value);
             var msg = document.getElementById('validationMsg');
             if (d % h !== 0) {
-                msg.textContent = 'Warning: d_model (' + d + ') must be divisible by heads (' + h + ')';
+                msg.textContent = 'Warning: d_model (' + d + ') must be divisible by n_heads (' + h + ')';
                 document.getElementById('btnCreate').disabled = true;
             } else { msg.textContent = ''; document.getElementById('btnCreate').disabled = false; }
         }
@@ -1074,11 +1075,11 @@
             var d = parseInt(document.getElementById('sl_d_model').value);
             return {
                 d_model: d,
-                num_layers: parseInt(document.getElementById('sl_num_layers').value),
-                nhead: parseInt(document.getElementById('sl_nhead').value),
-                dim_feedforward: d * parseInt(document.getElementById('sl_ffn_mult').value),
+                n_layers: parseInt(document.getElementById('sl_n_layers').value),
+                n_experts: parseInt(document.getElementById('sl_n_experts').value),
+                expand: parseInt(document.getElementById('sl_expand').value),
+                n_heads: parseInt(document.getElementById('sl_n_heads').value),
                 dropout: parseInt(document.getElementById('sl_dropout').value) / 100,
-                seq_len: parseInt(document.getElementById('sl_seq_len').value),
             };
         }
 

@@ -532,22 +532,27 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
             start_epoch = 0
 
     # ── Auto batch size based on FREE VRAM *after* model is loaded ──
-    # Uses ~40% of free VRAM for activation memory (rest for gradients + optimizer states)
+    # Must account for: optimizer states (2x params) + gradients (1x params) + activations
     if batch_size is None:
         if device == 'cuda':
             torch.cuda.empty_cache()
             free_bytes = torch.cuda.get_device_properties(0).total_memory - torch.cuda.memory_allocated(0)
             free_gb = free_bytes / 1e9
             add_log(f"   Free VRAM (post-model): {free_gb:.1f} GB")
-            # Each sample: SEQ_LEN × features × 4 bytes (float32) + activations overhead (~3x)
-            bytes_per_sample = SEQ_LEN * len(feature_cols) * 4 * 3
-            usable_bytes = int(free_bytes * 0.40)  # 40% for forward pass
-            batch_size = max(64, usable_bytes // bytes_per_sample)
-            # Round down to nearest power of 2 for CUDA efficiency
-            batch_size = 2 ** int(np.log2(batch_size))
-            batch_size = min(batch_size, 2048)  # Cap at 2048
+
+            # Reserve for AdamW optimizer (2 momentum buffers) + gradient buffer
+            optimizer_reserve = model.num_parameters * 4 * 3
+            available = max(free_bytes - optimizer_reserve, 1 << 30)  # At least 1 GB
+
+            # Activation memory per sample scales with model complexity (depth × width × expand).
+            # Empirical: ~2 bytes per model parameter per sample covers all layer activations,
+            # attention maps, MoE routing, and backward graph storage.
+            activation_per_sample = model.num_parameters * 2
+            batch_size = max(64, int(available / activation_per_sample))
+            batch_size = 2 ** int(np.log2(batch_size))  # Round to power-of-2
+            batch_size = min(batch_size, 2048)
         else:
-            batch_size = 256
+            batch_size = 128
     add_log(f"   Batch size: {batch_size}")
 
     # ── Build DataLoaders (may be rebuilt if OOM triggers batch halving) ──
