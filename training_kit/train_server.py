@@ -252,8 +252,9 @@ def engineer_features(df):
         magnitudes = np.abs(ffts[:, 1:])
         mag_sum = magnitudes.sum(axis=1) + 1e-10
         if magnitudes.shape[1] >= 2:
-            cycle_1[window:window + len(mag_sum)] = magnitudes[:, 0] / mag_sum
-            cycle_2[window:window + len(mag_sum)] = magnitudes[:, 1] / mag_sum
+            n_valid = min(len(mag_sum), len(df) - window)
+            cycle_1[window:window + n_valid] = (magnitudes[:, 0] / mag_sum)[:n_valid]
+            cycle_2[window:window + n_valid] = (magnitudes[:, 1] / mag_sum)[:n_valid]
     df['cycle_1'] = cycle_1
     df['cycle_2'] = cycle_2
 
@@ -271,7 +272,8 @@ def engineer_features(df):
         rs_val = r_range / s
         valid = rs_val > 0
         h_vals = np.where(valid, np.log(rs_val + 1e-10) / np.log(hurst_window), 0.5)
-        hurst[hurst_window:hurst_window + len(h_vals)] = h_vals
+        n_valid_h = min(len(h_vals), len(df) - hurst_window)
+        hurst[hurst_window:hurst_window + n_valid_h] = h_vals[:n_valid_h]
     df['hurst'] = np.clip(hurst, 0, 1)
 
     # Kalman error
