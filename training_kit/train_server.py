@@ -570,12 +570,18 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
             batch_size = max(16, int(available / activation_per_sample))
             batch_size = (batch_size // 16) * 16  # Round to multiple of 16
 
-            # ── Arch-specific hard caps (proven safe on 16 GB cards) ──
-            ARCH_MAX = {
+            # ── Dynamic batch caps — scale with available VRAM ──
+            # Baseline: ~14 GiB free on a 16 GB card. Caps scale linearly.
+            VRAM_BASELINE_GIB = 14.0
+            BASE_CAPS = {
                 'small_jamba': 256, 'lite_jamba': 192,
                 'medium_jamba': 128, 'large_jamba': 48,
             }
-            arch_cap = ARCH_MAX.get(arch_name, 128)
+            vram_scale = max(1.0, free_gib / VRAM_BASELINE_GIB)
+            arch_base = BASE_CAPS.get(arch_name, 128)
+            arch_cap = int(arch_base * vram_scale)
+            arch_cap = (arch_cap // 16) * 16  # Keep multiple of 16
+            add_log(f"   Batch cap: {arch_cap} (base {arch_base} × {vram_scale:.2f}x VRAM scale)")
             batch_size = min(batch_size, arch_cap)
             if batch_size < 16:
                 batch_size = 16
