@@ -473,20 +473,18 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
 
     # DataLoader workers: auto-scale based on system RAM
     # Each worker forks the full process (imports numpy/torch) → ~1-2 GB RAM each.
-    # On systems with <32 GB RAM, 4+4 workers (train+val) can cause OpenBLAS OOM.
+    # DataLoader workers fork the process and duplicate memory.
+    # Combined with the Flask API server sharing this process,
+    # workers cause system RAM MemoryErrors. Data is already in-memory
+    # numpy arrays, so workers provide negligible benefit.
     try:
         import psutil
         sys_ram_gb = psutil.virtual_memory().total / (1024**3)
     except ImportError:
-        sys_ram_gb = 16  # conservative fallback
+        sys_ram_gb = 16
         log.info("⚠️  psutil not installed — assuming 16 GB RAM (pip install psutil)")
-    if device.type == 'cuda' and sys_ram_gb >= 32:
-        n_workers = 4
-    elif device.type == 'cuda' and sys_ram_gb >= 16:
-        n_workers = 2
-    else:
-        n_workers = 0
-    log.info(f"System RAM: {sys_ram_gb:.0f} GB → DataLoader workers: {n_workers}")
+    n_workers = 0
+    log.info(f"System RAM: {sys_ram_gb:.0f} GB → DataLoader workers: {n_workers} (in-process, zero fork overhead)")
 
     # ── Helper: build DataLoaders (callable for OOM-halving) ──
     _MIN_BATCH = 8  # absolute minimum — below this we fail
