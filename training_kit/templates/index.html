@@ -1016,6 +1016,10 @@
                             <div class="stat-val" id="sLR">&mdash;</div>
                         </div>
                         <div class="stat">
+                            <div class="stat-lbl">GPU%</div>
+                            <div class="stat-val" id="sGPU">&mdash;</div>
+                        </div>
+                        <div class="stat">
                             <div class="stat-lbl">ETA</div>
                             <div class="stat-val" id="sETA">&mdash;</div>
                         </div>
@@ -1269,7 +1273,7 @@
         function updateUI(s) {
             // GPU
             if (s.gpu_name && s.gpu_name !== 'N/A') {
-                document.getElementById('gpuName').textContent = s.gpu_name + ' \u00b7 ' + s.vram_total_gb + ' GB';
+                document.getElementById('gpuName').textContent = s.gpu_name + ' \u00b7 ' + s.vram_total_gb + ' GB' + (s.gpu_temp_c ? ' \u00b7 ' + s.gpu_temp_c + '\u00b0C' : '');
                 document.getElementById('gpuDot').style.background = s.status === 'training' ? 'var(--green)' : 'var(--amber)';
             }
 
@@ -1315,6 +1319,11 @@
                 vramStatEl.style.color = vramRatio >= 0.85 ? 'var(--red)' : vramRatio >= 0.6 ? 'var(--amber)' : 'var(--green)';
             }
             document.getElementById('sLR').textContent = s.lr ? s.lr.toExponential(1) : '\u2014';
+            var gpuEl = document.getElementById('sGPU');
+            gpuEl.textContent = s.gpu_util_pct ? s.gpu_util_pct + '%' : '\u2014';
+            if (s.gpu_util_pct) {
+                gpuEl.style.color = s.gpu_util_pct >= 85 ? 'var(--green)' : s.gpu_util_pct >= 40 ? 'var(--amber)' : 'var(--text-2)';
+            }
             document.getElementById('sETA').textContent = s.eta || '\u2014';
             document.getElementById('sBatch').textContent = s.batch_size ? s.batch_size : '\u2014';
 

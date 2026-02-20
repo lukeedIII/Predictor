@@ -39,6 +39,16 @@ import torch.nn as nn
 from torch.amp import autocast, GradScaler
 from flask import Flask, render_template, jsonify, request
 
+# ── NVIDIA Management Library for GPU utilization & temperature ──
+try:
+    import pynvml
+    pynvml.nvmlInit()
+    _nvml_handle = pynvml.nvmlDeviceGetHandleByIndex(0)
+    _nvml_available = True
+except Exception:
+    _nvml_available = False
+    _nvml_handle = None
+
 from models import ARCHITECTURES, ARCH_INFO, estimate_params, register_custom_arch
 from models import create_jamba
 
@@ -103,6 +113,8 @@ state = {
     "started_at": None,
     "elapsed": "",
     "batch_size": 0,
+    "gpu_util_pct": 0,
+    "gpu_temp_c": 0,
 }
 
 stop_requested = threading.Event()
@@ -689,9 +701,24 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
 
             # Update progress every 20 batches (sync GPU→CPU only here)
             if bi % 20 == 0:
-                vram = torch.cuda.memory_allocated(0) / (1024 ** 3) if device == 'cuda' else 0
+                # Driver-level VRAM — matches Task Manager
+                if device == 'cuda':
+                    _free, _total = torch.cuda.mem_get_info(0)
+                    vram = (_total - _free) / (1024 ** 3)
+                else:
+                    vram = 0
                 elapsed = time.time() - epoch_start
                 speed = epoch_total / max(elapsed, 0.01)
+                # GPU utilization & temp via pynvml
+                gpu_util = 0
+                gpu_temp = 0
+                if _nvml_available:
+                    try:
+                        util = pynvml.nvmlDeviceGetUtilizationRates(_nvml_handle)
+                        gpu_util = util.gpu
+                        gpu_temp = pynvml.nvmlDeviceGetTemperature(_nvml_handle, pynvml.NVML_TEMPERATURE_GPU)
+                    except Exception:
+                        pass
                 update_state(
                     batch_progress=round((bi + 1) / batch_count * 100, 1),
                     train_loss=round(epoch_loss_gpu.item() / max(epoch_total, 1), 4),
@@ -699,6 +726,8 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
                     lr=optimizer.param_groups[0]['lr'],
                     speed=round(speed),
                     vram_used_gb=round(vram, 2),
+                    gpu_util_pct=gpu_util,
+                    gpu_temp_c=gpu_temp,
                 )
 
         # ── If OOM occurred, skip end-of-epoch and re-run this same epoch ──
@@ -814,7 +843,8 @@ def training_worker(arch_queue, epochs, lr):
                 torch.cuda.empty_cache()
                 torch.cuda.ipc_collect()
                 gc.collect()
-                freed_to = torch.cuda.memory_allocated(0) / (1024 ** 3)
+                _free_c, _total_c = torch.cuda.mem_get_info(0)
+                freed_to = (_total_c - _free_c) / (1024 ** 3)
                 add_log(f"🧹 VRAM cleanup between archs — {freed_to:.2f} GB still allocated")
 
             if stop_requested.is_set():
@@ -1024,12 +1054,14 @@ def clear_vram():
     if state['status'] == 'training':
         return jsonify({'error': 'Cannot clear VRAM while training is active'}), 400
 
-    before = torch.cuda.memory_allocated(0) / (1024 ** 3)
+    _free_b, _total_b = torch.cuda.mem_get_info(0)
+    before = (_total_b - _free_b) / (1024 ** 3)
     torch.cuda.empty_cache()
     torch.cuda.ipc_collect()
     import gc
     gc.collect()
-    after = torch.cuda.memory_allocated(0) / (1024 ** 3)
+    _free_a, _total_a = torch.cuda.mem_get_info(0)
+    after = (_total_a - _free_a) / (1024 ** 3)
 
     freed = before - after
     add_log(f"🧹 VRAM cleared: {before:.2f} GB → {after:.2f} GB (freed {freed:.2f} GB)")
