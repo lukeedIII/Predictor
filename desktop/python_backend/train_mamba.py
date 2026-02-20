@@ -31,6 +31,7 @@ References:
   - Kim et al. (2022): Reversible Instance Normalization (RevIN)
 """
 
+import gc
 import os
 import sys
 import time
@@ -460,6 +461,15 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         torch.set_float32_matmul_precision('high')
         log.info("cuDNN benchmark: enabled | TF32 matmul: enabled (Ampere+)")
 
+        # ── VRAM safety: hard-prevent shared memory (sysmem) spill ──
+        # This caps what PyTorch can allocate. If it exceeds this, we get a
+        # clean OOM error instead of silently spilling into slow system RAM.
+        try:
+            torch.cuda.set_per_process_memory_fraction(0.95, 0)
+            log.info("🛡️  VRAM cap: 95% of dedicated — sysmem spill blocked")
+        except RuntimeError:
+            pass  # Already set from a previous call in same process
+
     # ── Prepare data arrays ──
     X_all = df[feature_cols].values.astype(np.float32)
     y_all = df['target'].values.astype(np.int64)  # int64 for CrossEntropyLoss
@@ -751,7 +761,7 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         train_acc = epoch_correct / max(epoch_total, 1)
         elapsed = time.time() - t0
 
-        # ── Validation ──
+        # ── Validation (single pass — collects loss, accuracy, AND F1) ──
         model.eval()
         if revin:
             revin.eval()
@@ -760,6 +770,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         val_correct_gpu = torch.tensor(0, dtype=torch.long, device=device)
         val_total = 0
         val_class_preds = np.zeros(NUM_CLASSES)
+        val_all_preds = []
+        val_all_labels = []
 
         with torch.no_grad():
             for x_val, y_val_batch in val_loader:
@@ -770,7 +782,7 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                     x_val = revin(x_val)
 
                 with autocast('cuda', dtype=torch.float16):
-                    out = model(x_val, return_logits=True)  # ModelOut; discard aux in eval
+                    out = model(x_val, return_logits=True)
                     logits = out.logits
                     loss = criterion(logits, y_val_batch)
 
@@ -780,6 +792,9 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 for c in range(NUM_CLASSES):
                     val_class_preds[c] += (preds == c).sum().item()
                 val_total += len(y_val_batch)
+                # Collect for F1 (CPU numpy — no VRAM cost)
+                val_all_preds.extend(preds.cpu().numpy())
+                val_all_labels.extend(y_val_batch.cpu().numpy())
 
         avg_val_loss = val_loss_gpu.item() / max(len(val_loader), 1)
         val_acc = val_correct_gpu.item() / max(val_total, 1)
@@ -790,16 +805,7 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
             for c in range(NUM_CLASSES)
         )
 
-        # ── Per-class F1 metrics ──
-        val_all_preds = []
-        val_all_labels = []
-        with torch.no_grad():
-            for x_f1, y_f1 in val_loader:
-                x_f1 = x_f1.to(device, non_blocking=True)
-                with autocast('cuda', dtype=torch.float16):
-                    out_f1 = model(x_f1, return_logits=True)
-                val_all_preds.extend(out_f1.logits.argmax(dim=-1).cpu().numpy())
-                val_all_labels.extend(y_f1.numpy())
+        # ── Per-class F1 metrics (from the SAME pass — no second loop!) ──
         val_all_preds = np.array(val_all_preds)
         val_all_labels = np.array(val_all_labels)
         val_f1_macro = f1_score(val_all_labels, val_all_preds, average='macro', zero_division=0)
@@ -809,6 +815,14 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         # Epoch throughput
         epoch_micro_sps = epoch_total / elapsed
 
+        # VRAM status at end of epoch
+        if device.type == 'cuda':
+            free_end, tot_end = torch.cuda.mem_get_info()
+            vram_end = (tot_end - free_end) / 1e9
+            vram_pct = (tot_end - free_end) / tot_end * 100
+        else:
+            vram_end, vram_pct = 0, 0
+
         log.info(
             f"╔══ Epoch {epoch+1}/{epochs} Complete ({arch.capitalize()}Jamba {NUM_CLASSES}-class) ════════╗\n"
             f"║  Train Loss: {train_loss:.4f} | Train Acc: {train_acc:.1%}\n"
@@ -817,9 +831,12 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
             f"║  Val F1 (class): {f1_str}\n"
             f"║  Preds: {pred_dist}\n"
             f"║  Speed: {epoch_micro_sps:.0f} μbatch-samples/s | Time: {elapsed:.0f}s\n"
+            f"║  VRAM: {vram_end:.1f} GB ({vram_pct:.0f}%)\n"
             f"║  LR: {scheduler.get_last_lr()[0]:.2e} | Step: {global_step}\n"
             f"╚═══════════════════════════════════════════════════════════════╝"
         )
+        if vram_pct > 90:
+            log.warning(f"⚠️  VRAM at {vram_pct:.0f}% — approaching limit!")
 
         # ── Save checkpoint (full state) ──
         ckpt_path = CHECKPOINT_DIR / f"mamba_epoch_{epoch+1}_acc{val_acc:.3f}.pth"
@@ -859,6 +876,13 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
             log.info(f"🎯🎉 TARGET REACHED! Val acc {val_acc:.1%} >= {accuracy_target:.0%}")
             torch.save(model.state_dict(), pretrained_path)
             break
+
+        # ── End-of-epoch VRAM cleanup (prevents memory creep) ──
+        del epoch_loss_gpu, epoch_correct_gpu
+        del val_loss_gpu, val_correct_gpu
+        del val_all_preds, val_all_labels
+        torch.cuda.empty_cache()
+        gc.collect()
 
     # ── Test evaluation ──
     if len(X_test) > SEQ_LEN:
