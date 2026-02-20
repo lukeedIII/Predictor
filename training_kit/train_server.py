@@ -108,6 +108,23 @@ training_thread = None
 data_cache = {"df": None, "feature_cols": None}
 
 
+# Lazy Dataset — slices windows on-the-fly, never materializes the full 3D array.
+# Must be at MODULE LEVEL so Windows multiprocessing can pickle it for DataLoader workers.
+class LazyWindowDataset(torch.utils.data.Dataset):
+    def __init__(self, X_flat, y, seq_len, offset=0):
+        self.X = torch.from_numpy(X_flat).float()
+        self.y = torch.from_numpy(y).long()
+        self.seq_len = seq_len
+        self.offset = offset
+
+    def __len__(self):
+        return len(self.y)
+
+    def __getitem__(self, idx):
+        real_idx = self.offset + idx
+        return self.X[real_idx:real_idx + self.seq_len], self.y[idx]
+
+
 def add_log(msg):
     with lock:
         state["log_messages"].append({
@@ -493,22 +510,6 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     )
     add_log(f"   Train: {len(y_train):,} | Val: {len(y_val):,}")
     add_log(f"   Class weights: DOWN={class_weights[0]:.2f}, FLAT={class_weights[1]:.2f}, UP={class_weights[2]:.2f}")
-
-    # Lazy Dataset — slices windows on-the-fly, never materializes the full 3D array
-    # Stores only the flat feature matrix (~700 MB) + label vector (~17 MB)
-    class LazyWindowDataset(torch.utils.data.Dataset):
-        def __init__(self, X_flat, y, seq_len, offset=0):
-            self.X = torch.from_numpy(X_flat).float()
-            self.y = torch.from_numpy(y).long()
-            self.seq_len = seq_len
-            self.offset = offset  # start index into X_flat
-
-        def __len__(self):
-            return len(self.y)
-
-        def __getitem__(self, idx):
-            real_idx = self.offset + idx
-            return self.X[real_idx:real_idx + self.seq_len], self.y[idx]
 
     train_ds = LazyWindowDataset(features, y_train, SEQ_LEN, offset=0)
     val_ds = LazyWindowDataset(features, y_val, SEQ_LEN, offset=split)
