@@ -492,15 +492,15 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
     _MIN_BATCH = 8  # absolute minimum — below this we fail
 
     def _make_loaders(bs):
+        # pin_memory=False: avoids cudaErrorAlreadyMapped crash
+        # when CUDA allocator is under pressure. ~2% perf hit, zero crashes.
         tl = torch.utils.data.DataLoader(
             train_ds, batch_size=bs, shuffle=True,
-            num_workers=n_workers, pin_memory=True, drop_last=True,
-            persistent_workers=(n_workers > 0),
+            num_workers=n_workers, pin_memory=False, drop_last=True,
         )
-        # Val/test: always 0 workers — fast enough single-threaded
         vl = torch.utils.data.DataLoader(
             val_ds, batch_size=bs * 2, shuffle=False,
-            num_workers=0, pin_memory=True,
+            num_workers=0, pin_memory=False,
         )
         return tl, vl
 
