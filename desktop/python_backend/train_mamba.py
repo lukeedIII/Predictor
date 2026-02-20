@@ -349,8 +349,9 @@ def _auto_batch_size(arch: str, n_features: int, device):
     try:
         free_start, total = torch.cuda.mem_get_info()
         total_gb = total / 1024**3
-        # Keep 30% free for OS/display — prevents VRAM thrashing
-        max_usable = int(total * 0.70)
+        # Keep 45% free for OS, display, CUDA allocator overhead & fragmentation
+        # The probe underestimates real usage by ~35% (caching allocator, pin_memory, etc.)
+        max_usable = int(total * 0.55)
 
         log.info(f"🔍 Auto batch size: {arch} on {total_gb:.1f} GB GPU "
                  f"(max usable: {max_usable / 1024**3:.1f} GB, "
@@ -465,8 +466,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         # This caps what PyTorch can allocate. If it exceeds this, we get a
         # clean OOM error instead of silently spilling into slow system RAM.
         try:
-            torch.cuda.set_per_process_memory_fraction(0.95, 0)
-            log.info("🛡️  VRAM cap: 95% of dedicated — sysmem spill blocked")
+            torch.cuda.set_per_process_memory_fraction(0.85, 0)
+            log.info("🛡️  VRAM cap: 85% of dedicated — sysmem spill blocked")
         except RuntimeError:
             pass  # Already set from a previous call in same process
 
