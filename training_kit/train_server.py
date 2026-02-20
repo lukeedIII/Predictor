@@ -1,5 +1,5 @@
 """
-train_server.py — Nexus Training Kit: Flask Web Server + Training Engine
+train_server.py — Nexus Jamba Training Kit: Flask Web Server + Training Engine
 
 Features:
   ✅ Auto-downloads BTC data from HuggingFace
@@ -7,12 +7,13 @@ Features:
   ✅ Start / Stop / Continue training
   ✅ Auto-saves checkpoints every epoch
   ✅ Resumes from last checkpoint on restart
-  ✅ Trains all 4 architectures sequentially (or pick one)
+  ✅ Trains all 4 Jamba architectures sequentially (or pick one)
+  ✅ 3-class classification: DOWN / FLAT / UP
   ✅ Graceful shutdown — saves state on Ctrl+C or browser Stop
 
 Usage:
-  python train_server.py                  # Train all architectures
-  python train_server.py --arch small_transformer  # Train one specific arch
+  python train_server.py                     # Train all Jamba sizes
+  python train_server.py --arch small_jamba  # Train one specific arch
 
 Then open http://localhost:5555 in your browser.
 """
@@ -39,6 +40,7 @@ from torch.amp import autocast, GradScaler
 from flask import Flask, render_template, jsonify, request
 
 from models import ARCHITECTURES, ARCH_INFO, estimate_params, register_custom_arch
+from models import create_jamba
 
 # ── Paths ──
 SCRIPT_DIR = Path(__file__).parent
@@ -52,9 +54,11 @@ MODEL_DIR.mkdir(exist_ok=True)
 CHECKPOINT_DIR.mkdir(exist_ok=True)
 
 # ── Constants ──
-SEQ_LEN = 30
+SEQ_LEN = 120
 PREDICTION_HORIZON = 15
-PRICE_THRESHOLD = 0.001
+PRICE_THRESHOLD = 0.0025
+NUM_CLASSES = 3
+CLASS_DOWN, CLASS_FLAT, CLASS_UP = 0, 1, 2
 
 # ── Logging ──
 logging.basicConfig(
@@ -420,11 +424,11 @@ def find_latest_checkpoint(arch_name):
 
 
 def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
-    """Train one architecture with full checkpoint save/resume."""
+    """Train one Jamba architecture with full checkpoint save/resume (3-class)."""
     global stop_requested
 
     add_log(f"🚀 Starting training: {arch_name}")
-    add_log(f"   Config: {epochs} epochs, lr={lr}")
+    add_log(f"   Config: {epochs} epochs, lr={lr}, SEQ_LEN={SEQ_LEN}, classes={NUM_CLASSES}")
 
     # GPU info
     device = 'cuda' if torch.cuda.is_available() else 'cpu'
@@ -439,16 +443,28 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     # Load data
     df, feature_cols = load_and_prepare_data()
 
-    # Create labels
-    add_log("📊 Creating training windows...")
-    future_ret = df['close'].pct_change(PREDICTION_HORIZON).shift(-PREDICTION_HORIZON)
-    labels = (future_ret > PRICE_THRESHOLD).astype(float)
-    valid_mask = labels.notna() & (labels.index >= SEQ_LEN)
+    # Create 3-class labels: DOWN=0, FLAT=1, UP=2
+    add_log("📊 Creating 3-class targets...")
+    close = df['close'].astype(float)
+    future_ret = close.pct_change(PREDICTION_HORIZON).shift(-PREDICTION_HORIZON)
+    labels = np.full(len(df), CLASS_FLAT, dtype=np.int64)
+    labels[future_ret > PRICE_THRESHOLD] = CLASS_UP
+    labels[future_ret < -PRICE_THRESHOLD] = CLASS_DOWN
+    labels_s = pd.Series(labels, index=df.index)
+
+    valid_mask = future_ret.notna() & (df.index >= SEQ_LEN)
     df_valid = df[valid_mask].reset_index(drop=True)
-    labels_valid = labels[valid_mask].reset_index(drop=True)
+    labels_valid = labels_s[valid_mask].reset_index(drop=True)
 
     n = len(df_valid) - SEQ_LEN
     add_log(f"   Total windows: {n:,}")
+
+    # Class distribution
+    y_preview = labels_valid.values[SEQ_LEN:SEQ_LEN+n]
+    n_up = (y_preview == CLASS_UP).sum()
+    n_flat = (y_preview == CLASS_FLAT).sum()
+    n_down = (y_preview == CLASS_DOWN).sum()
+    add_log(f"   UP: {n_up:,} ({n_up/n*100:.1f}%) | FLAT: {n_flat:,} ({n_flat/n*100:.1f}%) | DOWN: {n_down:,} ({n_down/n*100:.1f}%)")
 
     # Create feature matrix
     features = df_valid[feature_cols].values.astype(np.float32)
@@ -458,34 +474,39 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     scaler = StandardScaler()
     features = scaler.fit_transform(features)
 
-    # Create sliding windows — zero-copy with stride_tricks (was Python list comp)
+    # Create sliding windows — zero-copy with stride_tricks
     from numpy.lib.stride_tricks import sliding_window_view
     X_all = sliding_window_view(features, (SEQ_LEN, features.shape[1])).squeeze(axis=1)[:n].copy()
-    y_all = labels_valid.values[SEQ_LEN:SEQ_LEN+n].astype(np.float32)
+    y_all = labels_valid.values[SEQ_LEN:SEQ_LEN+n].astype(np.int64)
 
     # Train/val split (80/20)
     split = int(0.8 * n)
     X_train, X_val = X_all[:split], X_all[split:]
     y_train, y_val = y_all[:split], y_all[split:]
 
-    # Class balance
-    pos_count = y_train.sum()
-    neg_count = len(y_train) - pos_count
-    pos_weight = neg_count / max(pos_count, 1)
-    add_log(f"   Train: {len(X_train):,} | Val: {len(X_val):,} | Pos weight: {pos_weight:.2f}")
+    # Per-class weights for imbalanced data
+    from collections import Counter
+    counts = Counter(y_train.tolist())
+    total_count = len(y_train)
+    class_weights = torch.tensor(
+        [total_count / (NUM_CLASSES * max(counts.get(c, 1), 1)) for c in range(NUM_CLASSES)],
+        dtype=torch.float32
+    )
+    add_log(f"   Train: {len(X_train):,} | Val: {len(X_val):,}")
+    add_log(f"   Class weights: DOWN={class_weights[0]:.2f}, FLAT={class_weights[1]:.2f}, UP={class_weights[2]:.2f}")
 
     # Tensors (CPU-resident — DataLoader pins+moves batches to GPU on demand)
     X_train_t = torch.tensor(X_train)
-    y_train_t = torch.tensor(y_train).unsqueeze(1)
+    y_train_t = torch.tensor(y_train)  # long for CrossEntropyLoss
     X_val_t = torch.tensor(X_val)
-    y_val_t = torch.tensor(y_val).unsqueeze(1)
+    y_val_t = torch.tensor(y_val)
 
     train_ds = torch.utils.data.TensorDataset(X_train_t, y_train_t)
     val_ds = torch.utils.data.TensorDataset(X_val_t, y_val_t)
 
     # Model — loaded BEFORE batch sizing so VRAM measurement is accurate
-    ModelClass = ARCHITECTURES[arch_name]
-    model = ModelClass(input_size=len(feature_cols)).to(device)
+    ModelFactory = ARCHITECTURES[arch_name]
+    model = ModelFactory(input_size=len(feature_cols), num_classes=NUM_CLASSES).to(device)
     add_log(f"🧠 Model: {arch_name} | {model.num_parameters:,} params ({model.size_mb:.1f} MB)")
 
     # Check for existing checkpoint → resume
@@ -540,7 +561,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
     # Optimizer & scheduler
     optimizer = torch.optim.AdamW(model.parameters(), lr=lr, weight_decay=0.01)
     scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=epochs - start_epoch)
-    criterion = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([pos_weight]).to(device))
+    criterion = nn.CrossEntropyLoss(weight=class_weights.to(device))
     scaler = GradScaler('cuda') if device == 'cuda' else None
 
     # Training state
@@ -588,8 +609,9 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
             try:
                 if scaler:
                     with autocast('cuda'):
-                        logits = model(xb, return_logits=True)
-                        loss = criterion(logits, yb) / grad_accum
+                        out = model(xb, return_logits=True)
+                        logits = out.logits  # ModelOut contract
+                        loss = (criterion(logits, yb) + 0.01 * out.aux_loss) / grad_accum
                     scaler.scale(loss).backward()
                     if (bi + 1) % grad_accum == 0:
                         scaler.unscale_(optimizer)
@@ -598,8 +620,9 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
                         scaler.update()
                         optimizer.zero_grad(set_to_none=True)
                 else:
-                    logits = model(xb, return_logits=True)
-                    loss = criterion(logits, yb) / grad_accum
+                    out = model(xb, return_logits=True)
+                    logits = out.logits
+                    loss = (criterion(logits, yb) + 0.01 * out.aux_loss) / grad_accum
                     loss.backward()
                     if (bi + 1) % grad_accum == 0:
                         torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
@@ -629,7 +652,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
 
             # Accumulate on GPU (no CPU-GPU sync per batch!)
             epoch_loss_gpu += loss.detach() * grad_accum * xb.size(0)
-            preds = (torch.sigmoid(logits) > 0.5).float()
+            preds = logits.argmax(dim=1)  # 3-class: argmax over logits
             epoch_correct_gpu += (preds == yb).sum()
             epoch_total += xb.size(0)
 
@@ -671,10 +694,11 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
             for xb, yb in val_loader:
                 xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
                 with autocast('cuda') if device == 'cuda' else torch.no_grad():
-                    logits = model(xb, return_logits=True)
+                    out = model(xb, return_logits=True)
+                    logits = out.logits
                     loss = criterion(logits, yb)
                 val_loss_gpu += loss.detach() * xb.size(0)
-                preds = (torch.sigmoid(logits) > 0.5).float()
+                preds = logits.argmax(dim=1)
                 val_correct_gpu += (preds == yb).sum()
                 val_total += xb.size(0)
 
@@ -914,40 +938,49 @@ def get_architectures():
 
 @app.route('/api/estimate', methods=['POST'])
 def estimate_architecture():
-    """Estimate params/VRAM for a custom architecture config."""
+    """Estimate params/VRAM for a custom Jamba architecture config."""
     data = request.get_json(silent=True) or {}
     est = estimate_params(
         d_model=data.get('d_model', 256),
-        nhead=data.get('nhead', 8),
-        num_layers=data.get('num_layers', 4),
-        dim_feedforward=data.get('dim_feedforward', 1024),
-        input_size=42,
-        seq_len=data.get('seq_len', 30),
+        n_layers=data.get('n_layers', 4),
+        d_state=data.get('d_state', 16),
+        d_conv=data.get('d_conv', 4),
+        expand=data.get('expand', 2),
+        n_experts=data.get('n_experts', 4),
+        n_heads=data.get('n_heads', 4),
+        n_kv_groups=data.get('n_kv_groups', 2),
+        top_k=data.get('top_k', 1),
+        dropout=data.get('dropout', 0.15),
     )
     return jsonify(est)
 
 
 @app.route('/api/custom_arch', methods=['POST'])
 def create_custom_architecture():
-    """Register a custom architecture from user-provided hyperparameters."""
+    """Register a custom Jamba architecture from user-provided hyperparameters."""
     data = request.get_json(silent=True) or {}
-    name = data.get('name', 'custom_model').strip().lower().replace(' ', '_')
+    name = data.get('name', 'custom_jamba').strip().lower().replace(' ', '_')
     d_model = int(data.get('d_model', 256))
-    nhead = int(data.get('nhead', 8))
-    num_layers = int(data.get('num_layers', 4))
-    dim_feedforward = int(data.get('dim_feedforward', 1024))
+    n_layers = int(data.get('n_layers', 4))
+    d_state = int(data.get('d_state', 16))
+    d_conv = int(data.get('d_conv', 4))
+    expand = int(data.get('expand', 2))
+    n_experts = int(data.get('n_experts', 4))
+    n_heads = int(data.get('n_heads', 4))
+    n_kv_groups = int(data.get('n_kv_groups', 2))
+    top_k = int(data.get('top_k', 1))
     dropout = float(data.get('dropout', 0.15))
-    seq_len = int(data.get('seq_len', 30))
 
-    # Validate d_model divisible by nhead
-    if d_model % nhead != 0:
-        return jsonify({'error': f'd_model ({d_model}) must be divisible by nhead ({nhead})'}), 400
+    # Validate d_model divisible by n_heads
+    if d_model % n_heads != 0:
+        return jsonify({'error': f'd_model ({d_model}) must be divisible by n_heads ({n_heads})'}), 400
 
     est = register_custom_arch(
-        name=name, d_model=d_model, nhead=nhead, num_layers=num_layers,
-        dim_feedforward=dim_feedforward, dropout=dropout, seq_len=seq_len,
+        name=name, d_model=d_model, n_layers=n_layers, d_state=d_state,
+        d_conv=d_conv, expand=expand, n_experts=n_experts, n_heads=n_heads,
+        n_kv_groups=n_kv_groups, top_k=top_k, dropout=dropout,
     )
-    add_log(f"🏗️ Created custom architecture: {name} ({est['params_human']} params, {est['vram_gb']} GB)")
+    add_log(f"🏗️ Created custom Jamba arch: {name} ({est['params_human']} params, {est['vram_gb']} GB)")
     return jsonify({'ok': True, 'name': name, **est})
 
 
