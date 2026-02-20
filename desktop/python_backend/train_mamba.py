@@ -41,6 +41,15 @@ import argparse
 import pickle
 import numpy as np
 import pandas as pd
+
+# ── CRITICAL: Configure CUDA allocator BEFORE any torch import ──
+# Prevents the caching allocator from grabbing all VRAM.
+# max_split_size_mb:128 → stops allocator reserving huge blocks it never fills
+os.environ.setdefault(
+    'PYTORCH_CUDA_ALLOC_CONF',
+    'max_split_size_mb:128'
+)
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -332,105 +341,58 @@ class TimeSeriesDataset(torch.utils.data.Dataset):
 
 
 # ═══════════════════════════════════════════════════════════════════════════
-# GPU AUTO BATCH SIZE — uses torch.cuda.mem_get_info() for REAL measurement
+# GPU BATCH SIZE — conservative lookup table + OOM-halving
 # ═══════════════════════════════════════════════════════════════════════════
 
-def _auto_batch_size(arch: str, n_features: int, device):
-    """Find the largest batch size that keeps real GPU VRAM under 70% of total.
+# Lookup table: arch → {VRAM_category → starting_batch_size}
+# Deliberately conservative — the OOM wrapper will NOT increase these,
+# but WILL halve automatically if they're still too large.
+_BATCH_TABLE = {
+    #             ≤8GB   ≤12GB  ≤16GB  ≤24GB  >24GB
+    "small":   [  48,    80,   112,   192,   256 ],
+    "lite":    [  24,    40,    56,    96,   128 ],
+    "medium":  [  12,    20,    28,    48,    64 ],
+    "large":   [   8,    12,    16,    24,    32 ],
+}
 
-    Uses torch.cuda.mem_get_info() which reads ACTUAL free/total memory from
-    the GPU driver — unlike max_memory_allocated() which only tracks the
-    Python-side view and misses the CUDA caching allocator overhead.
+def _lookup_batch_size(arch: str, device) -> int:
+    """Pick a conservative starting batch size based on GPU VRAM and model arch.
+
+    This replaces the broken probe-based approach. The CUDA caching allocator
+    grabs VRAM beyond what any probe can measure, making probing unreliable.
+    Instead, we use a tested lookup table and rely on OOM-halving if needed.
     """
-    from mamba_model import create_jamba
-
-    SAFE_DEFAULTS = {"small": 64, "lite": 48, "medium": 32, "large": 16}
+    if device.type != 'cuda':
+        return 32  # CPU fallback
 
     try:
-        free_start, total = torch.cuda.mem_get_info()
-        total_gb = total / 1024**3
-        # Keep 45% free for OS, display, CUDA allocator overhead & fragmentation
-        # The probe underestimates real usage by ~35% (caching allocator, pin_memory, etc.)
-        max_usable = int(total * 0.55)
+        _, total = torch.cuda.mem_get_info()
+        total_gb = total / (1024 ** 3)
+    except Exception:
+        total_gb = 8  # conservative fallback
 
-        log.info(f"🔍 Auto batch size: {arch} on {total_gb:.1f} GB GPU "
-                 f"(max usable: {max_usable / 1024**3:.1f} GB, "
-                 f"free now: {free_start / 1024**3:.1f} GB)")
+    # Determine VRAM category index
+    if total_gb <= 8:
+        idx = 0
+    elif total_gb <= 12:
+        idx = 1
+    elif total_gb <= 16:
+        idx = 2
+    elif total_gb <= 24:
+        idx = 3
+    else:
+        idx = 4
 
-        torch.cuda.empty_cache()
+    row = _BATCH_TABLE.get(arch, _BATCH_TABLE["small"])
+    batch = row[idx]
 
-        # Step 1: Load model + optimizer + do one step (baseline memory)
-        probe_model = create_jamba(size=arch, input_size=n_features, num_classes=3).to(device)
-        probe_opt = torch.optim.AdamW(probe_model.parameters(), lr=1e-4)
-        probe_scaler = GradScaler()
+    # Align to multiple of 8 for GPU efficiency
+    batch = max(8, (batch // 8) * 8)
 
-        # Warm up optimizer states (Adam allocates 2x params on first step)
-        probe_model.train()
-        tiny = torch.randn(2, SEQ_LEN, n_features, device=device)
-        tiny_y = torch.randint(0, 3, (2,), device=device)
-        with autocast('cuda', dtype=torch.float16):
-            out = probe_model(tiny, return_logits=True)
-            loss = nn.CrossEntropyLoss()(out.logits, tiny_y)
-        probe_scaler.scale(loss).backward()
-        probe_scaler.step(probe_opt)
-        probe_scaler.update()
-        del tiny, tiny_y, out, loss
-        probe_opt.zero_grad(set_to_none=True)
-        torch.cuda.empty_cache()
-
-        # Measure baseline: model + optimizer states sitting in VRAM
-        free_after_model, _ = torch.cuda.mem_get_info()
-        baseline_used = total - free_after_model
-        log.info(f"   Model + optimizer baseline: {baseline_used / 1024**3:.2f} GB")
-
-        # Step 2: Measure per-sample cost with a known batch
-        test_batch = 16
-        torch.cuda.empty_cache()
-        free_before_fwd, _ = torch.cuda.mem_get_info()
-
-        probe_opt.zero_grad(set_to_none=True)
-        x = torch.randn(test_batch, SEQ_LEN, n_features, device=device)
-        y = torch.randint(0, 3, (test_batch,), device=device)
-        with autocast('cuda', dtype=torch.float16):
-            probe_out = probe_model(x, return_logits=True)
-            loss = nn.CrossEntropyLoss()(probe_out.logits, y)
-        probe_scaler.scale(loss).backward()
-
-        free_after_fwd, _ = torch.cuda.mem_get_info()
-        batch_cost = free_before_fwd - free_after_fwd  # real bytes used for this batch
-
-        del x, y, probe_out, loss
-        probe_opt.zero_grad(set_to_none=True)
-        torch.cuda.empty_cache()
-
-        # Step 3: Calculate max batch from per-sample cost
-        per_sample = max(batch_cost / test_batch, 1024)  # bytes per sample
-        available_for_batches = max_usable - baseline_used
-        max_batch = int(available_for_batches / per_sample)
-
-        log.info(f"   Batch {test_batch} cost: {batch_cost / 1024**2:.0f} MB "
-                 f"({per_sample / 1024**2:.1f} MB/sample)")
-        log.info(f"   Budget for batches: {available_for_batches / 1024**3:.1f} GB")
-
-        # Cleanup
-        del probe_model, probe_opt, probe_scaler
-        torch.cuda.empty_cache()
-
-        # Clamp and align
-        best_batch = max(8, min(max_batch, 512))
-        best_batch = (best_batch // 8) * 8
-
-        log.info(f"✅ Auto batch size: {best_batch} "
-                 f"(target VRAM: {(baseline_used + best_batch * per_sample) / 1024**3:.1f} GB "
-                 f"/ {total_gb:.1f} GB)")
-        return best_batch
-
-    except Exception as e:
-        log.warning(f"⚠️  Auto batch probe failed: {e}")
-        fallback = SAFE_DEFAULTS.get(arch, 32)
-        log.warning(f"   Using safe fallback: batch_size={fallback}")
-        torch.cuda.empty_cache()
-        return fallback
+    gpu_name = torch.cuda.get_device_name(0)
+    log.info(f"📋 Batch size lookup: {arch} on {gpu_name} "
+             f"({total_gb:.0f} GB) → batch={batch}")
+    return batch
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -461,15 +423,7 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         torch.backends.cudnn.allow_tf32 = True
         torch.set_float32_matmul_precision('high')
         log.info("cuDNN benchmark: enabled | TF32 matmul: enabled (Ampere+)")
-
-        # ── VRAM safety: hard-prevent shared memory (sysmem) spill ──
-        # This caps what PyTorch can allocate. If it exceeds this, we get a
-        # clean OOM error instead of silently spilling into slow system RAM.
-        try:
-            torch.cuda.set_per_process_memory_fraction(0.85, 0)
-            log.info("🛡️  VRAM cap: 85% of dedicated — sysmem spill blocked")
-        except RuntimeError:
-            pass  # Already set from a previous call in same process
+        log.info(f"CUDA allocator config: {os.environ.get('PYTORCH_CUDA_ALLOC_CONF', 'default')}")
 
     # ── Prepare data arrays ──
     X_all = df[feature_cols].values.astype(np.float32)
@@ -512,11 +466,8 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
     train_ds = TimeSeriesDataset(X_train, y_train, seq_len=SEQ_LEN, stride=stride)
     val_ds = TimeSeriesDataset(X_val, y_val, seq_len=SEQ_LEN, stride=1)
 
-    # ── Auto batch size: probe GPU to find optimal batch ──
-    if device.type == 'cuda':
-        batch_size = _auto_batch_size(arch, n_features, device)
-    else:
-        batch_size = 32  # CPU fallback
+    # ── Batch size: lookup table (replaces broken VRAM probe) ──
+    batch_size = _lookup_batch_size(arch, device)
     # Gradient accumulation: target effective batch ~256
     grad_accum = max(1, 256 // batch_size)
 
@@ -537,17 +488,23 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         n_workers = 0
     log.info(f"System RAM: {sys_ram_gb:.0f} GB → DataLoader workers: {n_workers}")
 
-    train_loader = torch.utils.data.DataLoader(
-        train_ds, batch_size=batch_size, shuffle=True,
-        num_workers=n_workers, pin_memory=True, drop_last=True,
-        persistent_workers=(n_workers > 0),
-    )
-    # Val/test loaders: always 0 workers — fast enough single-threaded,
-    # and avoids the double-worker RAM exhaustion that crashed RTX 3090 systems.
-    val_loader = torch.utils.data.DataLoader(
-        val_ds, batch_size=batch_size * 2, shuffle=False,
-        num_workers=0, pin_memory=True,
-    )
+    # ── Helper: build DataLoaders (callable for OOM-halving) ──
+    _MIN_BATCH = 8  # absolute minimum — below this we fail
+
+    def _make_loaders(bs):
+        tl = torch.utils.data.DataLoader(
+            train_ds, batch_size=bs, shuffle=True,
+            num_workers=n_workers, pin_memory=True, drop_last=True,
+            persistent_workers=(n_workers > 0),
+        )
+        # Val/test: always 0 workers — fast enough single-threaded
+        vl = torch.utils.data.DataLoader(
+            val_ds, batch_size=bs * 2, shuffle=False,
+            num_workers=0, pin_memory=True,
+        )
+        return tl, vl
+
+    train_loader, val_loader = _make_loaders(batch_size)
 
     log.info(f"Train windows: {len(train_ds):,} (stride={stride}) | Val windows: {len(val_ds):,}")
 
@@ -673,87 +630,104 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
         t0 = time.time()
         optimizer.zero_grad(set_to_none=True)
 
-        for batch_idx, (x_batch, y_batch) in enumerate(train_loader):
-            x_batch = x_batch.to(device, non_blocking=True)
-            y_batch = y_batch.to(device, non_blocking=True)  # (B,) — class indices
+        # ── OOM-resilient batch loop (HuggingFace-style halving) ──
+        oom_hit = False
+        try:
+            for batch_idx, (x_batch, y_batch) in enumerate(train_loader):
+                x_batch = x_batch.to(device, non_blocking=True)
+                y_batch = y_batch.to(device, non_blocking=True)
 
-            # Feature Dropout + Gaussian noise (FIX #1)
-            x_batch = augment_batch(x_batch, noise_std=noise_std,
-                                    feat_dropout=feat_dropout, training=True)
+                # Feature Dropout + Gaussian noise (FIX #1)
+                x_batch = augment_batch(x_batch, noise_std=noise_std,
+                                        feat_dropout=feat_dropout, training=True)
 
-            # RevIN
-            if revin:
-                x_batch = revin(x_batch)
+                # RevIN
+                if revin:
+                    x_batch = revin(x_batch)
 
-            with autocast('cuda', dtype=torch.float16):
-                out = model(x_batch, return_logits=True)  # ModelOut(logits, aux_loss)
-                logits, aux_loss = out.logits, out.aux_loss
-                ce_loss = criterion(logits, y_batch)
-                # MoE load-balancing loss (encourages uniform expert usage, λ=0.01)
-                loss = (ce_loss + aux_loss * 0.01) / grad_accum
+                with autocast('cuda', dtype=torch.float16):
+                    out = model(x_batch, return_logits=True)
+                    logits, aux_loss = out.logits, out.aux_loss
+                    ce_loss = criterion(logits, y_batch)
+                    loss = (ce_loss + aux_loss * 0.01) / grad_accum
 
-            amp_scaler.scale(loss).backward()
+                amp_scaler.scale(loss).backward()
 
-            if (batch_idx + 1) % grad_accum == 0:
-                amp_scaler.unscale_(optimizer)
-                torch.nn.utils.clip_grad_norm_(all_params, max_norm=1.0)
-                amp_scaler.step(optimizer)
-                amp_scaler.update()
-                optimizer.zero_grad(set_to_none=True)
-                scheduler.step()
-                global_step += 1
+                if (batch_idx + 1) % grad_accum == 0:
+                    amp_scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(all_params, max_norm=1.0)
+                    amp_scaler.step(optimizer)
+                    amp_scaler.update()
+                    optimizer.zero_grad(set_to_none=True)
+                    scheduler.step()
+                    global_step += 1
 
-                # Log CE + aux every 100 steps (fewer GPU→CPU syncs)
-                if global_step % 100 == 0:
-                    logging.info(
-                        f"[STEP {global_step}] ce={ce_loss.item():.4f} "
-                        f"aux={aux_loss.item():.5f} "
-                        f"loss={loss.item()*grad_accum:.4f}"
+                    if global_step % 100 == 0:
+                        logging.info(
+                            f"[STEP {global_step}] ce={ce_loss.item():.4f} "
+                            f"aux={aux_loss.item():.5f} "
+                            f"loss={loss.item()*grad_accum:.4f}"
+                        )
+
+                # Accumulate on GPU (no CPU-GPU sync per batch!)
+                epoch_loss_gpu += loss.detach() * grad_accum
+                preds = logits.argmax(dim=-1)
+                epoch_correct_gpu += (preds == y_batch).sum()
+                epoch_total += len(y_batch)
+
+                # ── First-batch timing (so user knows training is alive) ──
+                if batch_idx == 0 and epoch == 0:
+                    first_batch_time = time.time() - t0
+                    micro_sps = batch_size / first_batch_time
+                    est_epoch_min = first_batch_time * len(train_loader) / 60
+                    log.info(f"⏱️  First μbatch: {first_batch_time:.2f}s "
+                             f"({micro_sps:.0f} μbatch-samples/s) "
+                             f"→ est. epoch: ~{est_epoch_min:.0f} min "
+                             f"({len(train_loader)} batches)")
+
+                # Progress logging (every ~5% of epoch, capped at 100 batches)
+                log_interval = max(10, min(100, len(train_loader) // 20))
+                if batch_idx > 0 and batch_idx % log_interval == 0:
+                    progress = batch_idx / len(train_loader) * 100
+                    elapsed_so_far = time.time() - t0
+                    micro_sps = epoch_total / elapsed_so_far
+                    opt_sps = micro_sps
+                    if grad_accum > 1:
+                        opt_steps_done = (batch_idx + 1) // grad_accum
+                        if opt_steps_done > 0:
+                            opt_sps = (opt_steps_done * batch_size * grad_accum) / elapsed_so_far
+                    current_lr = scheduler.get_last_lr()[0]
+                    epoch_loss_val = epoch_loss_gpu.item()
+                    epoch_correct_val = epoch_correct_gpu.item()
+                    if device.type == 'cuda':
+                        free, tot = torch.cuda.mem_get_info()
+                        vram_used = (tot - free) / 1e9
+                    else:
+                        vram_used = 0
+                    log.info(
+                        f"  Epoch {epoch+1}/{epochs} | {progress:5.1f}% | "
+                        f"Loss: {epoch_loss_val / (batch_idx + 1):.4f} | Acc: {epoch_correct_val/epoch_total:.1%} | "
+                        f"LR: {current_lr:.2e} | {micro_sps:.0f} μbatch-s/s | "
+                        f"{micro_sps/batch_size:.2f}s/μbatch | VRAM: {vram_used:.1f} GB"
                     )
 
-            # Accumulate on GPU (no CPU-GPU sync per batch!)
-            epoch_loss_gpu += loss.detach() * grad_accum
-            preds = logits.argmax(dim=-1)
-            epoch_correct_gpu += (preds == y_batch).sum()
-            epoch_total += len(y_batch)
+        except RuntimeError as oom_err:
+            if "out of memory" not in str(oom_err).lower():
+                raise  # Not an OOM — re-raise
+            oom_hit = True
+            optimizer.zero_grad(set_to_none=True)
+            torch.cuda.empty_cache()
+            gc.collect()
 
-            # ── First-batch timing (so user knows training is alive) ──
-            if batch_idx == 0 and epoch == 0:
-                first_batch_time = time.time() - t0
-                micro_sps = batch_size / first_batch_time
-                est_epoch_min = first_batch_time * len(train_loader) / 60
-                log.info(f"⏱️  First μbatch: {first_batch_time:.2f}s "
-                         f"({micro_sps:.0f} μbatch-samples/s) "
-                         f"→ est. epoch: ~{est_epoch_min:.0f} min "
-                         f"({len(train_loader)} batches)")
-
-            # Progress logging (every ~5% of epoch, capped at 100 batches)
-            log_interval = max(10, min(100, len(train_loader) // 20))
-            if batch_idx > 0 and batch_idx % log_interval == 0:
-                progress = batch_idx / len(train_loader) * 100
-                elapsed_so_far = time.time() - t0
-                # Unambiguous throughput: μbatch-level and optimizer-step-level
-                micro_sps = epoch_total / elapsed_so_far
-                opt_sps = micro_sps  # same if grad_accum=1
-                if grad_accum > 1:
-                    opt_steps_done = (batch_idx + 1) // grad_accum
-                    if opt_steps_done > 0:
-                        opt_sps = (opt_steps_done * batch_size * grad_accum) / elapsed_so_far
-                current_lr = scheduler.get_last_lr()[0]
-                # Sync GPU→CPU only at log intervals (not every batch)
-                epoch_loss_val = epoch_loss_gpu.item()
-                epoch_correct_val = epoch_correct_gpu.item()
-                if device.type == 'cuda':
-                    free, tot = torch.cuda.mem_get_info()
-                    vram_used = (tot - free) / 1e9
-                else:
-                    vram_used = 0
-                log.info(
-                    f"  Epoch {epoch+1}/{epochs} | {progress:5.1f}% | "
-                    f"Loss: {epoch_loss_val / (batch_idx + 1):.4f} | Acc: {epoch_correct_val/epoch_total:.1%} | "
-                    f"LR: {current_lr:.2e} | {micro_sps:.0f} μbatch-s/s | "
-                    f"{micro_sps/batch_size:.2f}s/μbatch | VRAM: {vram_used:.1f} GB"
-                )
+            new_batch = max(_MIN_BATCH, batch_size // 2)
+            if new_batch < _MIN_BATCH:
+                log.error(f"💀 OOM at batch_size={batch_size} — cannot go below {_MIN_BATCH}")
+                raise
+            log.warning(f"⚠️  OOM at batch_size={batch_size}! Halving → {new_batch} and restarting epoch")
+            batch_size = new_batch
+            grad_accum = max(1, 256 // batch_size)
+            train_loader, val_loader = _make_loaders(batch_size)
+            continue  # Restart this epoch with smaller batch
 
         # ── Epoch summary (sync GPU→CPU once per epoch) ──
         epoch_loss = epoch_loss_gpu.item()
