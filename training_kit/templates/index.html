@@ -563,6 +563,81 @@
             }
         }
 
+        /* ── KITT Scanner Bar ── */
+        .kitt-bar {
+            position: relative;
+            height: 6px;
+            margin: 10px 0 6px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 3px;
+            overflow: hidden;
+            display: none;
+        }
+
+        .kitt-bar.active {
+            display: block;
+        }
+
+        .kitt-bar .kitt-led {
+            position: absolute;
+            top: 0;
+            left: 0;
+            height: 100%;
+            width: 20%;
+            border-radius: 3px;
+            background: radial-gradient(ellipse at center, #ff1744 0%, #ff1744 30%, rgba(255, 23, 68, 0.4) 60%, transparent 80%);
+            box-shadow: 0 0 12px 4px rgba(255, 23, 68, 0.6), 0 0 24px 8px rgba(255, 23, 68, 0.25);
+            animation: kitt-sweep 1.4s ease-in-out infinite alternate;
+            image-rendering: pixelated;
+        }
+
+        .kitt-bar.done .kitt-led {
+            background: radial-gradient(ellipse at center, var(--green) 0%, var(--green) 30%, rgba(105, 240, 174, 0.4) 60%, transparent 80%);
+            box-shadow: 0 0 12px 4px rgba(105, 240, 174, 0.6), 0 0 24px 8px rgba(105, 240, 174, 0.25);
+            animation: kitt-pulse 1.8s ease-in-out infinite;
+            width: 100%;
+        }
+
+        @keyframes kitt-sweep {
+            0% {
+                left: 0%;
+            }
+
+            100% {
+                left: 80%;
+            }
+        }
+
+        @keyframes kitt-pulse {
+
+            0%,
+            100% {
+                opacity: 0.5;
+            }
+
+            50% {
+                opacity: 1;
+            }
+        }
+
+        /* Pixelated LED segments behind the glow */
+        .kitt-bar::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: repeating-linear-gradient(90deg,
+                    transparent 0px,
+                    transparent 4px,
+                    rgba(0, 0, 0, 0.4) 4px,
+                    rgba(0, 0, 0, 0.4) 5px);
+            z-index: 2;
+            pointer-events: none;
+            border-radius: 3px;
+        }
+
         .progress-label {
             font-size: 10px;
             color: var(--text-3);
@@ -844,12 +919,12 @@
                         </div>
                         <div class="slider-row"><label>Layers</label><input type="range" id="sl_n_layers" min="1"
                                 max="24" step="1" value="4"><span class="slider-val" id="sv_n_layers">4</span></div>
-                        <div class="slider-row"><label>Experts</label><input type="range" id="sl_n_experts" min="1" max="16"
-                                step="1" value="4"><span class="slider-val" id="sv_n_experts">4</span></div>
-                        <div class="slider-row"><label>Expand</label><input type="range" id="sl_expand" min="1"
-                                max="8" step="1" value="2"><span class="slider-val" id="sv_expand">2x</span></div>
-                        <div class="slider-row"><label>Attn Heads</label><input type="range" id="sl_n_heads" min="1" max="16"
-                                step="1" value="4"><span class="slider-val" id="sv_n_heads">4</span></div>
+                        <div class="slider-row"><label>Experts</label><input type="range" id="sl_n_experts" min="1"
+                                max="16" step="1" value="4"><span class="slider-val" id="sv_n_experts">4</span></div>
+                        <div class="slider-row"><label>Expand</label><input type="range" id="sl_expand" min="1" max="8"
+                                step="1" value="2"><span class="slider-val" id="sv_expand">2x</span></div>
+                        <div class="slider-row"><label>Attn Heads</label><input type="range" id="sl_n_heads" min="1"
+                                max="16" step="1" value="4"><span class="slider-val" id="sv_n_heads">4</span></div>
                         <div class="slider-row"><label>Dropout</label><input type="range" id="sl_dropout" min="0"
                                 max="50" step="5" value="15"><span class="slider-val" id="sv_dropout">0.15</span></div>
                     </div>
@@ -899,6 +974,9 @@
                         <span class="status-badge badge-idle" id="statusBadge">IDLE</span>
                         <span class="arch-label" id="currentArch">&mdash;</span>
                         <span class="elapsed" id="elapsedTime"></span>
+                    </div>
+                    <div class="kitt-bar" id="kittBar">
+                        <div class="kitt-led"></div>
                     </div>
                     <div class="progress-wrap">
                         <div class="progress-fill" id="progressBar" style="width:0%"></div>
@@ -1212,6 +1290,16 @@
             document.getElementById('progressText').textContent =
                 s.status === 'training' ? 'Epoch ' + s.epoch + '/' + s.total_epochs + ' \u00b7 Batch ' + (s.batch_progress || 0).toFixed(0) + '%'
                     : s.status === 'finished' ? '\u2705 Complete!' : '\u2014';
+
+            // KITT Scanner
+            var kitt = document.getElementById('kittBar');
+            if (s.status === 'training') {
+                kitt.className = 'kitt-bar active';
+            } else if (s.status === 'finished') {
+                kitt.className = 'kitt-bar active done';
+            } else {
+                kitt.className = 'kitt-bar';
+            }
 
             // Stats
             document.getElementById('sEpoch').textContent = s.epoch + '/' + s.total_epochs;
