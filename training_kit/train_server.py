@@ -540,16 +540,16 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
             free_gb = free_bytes / 1e9
             add_log(f"   Free VRAM (post-model): {free_gb:.1f} GB")
 
-            # Reserve for AdamW optimizer (2 momentum buffers) + gradient buffer
+            # Reserve for AdamW optimizer (2 momentum buffers) + gradient buffer + CUDA workspace
             optimizer_reserve = model.num_parameters * 4 * 3
-            available = max(free_bytes - optimizer_reserve, 1 << 30)  # At least 1 GB
+            workspace_reserve = 2_000_000_000  # 2 GB headroom for CUDA kernels / fragmentation
+            available = max(free_bytes - optimizer_reserve - workspace_reserve, 1 << 30)
 
             # Activation memory per sample scales with model complexity (depth × width × expand).
-            # Empirical: ~2 bytes per model parameter per sample covers all layer activations,
-            # attention maps, MoE routing, and backward graph storage.
-            activation_per_sample = model.num_parameters * 2
-            batch_size = max(64, int(available / activation_per_sample))
-            batch_size = 2 ** int(np.log2(batch_size))  # Round to power-of-2
+            # Empirical: ~3 bytes per model parameter per sample (verified on RTX 3090 with Jamba).
+            activation_per_sample = model.num_parameters * 3
+            batch_size = max(32, int(available / activation_per_sample))
+            batch_size = (batch_size // 32) * 32  # Round to multiple of 32
             batch_size = min(batch_size, 2048)
         else:
             batch_size = 128
