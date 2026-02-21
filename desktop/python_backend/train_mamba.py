@@ -970,6 +970,8 @@ def main():
                         help='Force re-engineer features (ignore cache)')
     parser.add_argument('--no-compile', action='store_true',
                         help='Disable torch.compile (for debugging)')
+    parser.add_argument('--rows', type=int, default=0,
+                        help='Train on the most recent N rows only')
     args = parser.parse_args()
 
     # Pass --no-compile flag via sys module (avoids threading through all calls)
@@ -1046,6 +1048,10 @@ def main():
 
         df = max(dfs, key=len)
         log.info(f"Primary dataset: {len(df):,} rows")
+
+        if getattr(args, 'rows', 0) > 0:
+            df = df.tail(args.rows).reset_index(drop=True)
+            log.info(f"⏳ Capped to most recent {args.rows:,} rows")
 
         if args.quick:
             df = df.head(100_000)

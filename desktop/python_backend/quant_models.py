@@ -2025,6 +2025,7 @@ class QuantEngine:
         
         self.is_initialized = False
         self.last_analysis = {}
+        self.latest_order_book = {}
 
 
 
@@ -2242,6 +2243,22 @@ class QuantEngine:
             rqa = analysis['rqa']
             if rqa.get('interpretation') == 'HIGHLY_DETERMINISTIC':
                 signals.append({'type': 'RQA', 'action': 'PATTERN_LOCK', 'reason': f'High determinism (DET={rqa.get("DET", 0):.2f})'})
+                
+            # Tier 4: Phase 4 L2 Order Book Signals (Sniping)
+            analysis['order_book'] = self.latest_order_book
+            if self.latest_order_book:
+                bvd = self.latest_order_book.get('bvd_ratio', 1.0)
+                if bvd > 3.0:
+                    signals.append({'type': 'BVD', 'action': 'BUY_WALL', 'reason': f'Extreme buy pressure (BVD={bvd:.1f}x)'})
+                elif bvd < 0.33:
+                    signals.append({'type': 'BVD', 'action': 'SELL_WALL', 'reason': f'Extreme sell pressure (BVD={bvd:.1f}x)'})
+                    
+                wall_bids = self.latest_order_book.get('wall_bids', 0.0)
+                if wall_bids > 25.0:
+                    signals.append({'type': 'OB_WALL', 'action': 'SUPPORT', 'reason': f'Massive bid wall ({wall_bids:.1f} BTC)'})
+                wall_asks = self.latest_order_book.get('wall_asks', 0.0)
+                if wall_asks > 25.0:
+                    signals.append({'type': 'OB_WALL', 'action': 'RESISTANCE', 'reason': f'Massive ask wall ({wall_asks:.1f} BTC)'})
             
             analysis['signals'] = signals
             
@@ -2349,6 +2366,9 @@ class QuantEngine:
             'rough_score': float(rough.get('roughness_score', 50)),
         }
 
+        # ── L2 Order Book ──
+        summary['order_book'] = a.get('order_book', {}) or {}
+
         # ── Order Flow ──
         oflow = a.get('order_flow', {}) or {}
         summary['order_flow'] = {
@@ -2399,7 +2419,7 @@ class QuantEngine:
         tda = a.get('tda', {}) or {}
         # Handle NOT_COMPUTED status from MF-DFA
         mf_status = mf.get('status', '')
-        if mf_status == 'NOT_COMPUTED' or mf.get('multifractality', 0) == 0:
+        if mf_status == 'NOT_COMPUTED' or mf.get('delta_h', 0) == 0:
             mf_interp = 'INSUFFICIENT_DATA'
             mf_delta_h = 0
         else:

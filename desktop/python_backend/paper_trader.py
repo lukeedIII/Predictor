@@ -180,7 +180,7 @@ class PaperTrader:
     """
     
     # Max concurrent positions for data farming
-    MAX_CONCURRENT = 6
+    MAX_CONCURRENT = 1000  # Uncapped for massive data accumulation
 
     def __init__(self, starting_balance: float = None, default_leverage: int = None):
         # Thread-safety lock: protects all balance and position mutations.
@@ -199,6 +199,7 @@ class PaperTrader:
         self.is_running = False
         self.circuit_breaker_active = False
         self.last_trade_time: Optional[datetime] = None
+        self._twap_queue: list = []  # Phase 4.4: TWAP micro-order queue
         
         # Performance tracking
         self.total_trades = 0
@@ -451,89 +452,33 @@ class PaperTrader:
         if direction == 'NEUTRAL':
             return None
 
-        if confidence < getattr(config, 'PAPER_MIN_CONFIDENCE', 0):
+        # Lowered minimum confidence for data farming: take any valid signal > 50.1%
+        if confidence < 50.1:
             return None
 
-        if 0.48 <= hurst <= 0.52:
-            logging.debug(f"Skip: Hurst {hurst:.3f} indicates random/chaotic regime")
-            return None
-
-        vol_regime = prediction.get('vol_regime', 1.0)
-        vol_max = getattr(config, 'REGIME_VOL_MAX', 3.0)
-        vol_min = getattr(config, 'REGIME_VOL_MIN', 0.15)
-        if vol_regime > vol_max:
-            logging.debug(f"Skip: vol_regime {vol_regime:.2f} > {vol_max} (extreme volatility)")
-            return None
-        if vol_regime < vol_min:
-            logging.debug(f"Skip: vol_regime {vol_regime:.2f} < {vol_min} (dead market)")
-            return None
-
-        ev = prediction.get('expected_value', None)
-        calibrator_fitted = prediction.get('calibrator_fitted', False)
-        if calibrator_fitted and ev is not None:
-            min_ev = getattr(config, 'MIN_EXPECTED_VALUE', 0.0)
-            if ev < min_ev:
-                logging.debug(f"Skip: EV={ev:.4f} < {min_ev} (negative expected value)")
-                return None
+        # --- DISABLED FOR DATA FARMING: HURST, VOLATILITY, EV CHECKS ---
+        # if 0.49 <= hurst <= 0.51:
+        #     return None
+        # if vol_regime > vol_max or vol_regime < vol_min:
+        #     return None
+        # if ev < min_ev:
+        #     return None
 
         # ── Acquire lock: all remaining checks read/write shared mutable state ──
         with self._lock:
-            # Rule 1: Adaptive minimum confidence (adjusts based on recent performance)
-            min_conf = self._adaptive_min_confidence
-            if confidence < min_conf:
-                self._signal_streak = 0
-                logging.debug(f"Skip: confidence {confidence:.1f}% < {min_conf:.0f}% (adaptive)")
-                return None
-
-            # Rule 2c: Regime win-rate gate — block trading in losing regimes
-            regime_label = prediction.get('regime_label', 'UNKNOWN')
-            min_wr = getattr(config, 'REGIME_MIN_WIN_RATE', 0.35)
-            min_trades = getattr(config, 'REGIME_MIN_TRADES', 5)
-            if self._feedback_log:
-                regime_trades = [t for t in self._feedback_log[-50:] if t.get('regime') == regime_label]
-                if len(regime_trades) >= min_trades:
-                    wins = sum(1 for t in regime_trades if t.get('won', False))
-                    wr = wins / len(regime_trades)
-                    if wr < min_wr:
-                        self._signal_streak = 0
-                        logging.info(
-                            f"REGIME GATE: {regime_label} blocked — "
-                            f"win rate {wr*100:.0f}% < {min_wr*100:.0f}% "
-                            f"({wins}/{len(regime_trades)} wins)"
-                        )
-                        return None
+            # Rule 1 & 2c: Adaptive Minimum & Regime Win-Rate Blockers
+            # DISABLED for data farming: take all trades to gather data
+            pass
 
             # Rule 3: Tiered signal confirmation based on confidence
+            # DISABLED for data farming: enter on all signals immediately
             wanted = 'LONG' if direction == 'UP' else 'SHORT'
-            if not hasattr(self, '_signal_streak'):
-                self._signal_streak = 0
-                self._signal_direction = None
-
-            if wanted == self._signal_direction:
-                self._signal_streak += 1
-            else:
-                self._signal_direction = wanted
-                self._signal_streak = 1
-
-            # Tiered: strong signals need fewer confirmations
-            if confidence >= 75:
-                min_confirms = 1   # Instant entry for strong signals
-            elif confidence >= 55:
-                min_confirms = 2   # Standard confirmation
-            else:
-                min_confirms = 3   # Extra caution for weak signals
-
-            if self._signal_streak < min_confirms:
-                logging.debug(f"Skip: signal confirmation {self._signal_streak}/{min_confirms} for {wanted} (conf={confidence:.0f}%)")
-                return None
+            min_confirms = 0 
+            self._signal_streak = 0
 
             # Rule 4: Cooldown period (check_cooldown reads last_trade_time — shared)
-            if not self.check_cooldown():
-                remaining = config.PAPER_COOLDOWN_SEC
-                if self.last_trade_time:
-                    remaining -= (datetime.now() - self.last_trade_time).total_seconds()
-                logging.debug(f"Skip: cooldown active ({remaining:.0f}s remaining)")
-                return None
+            # DISABLED for data farming: allow continuous high-frequency execution
+            pass
 
             # Rule 5: Circuit breaker
             if self.circuit_breaker_active:
@@ -550,12 +495,9 @@ class PaperTrader:
                 logging.debug(f"Skip: max {self.MAX_CONCURRENT} concurrent positions reached")
                 return None
 
-            # Rule 7: Pyramid limit — max N in same direction (replaces old no-stacking)
-            max_same = getattr(config, 'PAPER_MAX_SAME_DIRECTION', 3)
-            same_dir_count = sum(1 for p in self.positions if p.direction == wanted)
-            if same_dir_count >= max_same:
-                logging.debug(f"Skip: already {same_dir_count} {wanted} positions (pyramid limit {max_same})")
-                return None
+            # Rule 7: Pyramid limit — max N in same direction
+            # DISABLED for data farming: allow infinite stacking
+            pass
 
             # All checks passed — reset streak and trade
             self._signal_streak = 0
@@ -567,12 +509,42 @@ class PaperTrader:
     
     def open_position(self, direction: str, current_price: float, 
                       prediction: Dict, volatility: float = 0.005):
-        """Open a new paper trading position with dynamic leverage and confidence-scaled sizing."""
+        """Open a new paper trading position using TWAP micro-slicing (Phase 4.4)."""
         with self._lock:
-            return self._open_position_locked(direction, current_price, prediction, volatility)
+            # Check slot availability
+            if len(self.positions) >= self.MAX_CONCURRENT:
+                logging.warning(f"Cannot initialize TWAP: max {self.MAX_CONCURRENT} positions reached")
+                return False
+                
+            # Confidence-scaled position sizing for total macro order
+            adj_conf = prediction.get('_adjusted_confidence', prediction.get('confidence', 50))
+            target_size_usd = self.calculate_position_size(confidence=adj_conf)
+            
+            # Slice into 5 micro-orders spaced 6 seconds apart
+            num_slices = 5
+            spacing_sec = 6.0
+            slice_size = target_size_usd / num_slices
+            
+            now = time.time()
+            for i in range(num_slices):
+                execute_at = now + (i * spacing_sec)
+                self._twap_queue.append({
+                    'execute_at': execute_at,
+                    'direction': direction,
+                    'size_usd': slice_size,
+                    'prediction': prediction.copy(),
+                    'volatility': volatility,
+                    'adj_conf': adj_conf
+                })
+            
+            self.last_trade_time = datetime.now() # Reset cooldown early to avoid double triggers
+            self.nlog.log_system(f"TWAP Sniper Initiated: {direction} | Target Size: ${target_size_usd:,.2f} | 5 slices.")
+            logging.info(f"TWAP INITIATED: {direction} | Target Size: ${target_size_usd:,.2f} | Sliced into {num_slices} micro-orders over {num_slices * spacing_sec}s")
+            return True
 
-    def _open_position_locked(self, direction: str, current_price: float,
-                              prediction: Dict, volatility: float = 0.005):
+    def _open_micro_position_locked(self, direction: str, current_price: float,
+                                    prediction: Dict, volatility: float = 0.005,
+                                    size_usd_override: float = None, adj_conf_override: float = None):
         """Internal: open_position body, called under self._lock."""
         if len(self.positions) >= self.MAX_CONCURRENT:
             logging.warning(f"Cannot open: max {self.MAX_CONCURRENT} positions reached")
@@ -582,8 +554,11 @@ class PaperTrader:
         trade_leverage = self._dynamic_leverage(prediction)
         
         # Confidence-scaled position sizing
-        adj_conf = prediction.get('_adjusted_confidence', prediction.get('confidence', 50))
-        size_usd = self.calculate_position_size(confidence=adj_conf)
+        adj_conf = adj_conf_override if adj_conf_override is not None else \
+                   prediction.get('_adjusted_confidence', prediction.get('confidence', 50))
+                   
+        size_usd = size_usd_override if size_usd_override is not None else \
+                   self.calculate_position_size(confidence=adj_conf)
         
         # Override leverage for this trade
         margin = size_usd / trade_leverage
@@ -829,11 +804,27 @@ class PaperTrader:
         """
         Main update loop — call this every tick.
         v2.0: Checks TP1 partial exits, TP/SL/liquidation, then evaluates new signals.
+        Phase 4.4: Executes pending TWAP micro-orders & Dynamic Time-Stops.
         
         Returns trade record if a trade was closed, None otherwise.
         """
         result = None
         
+        # 0. Execute pending TWAP micro-orders (Phase 4.4)
+        with self._lock:
+            now = time.time()
+            twap_ready = [q for q in getattr(self, '_twap_queue', []) if now >= q['execute_at']]
+            for q in twap_ready:
+                self._twap_queue.remove(q)
+                self._open_micro_position_locked(
+                    direction=q['direction'],
+                    current_price=current_price,
+                    prediction=q['prediction'],
+                    volatility=q['volatility'],
+                    size_usd_override=q['size_usd'],
+                    adj_conf_override=q['adj_conf']
+                )
+
         # 1. Update trailing stop loss for ALL open positions
         for pos in list(self.positions):
             pos.update_trailing_sl(current_price)
@@ -842,7 +833,18 @@ class PaperTrader:
         for pos in list(self.positions):  # Copy list since we may remove during iteration
             # Time-based exit: auto-close positions held too long
             hold_secs = (datetime.now() - pos.entry_time).total_seconds()
+            hold_mins = hold_secs / 60.0
             max_hold = getattr(config, 'PAPER_MAX_HOLD_SEC', 5400)
+            
+            # ── Dynamic Time-Stop (Sniper Exit) ──
+            # If open > 45 mins, barely in profit/losing (< 1% ROE), and momentum is against us
+            if hold_mins >= 45.0 and pos.unrealized_pnl_pct(current_price) < 1.0 and prediction:
+                momentum = prediction.get('momentum', 0.0)
+                if (pos.direction == "LONG" and momentum < -0.001) or \
+                   (pos.direction == "SHORT" and momentum > 0.001):
+                    result = self.close_position(current_price, "DYNAMIC_TIME_STOP", pos)
+                    continue
+
             if hold_secs > max_hold:
                 result = self.close_position(current_price, "MAX_HOLD_TIME", pos)
             elif pos.should_liquidate(current_price):
@@ -1201,7 +1203,8 @@ class PaperTrader:
         """Adjust min confidence threshold based on recent trade performance.
         Uses PnL-WEIGHTED scoring: a $100 win/loss matters 10x more than $10.
         Combines win rate with expectancy (avg PnL per trade) for smarter adaptation."""
-        recent = self._feedback_log[-20:]  # Last 20 trades
+        # Uses list() cast because deques do not support slice indexing
+        recent = list(self._feedback_log)[-20:]  # Last 20 trades
         if len(recent) < 5:
             return  # Not enough data to adapt
         

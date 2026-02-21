@@ -2113,7 +2113,8 @@ class NexusPredictor:
                 batch_y = y_tensor[idx]
                 
                 optimizer.zero_grad()
-                with autocast(device_type=self.lstm_device.type, dtype=torch.float16):
+                _dtype = self.lstm_device if isinstance(self.lstm_device, str) else self.lstm_device.type
+                with autocast(device_type=_dtype, dtype=torch.float16):
                     raw_out = self.lstm(batch_x, return_logits=True)
                     # ModelOut contract: Jamba returns ModelOut; NexusTransformer returns plain tensor
                     from mamba_model import ModelOut as _ModelOut
@@ -2152,7 +2153,8 @@ class NexusPredictor:
         if best_state is not None:
             self.lstm.load_state_dict(best_state)
         
-        vram_mb = torch.cuda.memory_allocated() / 1e6 if self.lstm_device.type == 'cuda' else 0
+        _dtype = self.lstm_device if isinstance(self.lstm_device, str) else self.lstm_device.type
+        vram_mb = torch.cuda.memory_allocated() / 1e6 if _dtype == 'cuda' else 0
         logging.info(f"Transformer training done. Best loss: {best_loss:.4f} | VRAM: {vram_mb:.0f} MB")
 
     # Legacy alias

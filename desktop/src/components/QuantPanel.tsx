@@ -110,7 +110,7 @@ function SignalBadge({ signal }: { signal: { type: string; action: string; reaso
     const colorMap: Record<string, string> = {
         REGIME: 'var(--accent)', OFI: '#A78BFA', VOL: 'var(--warning)',
         HESTON: 'var(--negative)', JUMP: '#F43F5E', MFDFA: '#06B6D4',
-        RQA: '#8B5CF6',
+        RQA: '#8B5CF6', BVD: 'var(--positive)', OB_WALL: 'var(--warning)',
     };
     const c = colorMap[signal.type] ?? 'var(--text-1)';
     return (
@@ -132,7 +132,7 @@ export default function QuantPanel() {
 
     // Section open/close state — default: regime + basics open
     const [sections, setSections] = useState<Record<string, boolean>>({
-        regime: true, volatility: false, orderflow: false, jumps: false,
+        regime: true, volatility: false, orderflow: false, orderbook: true, jumps: false,
         cycles: false, wavelets: false, fractals: false, rqa: false,
         signals: true,
     });
@@ -199,6 +199,11 @@ export default function QuantPanel() {
     const rqaDet = rqa.determinism ?? 0;
     const rqaRR = rqa.recurrence_rate ?? 0;
     const rqaInterp = rqa.interpretation ?? 'UNKNOWN';
+
+    const ob = quant.order_book ?? {};
+    const bvdRatio = ob.bvd_ratio ?? 1.0;
+    const wallBids = ob.wall_bids ?? 0;
+    const wallAsks = ob.wall_asks ?? 0;
 
     const signals: Array<{ type: string; action: string; reason: string }> = quant.signals ?? [];
 
@@ -287,6 +292,23 @@ export default function QuantPanel() {
                     fmt={() => ofiNormalized.toFixed(3)}
                     color={ofiNormalized > 0.2 ? 'var(--positive)' : ofiNormalized < -0.2 ? 'var(--negative)' : 'var(--text-2)'}
                     compact />
+            </Section>
+
+            {/* ── L2 Order Book ── */}
+            <Section title="L2 Order Book (Depth)" open={sections.orderbook} toggle={() => toggle('orderbook')}
+                badge={`BVD ${bvdRatio.toFixed(2)}x`} badgeColor={bvdRatio > 1.5 ? 'var(--positive)' : bvdRatio < 0.66 ? 'var(--negative)' : 'var(--accent)'}>
+                <MiniGauge label="Buy Volume Delta (BVD)" value={bvdRatio} max={5}
+                    fmt={v => `${v.toFixed(2)}x`}
+                    color={bvdRatio > 1.5 ? 'var(--positive)' : bvdRatio < 0.66 ? 'var(--negative)' : 'var(--text-2)'}
+                    compact />
+                <div className="flex justify-between" style={{ fontSize: 10, color: 'var(--text-1)', marginTop: 4 }}>
+                    <span>Bid Wall ({'>'}15 BTC)</span>
+                    <span className="mono" style={{ color: wallBids > 15 ? 'var(--positive)' : 'var(--text-1)' }}>{wallBids.toFixed(1)} ₿</span>
+                </div>
+                <div className="flex justify-between" style={{ fontSize: 10, color: 'var(--text-1)', marginTop: 2 }}>
+                    <span>Ask Wall ({'>'}15 BTC)</span>
+                    <span className="mono" style={{ color: wallAsks > 15 ? 'var(--negative)' : 'var(--text-1)' }}>{wallAsks.toFixed(1)} ₿</span>
+                </div>
             </Section>
 
             {/* ── Jump Detection ── */}

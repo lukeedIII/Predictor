@@ -595,41 +595,67 @@ def _prediction_refresh_loop():
     Results are stored in `_cached_prediction` and merged by the fast loop.
     """
     global _cached_prediction
+    
+    # Track the last minute we processed to avoid double-triggering
+    last_processed_minute = -1
+    force_initial = True
+    
     while not _prediction_refresh_stop.is_set():
         try:
-            if predictor and predictor.is_trained:
-                pred = predictor.get_prediction()
-                live_acc = getattr(predictor, '_live_accuracy', 0.0)
-                live_samples = getattr(predictor, '_live_accuracy_samples', 0)
-                training_acc = (
-                    getattr(predictor, '_training_accuracy', 0.0)
-                    or predictor.last_validation_accuracy
-                )
-                quant = (
-                    predictor.quant_engine.get_ui_summary()
-                    if predictor.quant_engine and predictor.quant_initialized
-                    else predictor.last_quant_analysis or {}
-                )
-                alt = predictor.last_alt_signals or {}
-
-                enrichment = {
-                    "prediction": _sanitize_for_json(pred),
-                    "accuracy": live_acc if live_samples >= 3 else training_acc,
-                    "accuracy_source": "live" if live_samples >= 3 else "training",
-                    "live_accuracy_samples": live_samples,
-                    "training_accuracy": training_acc,
-                    "quant": _sanitize_for_json(quant),
-                    "alt_signals": _sanitize_for_json(alt),
-                    "derivatives": _sanitize_for_json(
-                        derivs_feed.get_snapshot_dict() if derivs_feed else {}
-                    ),
-                }
-
-                with _cached_prediction_lock:
-                    _cached_prediction = enrichment
+            current_time = datetime.now()
+            
+            # ── SYNCHRONIZED EXECUTION (1-Minute Close) ──
+            # Only trigger a new prediction cycle if we are in the first 2 seconds of a new minute
+            # and we haven't already processed this minute.
+            is_new_candle = (current_time.second <= 1)
+            is_new_minute = (current_time.minute != last_processed_minute)
+            
+            if force_initial or (is_new_candle and is_new_minute):
+                force_initial = False
+                if predictor and predictor.is_trained:
+                    # Pass live order book snapshot to Quant Engine for L2 signal generation
+                    if binance_client and binance_client.connected and predictor.quant_engine:
+                        predictor.quant_engine.latest_order_book = binance_client.snapshot
+                        
+                    # Execute heavy prediction & quant analysis exactly on the candle close
+                    pred = predictor.get_prediction()
+                    live_acc = getattr(predictor, '_live_accuracy', 0.0)
+                    live_samples = getattr(predictor, '_live_accuracy_samples', 0)
+                    training_acc = (
+                        getattr(predictor, '_training_accuracy', 0.0)
+                        or predictor.last_validation_accuracy
+                    )
+                    quant = (
+                        predictor.quant_engine.get_ui_summary()
+                        if predictor.quant_engine and predictor.quant_initialized
+                        else predictor.last_quant_analysis or {}
+                    )
+                    alt = predictor.last_alt_signals or {}
+    
+                    enrichment = {
+                        "prediction": _sanitize_for_json(pred),
+                        "accuracy": live_acc if live_samples >= 3 else training_acc,
+                        "accuracy_source": "live" if live_samples >= 3 else "training",
+                        "live_accuracy_samples": live_samples,
+                        "training_accuracy": training_acc,
+                        "quant": _sanitize_for_json(quant),
+                        "alt_signals": _sanitize_for_json(alt),
+                        "derivatives": _sanitize_for_json(
+                            derivs_feed.get_snapshot_dict() if derivs_feed else {}
+                        ),
+                    }
+    
+                    with _cached_prediction_lock:
+                        _cached_prediction = enrichment
+                
+                # Mark this minute as processed so we don't recalculate
+                last_processed_minute = current_time.minute
+                
         except Exception as e:
             logging.debug(f"Prediction refresh error: {e}")
-        _prediction_refresh_stop.wait(_SLOW_TICK_INTERVAL)
+            
+        # Fast sleep to precisely catch the `00` second turnover
+        _prediction_refresh_stop.wait(0.25)
 
 
 async def _ws_push_loop():
@@ -1594,7 +1620,11 @@ def get_prediction_trajectory(steps: int = 5, interval: str = "1m"):
 
     if pred and isinstance(pred, dict):
         direction = pred.get("direction", pred.get("signal", "FLAT"))
-        confidence = float(pred.get("confidence", 0.33))
+        
+        # predictor.py returns confidence as a whole percentage (0-100)
+        raw_conf = float(pred.get("confidence", 33.0))
+        confidence = raw_conf / 100.0 if raw_conf > 1.0 else raw_conf
+        
         probabilities = {
             "UP": float(pred.get("prob_up", pred.get("up_prob", 0.33))),
             "FLAT": float(pred.get("prob_flat", pred.get("flat_prob", 0.34))),
@@ -1605,20 +1635,23 @@ def get_prediction_trajectory(steps: int = 5, interval: str = "1m"):
     tf_seconds = {"1m": 60, "5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
     candle_sec = tf_seconds.get(interval, 60)
 
-    # Base move per candle: scale by confidence and recent volatility
-    # Use a conservative 0.05% per minute as baseline, scaled by timeframe
-    base_pct = 0.0005 * _math.sqrt(candle_sec / 60)  # sqrt scaling for timeframe
+    # Horizon is 15 minutes for the AI engine
+    HORIZON_MINUTES = 15
+    TARGET_PCT = 0.0025  # The threshold trained for: 0.25% in 15m
 
-    # Direction multiplier
+    # The AI is trained to predict the probability of hitting a 0.25% move in 15m.
+    # It does not predict the *magnitude* of the move, so scaling distance by confidence creates extreme false targets.
+    # We lock the target exactly to the 0.25% threshold to draw the correct 15-m path.
     if direction == "UP":
-        dir_mult = 1.0
+        target_price = price * (1.0 + TARGET_PCT)
     elif direction == "DOWN":
-        dir_mult = -1.0
+        target_price = price * (1.0 - TARGET_PCT)
     else:
-        dir_mult = 0.0  # FLAT = no directional move
+        target_price = price
 
-    # Scale by confidence (how sure the model is)
-    move_pct = base_pct * dir_mult * confidence
+    # Override the frontend's hardcoded 'steps=5'
+    # Automatically project enough candles to reach the full 15m horizon
+    steps = max(1, int((HORIZON_MINUTES * 60) / candle_sec))
 
     # Build trajectory points
     now = int(time.time())
@@ -1626,15 +1659,23 @@ def get_prediction_trajectory(steps: int = 5, interval: str = "1m"):
     last_candle_time = candle_start  # Current candle's open time
 
     trajectory = []
-    current_price = price
+    
+    # Generate points curving towards the target over the horizon
     for i in range(1, steps + 1):
         future_time = last_candle_time + (i * candle_sec)
-        # Apply move with slight diminishing returns (uncertainty grows)
-        decay = 1.0 / (1.0 + 0.1 * i)  # Confidence decays slightly per step
-        current_price = current_price * (1.0 + move_pct * decay)
+        
+        # How far along the 15m horizon are we? (0.0 to 1.0)
+        minutes_out = (i * candle_sec) / 60.0
+        progress = min(1.0, minutes_out / HORIZON_MINUTES)
+        
+        # Use an ease-out cubic curve so it arcs naturally to the target instead of a straight line
+        ease_out = 1 - _math.pow(1 - progress, 3)
+        
+        current_point = price + (target_price - price) * ease_out
+        
         trajectory.append({
             "time": future_time,
-            "value": round(current_price, 2),
+            "value": round(current_point, 2),
         })
 
     data = _sanitize_for_json({

@@ -121,8 +121,17 @@ MODEL_ARCHITECTURES = {
         "pretrained_file": "nexus_large_jamba_v1.pth",
         "jamba_size": "large",
     },
+    "basemodel": {
+        "label": "BaseModel Fast (4.4M)",
+        "params": "4.4M",
+        "vram_gb": 0.2,
+        "description": "Custom fast-trained 500k-candle baseline model.",
+        "model_file": "basemodel.pth",
+        "pretrained_file": "basemodel.pth",
+        "jamba_size": "small",
+    },
 }
-DEFAULT_MODEL_ARCH = "large_jamba"
+DEFAULT_MODEL_ARCH = "basemodel"
 
 # ── Beta Features ─────────────────────────────────────
 BETA_FEATURES = {
@@ -186,10 +195,10 @@ WALK_FORWARD_FOLDS = 5          # number of expanding-window folds for post-trai
 XGB_EARLY_STOPPING_ROUNDS = 30  # stop if logloss doesn't improve for N rounds on eval set
 
 # ── Regime Gating ────────────────────────────────────
-REGIME_MIN_WIN_RATE = 0.35      # block trading if regime win rate falls below this (0-1)
+REGIME_MIN_WIN_RATE = 0.20      # block trading if regime win rate falls below this (0-1)
 REGIME_MIN_TRADES = 5           # need at least N regime trades before gating kicks in
-REGIME_VOL_MAX = 3.0            # skip if vol_regime > N (extreme volatility / whipsaw)
-REGIME_VOL_MIN = 0.15           # skip if vol_regime < N (dead market / no opportunity)
+REGIME_VOL_MAX = 4.0            # skip if vol_regime > N (extreme volatility / whipsaw)
+REGIME_VOL_MIN = 0.05           # skip if vol_regime < N (dead market / no opportunity)
 
 # ── Gap Detection / Quarantine ───────────────────────
 GAP_THRESHOLD_MINUTES = 5       # time gap > N minutes between candles = data gap
@@ -201,11 +210,11 @@ PAPER_TRADES_PATH = os.path.join(DATA_DIR, "paper_trades.csv")
 PAPER_EQUITY_PATH = os.path.join(DATA_DIR, "paper_equity.csv")
 PAPER_POSITIONS_PATH = os.path.join(DATA_DIR, "paper_positions.json")
 PAPER_DEFAULT_LEVERAGE = 10
-PAPER_MIN_CONFIDENCE = 40          # Higher floor (was 30), compensated by tiered confirmations
+PAPER_MIN_CONFIDENCE = 35          # Relaxed floor to allow more signals
 PAPER_MAX_DRAWDOWN = 0.20
-PAPER_COOLDOWN_SEC = 120           # Slightly longer cooldown to avoid noise (was 60)
-PAPER_MAX_HOLD_SEC = 5400          # 90 min max — BTC moves fast, stale trades bleed fees (was 7200)
-PAPER_MAX_SAME_DIRECTION = 3       # Pyramid limit per direction
+PAPER_COOLDOWN_SEC = 30            # Relaxed cooldown to avoid missing quick entries
+PAPER_MAX_HOLD_SEC = 5400          # 90 min max
+PAPER_MAX_SAME_DIRECTION = 6       # Pyramid limit per direction
 PAPER_LEVERAGE_MIN = 3             # Dynamic leverage floor
 PAPER_LEVERAGE_MAX = 20            # Dynamic leverage ceiling
 

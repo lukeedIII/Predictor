@@ -388,9 +388,12 @@ export default function TradingViewChart() {
                 const refs = chartRefs.current;
                 if (!refs.trajectorySeries) return;
 
-                // Build line: anchor point (current price) + projected points
+                // Build line: perfectly sew the anchor point to the live chart's current candle close
+                // to eliminate 'gaps' caused by slight async delays between the HTTP fetch and the WebSocket.
+                const anchorValue = currentCandleRef.current ? currentCandleRef.current.close : data.anchor.value;
+
                 const points = [
-                    { time: data.anchor.time as UTCTimestamp, value: data.anchor.value },
+                    { time: data.anchor.time as UTCTimestamp, value: anchorValue },
                     ...data.trajectory.map(p => ({
                         time: p.time as UTCTimestamp,
                         value: p.value,

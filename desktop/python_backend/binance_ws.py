@@ -23,7 +23,7 @@ from typing import Optional, Callable
 logger = logging.getLogger(__name__)
 
 # ─── Constants ────────────────────────────────────────
-COMBINED_STREAM_URL = "wss://stream.binance.com:9443/stream?streams=btcusdt@trade/btcusdt@ticker"
+COMBINED_STREAM_URL = "wss://stream.binance.com:9443/stream?streams=btcusdt@trade/btcusdt@ticker/btcusdt@depth20@100ms"
 MAX_BACKOFF_SEC = 30
 BASE_DELAY_SEC = 1
 
@@ -78,6 +78,13 @@ class BinanceWSClient:
         self._1s_candles: deque = deque(maxlen=7200)       # 2h of 1s candles
         self._current_1s: dict = {}                         # candle being built
         self._current_1s_sec: int = 0                       # epoch second of current candle
+
+        # ─── Phase 4: L2 Order Book depth ─────────────
+        self._bvd_ratio: float = 1.0       # Buy Volume Delta (Bid volume / Ask volume)
+        self._wall_bids: float = 0.0       # Total volume of limit buy walls
+        self._wall_asks: float = 0.0       # Total volume of limit sell walls
+        self._bids_top5: float = 0.0       # Volume in top 5 bid levels
+        self._asks_top5: float = 0.0       # Volume in top 5 ask levels
 
         # Callback for price updates (used by api_server to push to frontend WS)
         self._on_price_update = on_price_update
@@ -165,6 +172,12 @@ class BinanceWSClient:
             "buy_sell_ratio": buy_sell,
             "buy_volume_60s": round(buy_vol, 4),
             "sell_volume_60s": round(sell_vol, 4),
+            # Phase 4: L2 Order Book snapshot
+            "bvd_ratio": round(self._bvd_ratio, 3),
+            "bids_top5": round(self._bids_top5, 2),
+            "asks_top5": round(self._asks_top5, 2),
+            "wall_bids": round(self._wall_bids, 2),
+            "wall_asks": round(self._wall_asks, 2),
         }
 
     def get_1s_candles(self) -> 'pd.DataFrame':
@@ -312,6 +325,8 @@ class BinanceWSClient:
             self._handle_trade(payload)
         elif "ticker" in stream_name:
             self._handle_ticker(payload)
+        elif "depth" in stream_name:
+            self._handle_depth(payload)
 
     def _handle_trade(self, data: dict):
         """Handle individual trade event.
@@ -395,6 +410,38 @@ class BinanceWSClient:
                 if last:
                     self._price = float(last)
         except (ValueError, TypeError):
+            pass
+
+    def _handle_depth(self, data: dict):
+        """Handle L2 Order Book depth updates.
+        
+        Calculates Bid/Ask Imbalance (BVD) and detects liquidity walls.
+        data["b"] = Bids [[price, qty], ...]
+        data["a"] = Asks [[price, qty], ...]
+        """
+        try:
+            bids = data.get("b", [])
+            asks = data.get("a", [])
+            
+            # Sum volume for top 5 levels (immediate liquidity)
+            bids_top5 = sum(float(qty) for price, qty in bids[:5])
+            asks_top5 = sum(float(qty) for price, qty in asks[:5])
+            
+            self._bids_top5 = bids_top5
+            self._asks_top5 = asks_top5
+            
+            # Total volume in the 20-level book
+            total_bids = sum(float(qty) for price, qty in bids)
+            total_asks = sum(float(qty) for price, qty in asks)
+            
+            # Buy Volume Delta (Ratio of Bid volume to Ask volume)
+            self._bvd_ratio = total_bids / (total_asks + 1e-9) if (total_bids + total_asks) > 0 else 1.0
+            
+            # Detect Liquidity Walls (single price level with > 15 BTC)
+            self._wall_bids = sum(float(qty) for price, qty in bids if float(qty) > 15.0)
+            self._wall_asks = sum(float(qty) for price, qty in asks if float(qty) > 15.0)
+            
+        except (ValueError, TypeError, IndexError):
             pass
 
 
