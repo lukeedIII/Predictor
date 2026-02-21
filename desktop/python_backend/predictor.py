@@ -1883,7 +1883,8 @@ class NexusPredictor:
                             lstm_prob = max(0.0, min(1.0, lstm_prob))
                             logging.debug(f"PREDICT [jamba-3class] UP={p_up:.3f} FLAT={p_flat:.3f} DOWN={p_down:.3f} → prob={lstm_prob:.4f}")
                         else:
-                            lstm_prob = logits.item()
+                            # 1-class (binary). Sigmoid here because model returns raw logits.
+                            lstm_prob = torch.sigmoid(logits.float()).item()
                     logging.debug(f"PREDICT [stage=transformer] prob={lstm_prob:.4f}")
                 except Exception as e:
                     logging.warning(f"PREDICT [stage=lstm] failed: {e}")
@@ -2112,7 +2113,7 @@ class NexusPredictor:
                 batch_y = y_tensor[idx]
                 
                 optimizer.zero_grad()
-                with autocast('cuda', dtype=torch.float16):
+                with autocast(device_type=self.lstm_device.type, dtype=torch.float16):
                     raw_out = self.lstm(batch_x, return_logits=True)
                     # ModelOut contract: Jamba returns ModelOut; NexusTransformer returns plain tensor
                     from mamba_model import ModelOut as _ModelOut
