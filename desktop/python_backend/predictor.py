@@ -141,8 +141,8 @@ def _check_vram_available(required_gb: float) -> tuple:
         return True, 0, 0  # CPU mode — no VRAM check needed
     try:
         free_bytes = torch.cuda.get_device_properties(0).total_mem - torch.cuda.memory_allocated(0)
-        total_gb = torch.cuda.get_device_properties(0).total_mem / 1e9
-        free_gb = free_bytes / 1e9
+        total_gb = torch.cuda.get_device_properties(0).total_mem / (1024**3)
+        free_gb = free_bytes / (1024**3)
         # Use total_mem for available check (most VRAM is free at model load time)
         return free_gb >= required_gb, round(free_gb, 1), round(total_gb, 1)
     except Exception:
@@ -300,10 +300,13 @@ class NexusPredictor:
             'ret_60', 'ret_240', 'vol_regime',
             # Volume profile
             'vwap_dist', 'vol_momentum',
-            # Cross-asset correlation (ETH + Gold + ETH/BTC)
+            # Cross-asset correlation (ETH + Gold + ETH/BTC + TradFi)
             'eth_ret_5', 'eth_ret_15', 'eth_vol_ratio',
             'ethbtc_ret_5', 'ethbtc_trend',
             'gold_ret_15', 'gold_ret_60',
+            'spy_ret_15', 'spy_ret_60',
+            'ndx_ret_15', 'ndx_ret_60',
+            'dxy_ret_15', 'dxy_ret_60',
             # Phase 3: Microstructure features (from 1m candle proxies)
             'trade_intensity', 'buy_sell_ratio', 'vwap_momentum',
             'tick_volatility', 'large_trade_ratio',
@@ -381,7 +384,7 @@ class NexusPredictor:
     @property
     def is_trained(self):
         """True if XGBoost model is fitted and ready for prediction."""
-        return hasattr(self.model, 'classes_') and os.path.exists(self.model_path)
+        return hasattr(self.model, 'classes_')
     
     def _save_ensemble_state(self):
         """Persist ensemble weights so they survive restarts."""
@@ -561,6 +564,10 @@ class NexusPredictor:
             'eth': config.ETH_DATA_PATH,
             'paxg': config.PAXG_DATA_PATH,
             'ethbtc': config.ETHBTC_DATA_PATH,
+            'spy': config.SPY_DATA_PATH,
+            'ndx': config.NDX_DATA_PATH,
+            'dxy': config.DXY_DATA_PATH,
+            'gold': config.GOLD_DATA_PATH,
         }
         result = {}
         for prefix, path in pairs.items():
@@ -739,7 +746,9 @@ class NexusPredictor:
         # ===== CROSS-ASSET CORRELATION (Phase 3: ETH + Gold + ETH/BTC) =====
         # Initialize with neutral defaults (backward compatible if data missing)
         for col in ['eth_ret_5', 'eth_ret_15', 'eth_vol_ratio',
-                    'ethbtc_ret_5', 'ethbtc_trend', 'gold_ret_15', 'gold_ret_60']:
+                    'ethbtc_ret_5', 'ethbtc_trend', 'gold_ret_15', 'gold_ret_60',
+                    'spy_ret_15', 'spy_ret_60', 'ndx_ret_15', 'ndx_ret_60',
+                    'dxy_ret_15', 'dxy_ret_60']:
             df[col] = 0.0
         
         try:
@@ -768,6 +777,22 @@ class NexusPredictor:
                 if 'paxg_close' in merged.columns:
                     df['gold_ret_15'] = merged['paxg_close'].pct_change(15).fillna(0).values
                     df['gold_ret_60'] = merged['paxg_close'].pct_change(60).fillna(0).values
+                    
+            # --- Traditional Finance (yfinance proxies) ---
+            tradfi_mappings = {
+                'spy': ['spy_ret_15', 'spy_ret_60'],
+                'ndx': ['ndx_ret_15', 'ndx_ret_60'],
+                'dxy': ['dxy_ret_15', 'dxy_ret_60'],
+                'gold': ['gold_ret_15', 'gold_ret_60'],  # Override paxg if real gold exists
+            }
+            for prefix, cols in tradfi_mappings.items():
+                if prefix in cross:
+                    merged = df[['timestamp']].merge(cross[prefix], on='timestamp', how='left')
+                    col_name = f"{prefix}_close"
+                    if col_name in merged.columns:
+                        df[cols[0]] = merged[col_name].pct_change(15).fillna(0).values
+                        df[cols[1]] = merged[col_name].pct_change(60).fillna(0).values
+                        
         except Exception as e:
             logging.debug(f"Cross-asset features skipped: {e}")
         
@@ -1916,6 +1941,44 @@ class NexusPredictor:
                     self.last_alt_signals = alt_features
                 except Exception as e:
                     logging.debug(f"PREDICT [stage=alt_data] skipped: {e}")
+                    
+            # ===== STAGE 7: Phase 4 Alternative Data Streams =====
+            sentiment_score = 0.0
+            macro_circuit_breaker = False
+            macro_proximity = 9999.0
+            
+            # Read asynchronous worker states
+            try:
+                sent_file = os.path.join(os.path.dirname(__file__), 'data_streamers', 'latest_sentiment.json')
+                if os.path.exists(sent_file):
+                    with open(sent_file, 'r') as f:
+                        sent_data = json.load(f)
+                    sentiment_score = sent_data.get('combined_score', 0.0)
+                
+                macro_file = os.path.join(os.path.dirname(__file__), 'data_streamers', 'latest_macro_events.json')
+                if os.path.exists(macro_file):
+                    with open(macro_file, 'r') as f:
+                        macro_data = json.load(f)
+                    macro_circuit_breaker = macro_data.get('volatility_circuit_breaker', False)
+                    macro_proximity = macro_data.get('event_proximity_minutes', 9999.0)
+            except Exception as e:
+                logging.debug(f"Failed to read alternative data states: {e}")
+            
+            # NLP Boost/Nerf: A heavy +0.8 sentiment means the news is roaring bullish.
+            if direction == "UP" and sentiment_score > 0.3:
+                confidence = min(100.0, confidence + (sentiment_score * 5.0))
+            elif direction == "DOWN" and sentiment_score < -0.3:
+                confidence = min(100.0, confidence + (abs(sentiment_score) * 5.0))
+            elif direction == "UP" and sentiment_score < -0.5:
+                confidence = max(0.0, confidence - 15.0) # Severe penalty
+            elif direction == "DOWN" and sentiment_score > 0.5:
+                confidence = max(0.0, confidence - 15.0) # Severe penalty
+                
+            # Circuit Breaker: If we are within 30 mins of CPI/FOMC, zero out confidence
+            # to prevent the execution engine from taking wild volatility trades.
+            if macro_circuit_breaker:
+                confidence = 0.0
+                logging.info(f"PREDICT: Circuit breaker active! Suppressing confidence.")
             
             # Save prediction for future accuracy calculation
             self.save_prediction_for_audit(current_price, direction, confidence)
@@ -2036,8 +2099,12 @@ class NexusPredictor:
                 "ensemble_weights": f"XGB={self.xgb_weight:.1f} LSTM={self.lstm_weight:.1f}",
                 "verified": self.is_statistically_verified,
                 "calibrator_fitted": self.prob_calibrator.is_fitted if self.prob_calibrator else False,
+                "nlp_sentiment": round(float(sentiment_score), 2),
+                "macro_circuit_breaker": macro_circuit_breaker,
+                "macro_proximity_min": round(float(macro_proximity), 1),
             }
         
+
         except Exception as e:
             logging.error(f"PREDICT FAIL [stage=unknown] {type(e).__name__}: {e}")
             import traceback

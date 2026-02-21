@@ -75,6 +75,71 @@ const MERGE_THRESHOLDS: Record<number, number> = {
     1: 4, 2: 2, 3: 2, 4: 2,
 };
 
+// ─── Price sparkline (simple SVG) ────────────
+const Sparkline = ({ data }: { data: { ts: number; price: number }[] }) => {
+    if (data.length < 2) return null;
+    const prices = data.map(d => d.price);
+    const min = Math.min(...prices);
+    const max = Math.max(...prices);
+    const range = max - min || 1;
+    const w = 240, h = 60;
+    const points = prices.map((p, i) =>
+        `${(i / (prices.length - 1)) * w},${h - ((p - min) / range) * h}`
+    ).join(' ');
+    const trending = prices[prices.length - 1] >= prices[0];
+    return (
+        <svg width={w} height={h} style={{ opacity: 0.9 }}>
+            <polyline fill="none" stroke={trending ? '#00E676' : '#FF1744'} strokeWidth="2" points={points} />
+        </svg>
+    );
+};
+
+// ─── Merge progress bar ──────────────────────
+const MergeProgress = ({ state }: { state: GameState | null }) => {
+    const tiers = state?.tier_counts;
+    if (!tiers) return null;
+
+    return (
+        <div className="gpu-merge-progress">
+            <h3 style={{ margin: '0 0 10px', fontSize: 14, opacity: 0.7 }}>Auto-Merge Progress</h3>
+            <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                {[1, 2, 3, 4].map(tier => {
+                    const info = tiers[String(tier)];
+                    if (!info) return null;
+                    const threshold = info.merge_threshold || MERGE_THRESHOLDS[tier] || 2;
+                    const count = info.count;
+                    const pct = Math.min((count / threshold) * 100, 100);
+                    const tierName = state?.gpu_tiers?.[String(tier)]?.label || `T${tier}`;
+                    const nextName = state?.gpu_tiers?.[String(tier + 1)]?.label || `T${tier + 1}`;
+                    const color = TIER_COLORS[tier + 1] || '#888';
+                    return (
+                        <div key={tier} style={{
+                            flex: '1 1 120px', background: 'rgba(255,255,255,0.03)',
+                            borderRadius: 8, padding: '8px 12px', border: '1px solid rgba(255,255,255,0.06)',
+                        }}>
+                            <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
+                                {threshold}× {tierName} → {nextName}
+                            </div>
+                            <div style={{
+                                height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3,
+                                overflow: 'hidden', marginBottom: 3,
+                            }}>
+                                <div style={{
+                                    width: `${pct}%`, height: '100%', background: color,
+                                    borderRadius: 3, transition: 'width 0.3s ease',
+                                }} />
+                            </div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color }}>
+                                {count}/{threshold}
+                            </div>
+                        </div>
+                    );
+                })}
+            </div>
+        </div>
+    );
+};
+
 export default function GpuFarm() {
     const [state, setState] = useState<GameState | null>(null);
     const [transferAmt, setTransferAmt] = useState('');
@@ -95,7 +160,7 @@ export default function GpuFarm() {
     }, []);
 
     useEffect(() => {
-        fetchState();
+        void fetchState();
         intervalRef.current = setInterval(fetchState, 5000);
         return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
     }, [fetchState]);
@@ -155,70 +220,6 @@ export default function GpuFarm() {
         } catch { flash('Sell failed', 'err'); }
     };
 
-    // ─── Price sparkline (simple SVG) ────────────
-    const Sparkline = ({ data }: { data: { ts: number; price: number }[] }) => {
-        if (data.length < 2) return null;
-        const prices = data.map(d => d.price);
-        const min = Math.min(...prices);
-        const max = Math.max(...prices);
-        const range = max - min || 1;
-        const w = 240, h = 60;
-        const points = prices.map((p, i) =>
-            `${(i / (prices.length - 1)) * w},${h - ((p - min) / range) * h}`
-        ).join(' ');
-        const trending = prices[prices.length - 1] >= prices[0];
-        return (
-            <svg width={w} height={h} style={{ opacity: 0.9 }}>
-                <polyline fill="none" stroke={trending ? '#00E676' : '#FF1744'} strokeWidth="2" points={points} />
-            </svg>
-        );
-    };
-
-    // ─── Merge progress bar ──────────────────────
-    const MergeProgress = () => {
-        const tiers = state?.tier_counts;
-        if (!tiers) return null;
-
-        return (
-            <div className="gpu-merge-progress">
-                <h3 style={{ margin: '0 0 10px', fontSize: 14, opacity: 0.7 }}>Auto-Merge Progress</h3>
-                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
-                    {[1, 2, 3, 4].map(tier => {
-                        const info = tiers[String(tier)];
-                        if (!info) return null;
-                        const threshold = info.merge_threshold || MERGE_THRESHOLDS[tier] || 2;
-                        const count = info.count;
-                        const pct = Math.min((count / threshold) * 100, 100);
-                        const tierName = state?.gpu_tiers?.[String(tier)]?.label || `T${tier}`;
-                        const nextName = state?.gpu_tiers?.[String(tier + 1)]?.label || `T${tier + 1}`;
-                        const color = TIER_COLORS[tier + 1] || '#888';
-                        return (
-                            <div key={tier} style={{
-                                flex: '1 1 120px', background: 'rgba(255,255,255,0.03)',
-                                borderRadius: 8, padding: '8px 12px', border: '1px solid rgba(255,255,255,0.06)',
-                            }}>
-                                <div style={{ fontSize: 11, opacity: 0.6, marginBottom: 4 }}>
-                                    {threshold}× {tierName} → {nextName}
-                                </div>
-                                <div style={{
-                                    height: 6, background: 'rgba(255,255,255,0.08)', borderRadius: 3,
-                                    overflow: 'hidden', marginBottom: 3,
-                                }}>
-                                    <div style={{
-                                        width: `${pct}%`, height: '100%', background: color,
-                                        borderRadius: 3, transition: 'width 0.3s ease',
-                                    }} />
-                                </div>
-                                <div style={{ fontSize: 12, fontWeight: 600, color }}>
-                                    {count}/{threshold}
-                                </div>
-                            </div>
-                        );
-                    })}
-                </div>
-            </div>
-        );
-    };
 
     if (!state) return (
         <div className="page gpu-page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100%' }}>
@@ -309,7 +310,7 @@ export default function GpuFarm() {
             </div>
 
             {/* ─── Auto-Merge Progress ─── */}
-            <MergeProgress />
+            <MergeProgress state={state} />
 
             {/* ─── GPU Card Grid ─── */}
             <div className="gpu-grid-header">

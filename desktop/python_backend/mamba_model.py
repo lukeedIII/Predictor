@@ -466,9 +466,9 @@ class SmallJamba(nn.Module):
     Supports both binary (num_classes=1) and multi-class (num_classes=3).
     """
 
-    def __init__(self, input_size=42, d_model=256, n_layers=4,
+    def __init__(self, input_size=48, d_model=256, n_layers=4,
                  d_state=16, d_conv=4, expand=2, dropout=0.15,
-                 num_classes=1, n_heads=4, n_kv_groups=2,
+                 num_classes=3, n_heads=4, n_kv_groups=2,
                  n_experts=4, top_k=1):
         super().__init__()
         self.d_model = d_model
@@ -633,12 +633,13 @@ JAMBA_CONFIGS = {
 }
 
 
-def create_jamba(size: str = "small", input_size: int = 42, num_classes: int = 3) -> SmallJamba:
-    """Factory function to create a Jamba model of the specified size.
-
+def create_jamba(size: str = "small", input_size: int = 48, num_classes: int = 3) -> SmallJamba:
+    """
+    Factory function for Nexus Jamba models.
+    
     Args:
-        size: 'small', 'lite', 'medium', or 'large'
-        input_size: Number of input features (default: 42)
+        size: 'small' (4.4M), 'lite' (12M), 'medium' (28M), or 'large' (60M)
+        input_size: Number of input features (default: 48)
         num_classes: 1 for binary, 3 for UP/FLAT/DOWN classification
 
     Returns:

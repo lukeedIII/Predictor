@@ -233,6 +233,7 @@ export default function TradingViewChart() {
                 trajectorySeries: null,
             };
         };
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []); // Chart created once
 
 

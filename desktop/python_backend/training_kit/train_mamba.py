@@ -217,7 +217,8 @@ def merge_real_cross_assets(df: pd.DataFrame) -> tuple:
     df = df.sort_values('_merge_ts').reset_index(drop=True)
 
     # ── Merge ETH/USDT ────
-    eth_path = AUX_DATA_DIR / "eth_usdt.parquet"
+    import config
+    eth_path = pathlib.Path(config.ETH_DATA_PATH)
     if eth_path.exists():
         try:
             eth = pd.read_parquet(eth_path)
@@ -265,7 +266,7 @@ def merge_real_cross_assets(df: pd.DataFrame) -> tuple:
             log.warning(f"⚠️ ETH merge failed: {e}")
 
     # ── Merge PAXG/USDT (Gold proxy) ────
-    paxg_path = AUX_DATA_DIR / "paxg_usdt.parquet"
+    paxg_path = pathlib.Path(config.PAXG_DATA_PATH)
     if paxg_path.exists() and paxg_path.stat().st_size > 100:
         try:
             paxg = pd.read_parquet(paxg_path)
@@ -293,6 +294,42 @@ def merge_real_cross_assets(df: pd.DataFrame) -> tuple:
             log.warning(f"⚠️ PAXG merge failed (file may be corrupted): {e}")
     else:
         log.info("ℹ️  PAXG file missing or corrupted — Gold features omitted")
+
+    # ── Merge Traditional Finance (SPY, NDX, DXY) ────
+    import config
+    tradfi_assets = {
+        'spy': (config.SPY_DATA_PATH, ['real_spy_ret_15', 'real_spy_ret_60']),
+        'ndx': (config.NDX_DATA_PATH, ['real_ndx_ret_15', 'real_ndx_ret_60']),
+        'dxy': (config.DXY_DATA_PATH, ['real_dxy_ret_15', 'real_dxy_ret_60'])
+    }
+    
+    for prefix, (tf_path_str, new_cols) in tradfi_assets.items():
+        tf_path = pathlib.Path(tf_path_str)
+        if tf_path.exists() and tf_path.stat().st_size > 100:
+            try:
+                tf_df = pd.read_parquet(tf_path)
+                tf_df['_merge_ts'] = pd.to_datetime(tf_df['timestamp'])
+                tf_df = tf_df.sort_values('_merge_ts').reset_index(drop=True)
+                
+                col_name = f"{prefix}_close"
+                tf_df[col_name] = tf_df['close'].astype(float)
+                
+                df = pd.merge_asof(
+                    df, tf_df[['_merge_ts', col_name]],
+                    on='_merge_ts', direction='backward',
+                )
+                
+                if col_name in df.columns and df[col_name].notna().sum() > 100:
+                    tf_c = df[col_name].astype(float)
+                    df[new_cols[0]] = tf_c.pct_change(15).fillna(0)
+                    df[new_cols[1]] = tf_c.pct_change(60).fillna(0)
+                    new_features.extend(new_cols)
+                    log.info(f"✅ Merged real {prefix.upper()} data")
+                    
+                if col_name in df.columns:
+                    df = df.drop(columns=[col_name])
+            except Exception as e:
+                log.warning(f"⚠️ {prefix.upper()} merge failed: {e}")
 
     # Cleanup
     if '_merge_ts' in df.columns:

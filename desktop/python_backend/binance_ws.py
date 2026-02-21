@@ -225,14 +225,16 @@ class BinanceWSClient:
     def _run_loop(self):
         """Main reconnection loop — runs forever until stop() is called."""
         import random
+        
+        current_t = threading.current_thread()
 
-        while self._running:
+        while self._running and current_t == self._thread:
             try:
                 self._connect()
             except Exception as e:
                 logger.warning(f"BinanceWS connection failed: {e}")
 
-            if not self._running:
+            if not self._running or current_t != self._thread:
                 break
 
             # Exponential backoff with jitter
@@ -247,7 +249,7 @@ class BinanceWSClient:
 
             # Sleep in small chunks so stop() works quickly
             sleep_until = time.time() + delay
-            while time.time() < sleep_until and self._running:
+            while time.time() < sleep_until and self._running and current_t == self._thread:
                 time.sleep(0.5)
 
     def _connect(self):

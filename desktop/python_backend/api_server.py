@@ -36,6 +36,8 @@ from binance_ws import BinanceWSClient
 from gpu_game import GpuGame
 from derivatives_feed import DerivativesFeed
 import hf_sync
+from data_streamers.sentiment_worker import SentimentWorker
+from data_streamers.macro_calendar import MacroCalendarWorker
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
@@ -49,6 +51,10 @@ collector: Optional[DataCollector] = None
 math_core: Optional[MathCore] = None
 binance_ws: Optional[BinanceWSClient] = None
 derivs_feed: Optional[DerivativesFeed] = None
+
+# Background Data Streamers
+sentiment_worker: Optional[SentimentWorker] = None
+macro_worker: Optional[MacroCalendarWorker] = None
 
 boot_status = {"stage": "starting", "progress": 0, "message": "Initializing..."}
 _auto_trade_thread: Optional[threading.Thread] = None
@@ -515,8 +521,15 @@ def _gpu_game_tick_loop():
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Start engine init + auto-retrain scheduler + WS push on startup."""
-    global _event_loop
+    global _event_loop, sentiment_worker, macro_worker
     _event_loop = asyncio.get_event_loop()
+    
+    # ── Initialize Alternative Data Streamers ──
+    sentiment_worker = SentimentWorker(interval_minutes=15)
+    sentiment_worker.start()
+    
+    macro_worker = MacroCalendarWorker(fetch_interval_hours=4)
+    macro_worker.start()
     
     init_thread = threading.Thread(target=_init_engines, daemon=True)
     init_thread.start()
@@ -532,6 +545,13 @@ async def lifespan(app: FastAPI):
     # Start periodic WS push to frontend clients (200ms fast ticks)
     push_task = asyncio.create_task(_ws_push_loop())
     yield
+    
+    # ── Shutdown Sequence ──
+    if sentiment_worker:
+        sentiment_worker.stop()
+    if macro_worker:
+        macro_worker.stop()
+        
     _auto_trade_stop.set()
     _retrain_stop.set()
     _data_collect_stop.set()
@@ -612,13 +632,18 @@ def _prediction_refresh_loop():
             
             if force_initial or (is_new_candle and is_new_minute):
                 force_initial = False
-                if predictor and predictor.is_trained:
+                if predictor:
                     # Pass live order book snapshot to Quant Engine for L2 signal generation
                     if binance_client and binance_client.connected and predictor.quant_engine:
                         predictor.quant_engine.latest_order_book = binance_client.snapshot
                         
                     # Execute heavy prediction & quant analysis exactly on the candle close
                     pred = predictor.get_prediction()
+                    
+                    # If the user downloaded a fresh clone and has no models, overwrite label
+                    if not predictor.is_trained:
+                        pred["direction"] = "UNTRAINED"
+                        
                     live_acc = getattr(predictor, '_live_accuracy', 0.0)
                     live_samples = getattr(predictor, '_live_accuracy_samples', 0)
                     training_acc = (
@@ -1713,6 +1738,9 @@ def get_feature_importance():
         'eth_ret_5': 'cross_asset', 'eth_ret_15': 'cross_asset', 'eth_vol_ratio': 'cross_asset',
         'ethbtc_ret_5': 'cross_asset', 'ethbtc_trend': 'cross_asset',
         'gold_ret_15': 'cross_asset', 'gold_ret_60': 'cross_asset',
+        'spy_ret_15': 'cross_asset', 'spy_ret_60': 'cross_asset',
+        'ndx_ret_15': 'cross_asset', 'ndx_ret_60': 'cross_asset',
+        'dxy_ret_15': 'cross_asset', 'dxy_ret_60': 'cross_asset',
         'trade_intensity': 'microstructure', 'buy_sell_ratio': 'microstructure',
         'vwap_momentum': 'microstructure', 'tick_volatility': 'microstructure',
         'large_trade_ratio': 'microstructure',
@@ -2250,7 +2278,8 @@ def start_bot():
     _auto_trade_stop.clear()
     
     def _trade_loop():
-        while not _auto_trade_stop.is_set() and trader.is_running:
+        current_t = threading.current_thread()
+        while current_t == _auto_trade_thread and not _auto_trade_stop.is_set() and trader.is_running:
             try:
                 # Update data
                 collector.collect_and_save(limit=5)
@@ -2258,7 +2287,7 @@ def start_bot():
                 # Get price
                 price_data = collector.fetch_ohlcv(limit=2)
                 if price_data is None or price_data.empty:
-                    time.sleep(30)
+                    _auto_trade_stop.wait(30)
                     continue
                 current_price = float(price_data['close'].iloc[-1])
                 trader._last_price = current_price
@@ -2270,11 +2299,11 @@ def start_bot():
                 # update() handles: TP/SL/liquidation checks + new signal evaluation
                 trader.update(current_price, pred, vol)
                 
-                time.sleep(config.UPDATE_INTERVAL_SEC)
+                _auto_trade_stop.wait(config.UPDATE_INTERVAL_SEC)
                 
             except Exception as e:
                 logging.error(f"Auto-trade error: {e}")
-                time.sleep(30)
+                _auto_trade_stop.wait(30)
     
     _auto_trade_thread = threading.Thread(target=_trade_loop, daemon=True)
     _auto_trade_thread.start()

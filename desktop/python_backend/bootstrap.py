@@ -71,24 +71,6 @@ def can_import(pkg: str) -> bool:
         return False
 
 
-def install_package(pkg: str, use_pytorch_index: bool = False) -> bool:
-    """Install a single package via pip."""
-    cmd = [sys.executable, "-m", "pip", "install", "--quiet", pkg]
-    if use_pytorch_index:
-        cmd.extend(["--index-url", PYTORCH_INDEX])
-    try:
-        result = subprocess.run(
-            cmd,
-            capture_output=True,
-            text=True,
-            timeout=600,  # 10 min timeout for large packages
-        )
-        return result.returncode == 0
-    except Exception as e:
-        emit("error", 0, f"Failed to install {pkg}: {e}")
-        return False
-
-
 def main():
     emit("check", 0, "Checking dependencies...")
 
@@ -110,56 +92,14 @@ def main():
         return 0
 
     if os.environ.get("NEXUS_IS_PACKAGED", "0") == "1":
-        emit("warning", 95, f"Packaged mode: skipping runtime installation of {len(missing)} packages.")
-        emit("done", 100, "Proceeding with bundled environment.")
+        emit("warning", 95, f"Packaged mode: missing {len(missing)} packages. Proceeding with bundled environment.")
+        emit("done", 100, "Proceeding.")
         return 0
 
-    emit("install", 10, f"Need to install {len(missing)} packages: {', '.join(missing)}")
-
-    # 3. Ensure pip is available and up to date
-    try:
-        subprocess.run(
-            [sys.executable, "-m", "pip", "--version"],
-            capture_output=True, timeout=10,
-        )
-    except Exception:
-        emit("error", 0, "pip is not available. Please install Python with pip.")
-        return 1
-
-    # 4. Install missing packages with progress
-    total = len(missing)
-    for i, pkg in enumerate(missing):
-        pct = 10 + (i / total) * 85  # 10% to 95%
-        
-        # PyTorch special handling: install with CUDA index
-        is_torch = pkg in ("torch", "torchvision", "torchaudio")
-        
-        if is_torch:
-            emit("install", pct, f"⬇ Installing {pkg} with CUDA support (this may take a while)...")
-        else:
-            emit("install", pct, f"⬇ Installing {pkg}... ({i + 1}/{total})")
-
-        ok = install_package(pkg, use_pytorch_index=is_torch)
-        if not ok:
-            # Retry without special index for torch
-            if is_torch:
-                emit("install", pct, f"⬇ Retrying {pkg} (standard PyPI)...")
-                ok = install_package(pkg, use_pytorch_index=False)
-            if not ok:
-                emit("error", pct, f"Failed to install {pkg}")
-                # Continue anyway — some packages may be optional
-                continue
-
-    # 5. Final verification
-    emit("check", 95, "Verifying installation...")
-    still_missing = [pkg for pkg in missing if not can_import(pkg)]
-    
-    if still_missing:
-        emit("warning", 98, f"Could not install: {', '.join(still_missing)}")
-        # Don't block — the app may still partially work
-    
-    emit("done", 100, f"Dependencies ready ✓ (installed {total - len(still_missing)}/{total})")
-    return 0
+    # 3. Display error and instruct manual installation (Dynamic pip install disabled - Security 1.3)
+    missing_str = ', '.join(missing)
+    emit("error", 100, f"Missing {len(missing)} packages: {missing_str}. Please run 'pip install -r requirements.txt'")
+    return 1
 
 
 if __name__ == "__main__":

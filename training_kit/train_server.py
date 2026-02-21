@@ -156,6 +156,26 @@ def update_state(**kwargs):
         state.update(kwargs)
 
 
+def create_3class_target(df: pd.DataFrame, horizon: int = 15, threshold: float = 0.0025):
+    """Create 3-class target: DOWN=0, FLAT=1, UP=2. Keeps all rows for continuous sequence."""
+    CLASS_DOWN = 0
+    CLASS_FLAT = 1
+    CLASS_UP = 2
+
+    close = df['close'].astype(float)
+    future_ret = close.pct_change(horizon).shift(-horizon)
+
+    df['target'] = CLASS_FLAT
+    df.loc[future_ret > threshold, 'target'] = CLASS_UP
+    df.loc[future_ret < -threshold, 'target'] = CLASS_DOWN
+
+    # Drop only the tail rows where future return is NaN
+    if horizon > 0:
+        df = df.iloc[:-horizon].reset_index(drop=True)
+    return df
+
+
+
 # ══════════════════════════════════════════════════════════════════════════
 # DATA PIPELINE
 # ══════════════════════════════════════════════════════════════════════════
@@ -478,46 +498,45 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
 
     # Create 3-class labels: DOWN=0, FLAT=1, UP=2
     add_log("📊 Creating 3-class targets...")
-    close = df['close'].astype(float)
-    future_ret = close.pct_change(PREDICTION_HORIZON).shift(-PREDICTION_HORIZON)
-    labels = np.full(len(df), CLASS_FLAT, dtype=np.int64)
-    labels[future_ret > PRICE_THRESHOLD] = CLASS_UP
-    labels[future_ret < -PRICE_THRESHOLD] = CLASS_DOWN
-    labels_s = pd.Series(labels, index=df.index)
+    df = create_3class_target(df, horizon=15, threshold=0.0025)
+    
+    CLASS_DOWN = 0
+    CLASS_FLAT = 1
+    CLASS_UP = 2
 
-    valid_mask = future_ret.notna() & (df.index >= SEQ_LEN)
-    df_valid = df[valid_mask].reset_index(drop=True)
-    labels_valid = labels_s[valid_mask].reset_index(drop=True)
-
-    n = len(df_valid) - SEQ_LEN
+    n = len(df) - SEQ_LEN
     add_log(f"   Total windows: {n:,}")
 
-    # Class distribution
-    y_preview = labels_valid.values[SEQ_LEN:SEQ_LEN+n]
+    # Class distribution (using proper alignment)
+    # The target for a window X[i : i+SEQ_LEN] should be the return matching the last close X[i+SEQ_LEN-1]
+    y_all = df['target'].values
+    y_preview = y_all[SEQ_LEN-1 : SEQ_LEN-1+n]
+    
     n_up = (y_preview == CLASS_UP).sum()
     n_flat = (y_preview == CLASS_FLAT).sum()
     n_down = (y_preview == CLASS_DOWN).sum()
-    add_log(f"   UP: {n_up:,} ({n_up/n*100:.1f}%) | FLAT: {n_flat:,} ({n_flat/n*100:.1f}%) | DOWN: {n_down:,} ({n_down/n*100:.1f}%)")
+    add_log(f"   UP: {n_up:,} ({n_up/max(1,n)*100:.1f}%) | FLAT: {n_flat:,} ({n_flat/max(1,n)*100:.1f}%) | DOWN: {n_down:,} ({n_down/max(1,n)*100:.1f}%)")
 
-    # Create feature matrix (flat — ~700 MB for 4.3M × 42 float32)
-    features = df_valid[feature_cols].values.astype(np.float32)
+    # Create feature matrix
+    features = df[feature_cols].values.astype(np.float32)
 
     # Standardize
     from sklearn.preprocessing import StandardScaler
     scaler = StandardScaler()
     features = scaler.fit_transform(features)
 
-    y_all = labels_valid.values[SEQ_LEN:SEQ_LEN+n].astype(np.int64)
+    y_aligned = y_all[SEQ_LEN-1 : SEQ_LEN-1+n].astype(np.int64)
 
     # Train/val split (80/20) — split the INDEX, not the data
     split = int(0.8 * n)
-    y_train = y_all[:split]
-    y_val = y_all[split:]
+    y_train = y_aligned[:split]
+    y_val = y_aligned[split:]
 
     # Per-class weights for imbalanced data
     from collections import Counter
     counts = Counter(y_train.tolist())
     total_count = len(y_train)
+    NUM_CLASSES = 3
     class_weights = torch.tensor(
         [total_count / (NUM_CLASSES * max(counts.get(c, 1), 1)) for c in range(NUM_CLASSES)],
         dtype=torch.float32
@@ -656,7 +675,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
             # ── OOM-safe forward pass with gradient accumulation ──
             try:
                 if scaler:
-                    with autocast('cuda'):
+                    with torch.amp.autocast(device_type=device.type if hasattr(device, 'type') else device, enabled=(device=='cuda' or device.type=='cuda')):
                         out = model(xb, return_logits=True)
                         logits = out.logits  # ModelOut contract
                         loss = (criterion(logits, yb) + 0.01 * out.aux_loss) / grad_accum
@@ -759,7 +778,7 @@ def train_architecture(arch_name, epochs=50, lr=3e-4, batch_size=None):
         with torch.no_grad():
             for xb, yb in val_loader:
                 xb, yb = xb.to(device, non_blocking=True), yb.to(device, non_blocking=True)
-                with autocast('cuda') if device == 'cuda' else torch.no_grad():
+                with torch.amp.autocast(device_type=device.type if hasattr(device, 'type') else device, enabled=(device=='cuda' or device.type=='cuda')):
                     out = model(xb, return_logits=True)
                     logits = out.logits
                     loss = criterion(logits, yb)

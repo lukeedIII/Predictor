@@ -1,0 +1,154 @@
+F:\Predictor\desktop\src\App.tsx
+  L17: Unexpected any. Specify a different type.
+F:\Predictor\desktop\src\components\QuantPanel.tsx
+  L131: Unexpected any. Specify a different type.
+F:\Predictor\desktop\src\components\SignalBadge.tsx
+  L15: Unexpected any. Specify a different type.
+  L16: Unexpected any. Specify a different type.
+F:\Predictor\desktop\src\components\SwissWeather.tsx
+  L251: Unexpected any. Specify a different type.
+  L278: Error: Cannot access variable before it is declared
+
+`animate` is accessed before it is declared, which prevents the earlier access from updating when this value changes over time.
+
+F:\Predictor\desktop\src\components\SwissWeather.tsx:278:49
+  276 |
+  277 |         drawParticles(ctx, particlesRef.current, typeRef.current, w, h);
+> 278 |         animRef.current = requestAnimationFrame(animate);
+      |                                                 ^^^^^^^ `animate` accessed before it is declared
+  279 |     }, []);
+  280 |
+  281 |     // Init/reinit particles when city or weather changes
+
+F:\Predictor\desktop\src\components\SwissWeather.tsx:269:5
+  267 |
+  268 |     // Canvas animation loop
+> 269 |     const animate = useCallback(() => {
+      |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 270 |         const canvas = canvasRef.current;
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 271 |         if (!canvas) return;
+      ÔÇª
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 278 |         animRef.current = requestAnimationFrame(animate);
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 279 |     }, []);
+      | ^^^^^^^^^^^^ `animate` is declared here
+  280 |
+  281 |     // Init/reinit particles when city or weather changes
+  282 |     useEffect(() => {
+F:\Predictor\desktop\src\components\TradingViewChart.tsx
+  L236: React Hook useEffect has a missing dependency: 'timeframe'. Either include it or remove the dependency array.
+F:\Predictor\desktop\src\pages\FirstRunSetup.tsx
+  L32: Unexpected any. Specify a different type.
+F:\Predictor\desktop\src\pages\GpuFarm.tsx
+  L98: Error: Calling setState synchronously within an effect can trigger cascading renders
+
+Effects are intended to synchronize state between React and external systems such as manually updating the DOM, state management libraries, or other platform APIs. In general, the body of an effect should do one or both of the following:
+* Update external systems with the latest state from React.
+* Subscribe for updates from some external system, calling setState in a callback function when external state changes.
+
+Calling setState synchronously within an effect body causes cascading renders that can hurt performance, and is not recommended. (https://react.dev/learn/you-might-not-need-an-effect).
+
+F:\Predictor\desktop\src\pages\GpuFarm.tsx:98:9
+   96 |
+   97 |     useEffect(() => {
+>  98 |         fetchState();
+      |         ^^^^^^^^^^ Avoid calling setState() directly within an effect
+   99 |         intervalRef.current = setInterval(fetchState, 5000);
+  100 |         return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
+  101 |     }, [fetchState]);
+  L262: Error: Cannot create components during render
+
+Components created during render will reset their state each time they are created. Declare components outside of render.
+
+F:\Predictor\desktop\src\pages\GpuFarm.tsx:262:22
+  260 |                 </div>
+  261 |                 <div className="gpu-chart-row">
+> 262 |                     <Sparkline data={state.ass_price_history} />
+      |                      ^^^^^^^^^ This component is created during render
+  263 |                 </div>
+  264 |             </div>
+  265 |
+
+F:\Predictor\desktop\src\pages\GpuFarm.tsx:159:23
+  157 |
+  158 |     // ÔöÇÔöÇÔöÇ Price sparkline (simple SVG) ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+> 159 |     const Sparkline = ({ data }: { data: { ts: number; price: number }[] }) => {
+      |                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 160 |         if (data.length < 2) return null;
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 161 |         const prices = data.map(d => d.price);
+      ÔÇª
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 174 |         );
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 175 |     };
+      | ^^^^^^ The component is created during render here
+  176 |
+  177 |     // ÔöÇÔöÇÔöÇ Merge progress bar ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+  178 |     const MergeProgress = () => {
+  L312: Error: Cannot create components during render
+
+Components created during render will reset their state each time they are created. Declare components outside of render.
+
+F:\Predictor\desktop\src\pages\GpuFarm.tsx:312:14
+  310 |
+  311 |             {/* ÔöÇÔöÇÔöÇ Auto-Merge Progress ÔöÇÔöÇÔöÇ */}
+> 312 |             <MergeProgress />
+      |              ^^^^^^^^^^^^^ This component is created during render
+  313 |
+  314 |             {/* ÔöÇÔöÇÔöÇ GPU Card Grid ÔöÇÔöÇÔöÇ */}
+  315 |             <div className="gpu-grid-header">
+
+F:\Predictor\desktop\src\pages\GpuFarm.tsx:178:27
+  176 |
+  177 |     // ÔöÇÔöÇÔöÇ Merge progress bar ÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇÔöÇ
+> 178 |     const MergeProgress = () => {
+      |                           ^^^^^^^
+> 179 |         const tiers = state?.tier_counts;
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 180 |         if (!tiers) return null;
+      ÔÇª
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 220 |         );
+      | ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+> 221 |     };
+      | ^^^^^^ The component is created during render here
+  222 |
+  223 |     if (!state) return (
+  224 |         <div className="page gpu-page" style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', minHeight: '100%' }}>
+F:\Predictor\desktop\src\pages\NexusAgent.tsx
+  L39: Unexpected any. Specify a different type.
+  L40: Unexpected any. Specify a different type.
+  L114: Unexpected any. Specify a different type.
+  L238: Unexpected any. Specify a different type.
+F:\Predictor\desktop\src\pages\PaperTrading.tsx
+  L22: Unexpected any. Specify a different type.
+  L23: Unexpected any. Specify a different type.
+  L33: Unexpected any. Specify a different type.
+F:\Predictor\desktop\src\pages\Settings.tsx
+  L52: Unexpected any. Specify a different type.
+  L115: Unexpected any. Specify a different type.
+  L170: Unexpected any. Specify a different type.
+  L176: Unexpected any. Specify a different type.
+  L229: Unexpected any. Specify a different type.
+  L296: Unexpected any. Specify a different type.
+  L449: Unexpected any. Specify a different type.
+  L462: Unexpected any. Specify a different type.
+  L474: Unexpected any. Specify a different type.
+F:\Predictor\desktop\src\stores\liveStore.ts
+  L178: Error: Cannot access refs during render
+
+React refs are values that are not needed for rendering. Refs should only be accessed outside of render, such as in event handlers or effects. Accessing a ref value (the `current` property) during render can cause your component not to update as expected (https://react.dev/reference/react/useRef).
+
+F:\Predictor\desktop\src\stores\liveStore.ts:178:5
+  176 | export function useLiveSelector<T>(selector: (s: WSState) => T): T {
+  177 |     const selectorRef = useRef(selector);
+> 178 |     selectorRef.current = selector;
+      |     ^^^^^^^^^^^^^^^^^^^ Cannot update ref during render
+  179 |
+  180 |     const snap = useSyncExternalStore(
+  181 |         subscribe,
+F:\Predictor\desktop\src\stores\toastStore.tsx
+  L41: Fast refresh only works when a file only exports components. Use a new file to share constants or functions between components.

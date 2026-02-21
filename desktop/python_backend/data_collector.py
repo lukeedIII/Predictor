@@ -2,9 +2,15 @@ import ccxt
 import pandas as pd
 import time
 import os
-from datetime import datetime
+from datetime import datetime, timedelta
 import config
 import logging
+
+try:
+    import yfinance as yf
+except ImportError:
+    yf = None
+    logging.warning("yfinance not installed. TradFi correlation data will be skipped.")
 
 # Setup Logging
 os.makedirs(config.LOG_DIR, exist_ok=True)
@@ -82,8 +88,10 @@ class DataCollector:
         df = self.fetch_ohlcv(limit=limit)
         if df is not None:
             self.update_csv(df)
-            # Also fetch cross-asset pairs (ETH, Gold, ETH/BTC)
+            # Fetch cross-asset pairs (ETH, Gold, ETH/BTC)
             self.collect_cross_assets(limit=limit)
+            # Fetch traditional finance correlations (SPY, NDX, DXY, GOLD)
+            self.collect_tradfi_assets(limit=limit)
             return True
         return False
 
@@ -115,6 +123,59 @@ class DataCollector:
                 
             except Exception as e:
                 logging.debug(f"Cross-asset {symbol}: {e}")  # Non-blocking
+
+    def collect_tradfi_assets(self, limit=5):
+        """Fetch traditional finance pairs (SPY, NDX, DXY, GOLD) using yfinance.
+        Runs gracefully even outside market hours by appending the last known close."""
+        if yf is None:
+            return
+            
+        tradfi_paths = {
+            '^GSPC': config.SPY_DATA_PATH,     # S&P 500
+            '^NDX': config.NDX_DATA_PATH,      # Nasdaq 100
+            'DX-Y.NYB': config.DXY_DATA_PATH,  # US Dollar Index
+            'GC=F': config.GOLD_DATA_PATH,     # Gold Futures
+        }
+        
+        # Determine the period to fetch (e.g. 1d for limit <= 30)
+        # yfinance allows 1m granularity for up to 7 days
+        period = "1d" if limit <= 390 else "5d"
+        
+        for symbol, path in tradfi_paths.items():
+            try:
+                # Suppress yfinance verbose logging
+                ticker = yf.Ticker(symbol)
+                df = ticker.history(period=period, interval="1m", auto_adjust=True)
+                
+                if df.empty:
+                    continue
+                    
+                df.reset_index(inplace=True)
+                
+                # yfinance returns Datetime/Date column. Ensure it's Datetime.
+                dt_col = 'Datetime' if 'Datetime' in df.columns else 'Date'
+                
+                # Standardize columns to match crypto Parquet structure
+                df = df[[dt_col, 'Open', 'High', 'Low', 'Close', 'Volume']].copy()
+                df.columns = ['timestamp', 'open', 'high', 'low', 'close', 'volume']
+                
+                # Make timezone naive (UTC expected)
+                if df['timestamp'].dt.tz is not None:
+                    df['timestamp'] = df['timestamp'].dt.tz_convert('UTC').dt.tz_localize(None)
+                
+                # Keep only the last `limit` rows (already finalised in yfinance usually)
+                df = df.tail(limit)
+                
+                if os.path.exists(path):
+                    existing = pd.read_parquet(path)
+                    combined = pd.concat([existing, df]).drop_duplicates(subset=['timestamp'], keep='last')
+                    combined.sort_values('timestamp', inplace=True)
+                    combined.to_parquet(path, index=False)
+                else:
+                    df.to_parquet(path, index=False)
+                    
+            except Exception as e:
+                logging.debug(f"TradFi fetch error for {symbol}: {e}")
 
     def get_latest_price(self):
         """Returns the last closed price from CSV."""

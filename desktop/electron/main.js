@@ -222,6 +222,7 @@ function createSplash() {
             preload: path.join(__dirname, 'splashPreload.js'),
             contextIsolation: true,
             nodeIntegration: false,
+            sandbox: true,
         },
     });
 
@@ -274,6 +275,14 @@ function createMainWindow() {
     // Security Hardening: Prevent opening new windows (e.g., via target="_blank")
     mainWindow.webContents.setWindowOpenHandler(() => {
         return { action: 'deny' };
+    });
+
+    // Security Hardening: Block arbitrary external navigation
+    mainWindow.webContents.on('will-navigate', (event, url) => {
+        if (!url.startsWith('http://localhost:5173') && !url.startsWith('file://')) {
+            console.warn(`[Security] Blocked unauthorized navigation to: ${url}`);
+            event.preventDefault();
+        }
     });
 
     // Debug: log renderer errors

@@ -266,7 +266,7 @@ export default function SwissWeather() {
     }, []);
 
     // Canvas animation loop
-    const animate = useCallback(() => {
+    const animate = useCallback(function animationLoop() {
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
@@ -275,7 +275,7 @@ export default function SwissWeather() {
         const h = canvas.height;
 
         drawParticles(ctx, particlesRef.current, typeRef.current, w, h);
-        animRef.current = requestAnimationFrame(animate);
+        animRef.current = requestAnimationFrame(animationLoop);
     }, []);
 
     // Init/reinit particles when city or weather changes

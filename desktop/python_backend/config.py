@@ -51,6 +51,12 @@ ETH_DATA_PATH = os.path.join(DATA_DIR, "eth_usdt.parquet")
 PAXG_DATA_PATH = os.path.join(DATA_DIR, "paxg_usdt.parquet")
 ETHBTC_DATA_PATH = os.path.join(DATA_DIR, "eth_btc.parquet")
 
+# Cross-asset traditional finance (Phase 4.3: Latency Arbitrage & Macro correlation)
+SPY_DATA_PATH = os.path.join(DATA_DIR, "spy_usd.parquet")
+NDX_DATA_PATH = os.path.join(DATA_DIR, "ndx_usd.parquet")
+DXY_DATA_PATH = os.path.join(DATA_DIR, "dxy_usd.parquet")
+GOLD_DATA_PATH = os.path.join(DATA_DIR, "gold_usd.parquet")
+
 # Ensure directories exist
 for _d in [DATA_DIR, MODEL_DIR, LOG_DIR]:
     os.makedirs(_d, exist_ok=True)

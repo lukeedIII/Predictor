@@ -8,7 +8,7 @@
  * selector hooks (useLivePrice, useLivePositions, etc.), so only
  * the affected component re-renders.
  */
-import { useSyncExternalStore, useRef } from 'react';
+import { useSyncExternalStore, useRef, useLayoutEffect } from 'react';
 
 // ─── Types ──────────────────────────────────────
 export type WSState = {
@@ -175,7 +175,9 @@ export function connectLiveWS(): () => void {
  */
 export function useLiveSelector<T>(selector: (s: WSState) => T): T {
     const selectorRef = useRef(selector);
-    selectorRef.current = selector;
+    useLayoutEffect(() => {
+        selectorRef.current = selector;
+    });
 
     const snap = useSyncExternalStore(
         subscribe,
