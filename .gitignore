@@ -55,7 +55,6 @@ Beta Tester/
 *.zip
 *.7z
 *.pdf
-START.bat
 INSTALL.bat
 desktop/src_old/
 build_scripts/
