@@ -794,7 +794,7 @@ async def boot_gate_middleware(request, call_next):
                 "progress": boot_status.get("progress"),
                 "message": "Service is initialising. Retry shortly.",
             },
-            status_code=503,
+            status_code=202,
             headers={"Retry-After": "2"},
         )
     return await call_next(request)

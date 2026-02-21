@@ -36,6 +36,11 @@ export function useApi<T>(path: string, intervalMs = 5000): FetchState<T> & { re
             if (!res.ok) throw new Error(`HTTP ${res.status}`);
             const json = await res.json();
             if (mountedRef.current) {
+                if (res.status === 202) {
+                    // API is in boot-gate phase. Do not overwrite existing data, just retry shortly.
+                    scheduleNext(intervalMs);
+                    return;
+                }
                 setState({ data: json as T, loading: false, error: null });
                 backoffRef.current = intervalMs; // reset on success
                 scheduleNext(intervalMs);
