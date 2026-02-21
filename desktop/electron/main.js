@@ -52,7 +52,7 @@ function runBootstrap() {
         console.log(`[Electron] Running bootstrap: ${pythonPath} ${scriptPath}`);
 
         const proc = spawn(pythonPath, [scriptPath], {
-            env: { ...process.env, PYTHONPATH: cwd },
+            env: { ...process.env, PYTHONPATH: cwd, NEXUS_IS_PACKAGED: isDev ? "0" : "1" },
             stdio: ['pipe', 'pipe', 'pipe'],
             cwd: cwd,
         });
@@ -246,6 +246,7 @@ function createMainWindow() {
             preload: path.join(__dirname, 'preload.js'),
             contextIsolation: true,
             nodeIntegration: false,
+            sandbox: true,
         },
     });
 
@@ -263,6 +264,16 @@ function createMainWindow() {
         mainWindow.show();
         mainWindow.focus();
         if (isDev) mainWindow.webContents.openDevTools({ mode: 'detach' });
+    });
+
+    // Security Hardening: Deny all permission requests
+    mainWindow.webContents.session.setPermissionRequestHandler((webContents, permission, callback) => {
+        callback(false);
+    });
+
+    // Security Hardening: Prevent opening new windows (e.g., via target="_blank")
+    mainWindow.webContents.setWindowOpenHandler(() => {
+        return { action: 'deny' };
     });
 
     // Debug: log renderer errors

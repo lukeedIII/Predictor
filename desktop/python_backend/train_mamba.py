@@ -187,7 +187,8 @@ def create_3class_target(df: pd.DataFrame, threshold: float = PRICE_THRESHOLD,
     df.loc[future_ret < -threshold, 'target'] = CLASS_DOWN
 
     # Drop only the tail rows where future return is NaN (unavoidable)
-    df = df.dropna(subset=['target']).reset_index(drop=True)
+    if horizon > 0:
+        df = df.iloc[:-horizon].reset_index(drop=True)
 
     # Count distribution
     n_up = (df['target'] == CLASS_UP).sum()
@@ -643,7 +644,7 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 if revin:
                     x_batch = revin(x_batch)
 
-                with autocast('cuda', dtype=torch.float16):
+                with autocast(device_type=device.type, dtype=torch.float16):
                     out = model(x_batch, return_logits=True)
                     logits, aux_loss = out.logits, out.aux_loss
                     ce_loss = criterion(logits, y_batch)
@@ -754,7 +755,7 @@ def train_mamba(df: pd.DataFrame, feature_cols: list,
                 if revin:
                     x_val = revin(x_val)
 
-                with autocast('cuda', dtype=torch.float16):
+                with autocast(device_type=device.type, dtype=torch.float16):
                     out = model(x_val, return_logits=True)
                     logits = out.logits
                     loss = criterion(logits, y_val_batch)

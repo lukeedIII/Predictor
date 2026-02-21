@@ -90,12 +90,19 @@ class TestLabelCreation:
 
         # Manually compute expected target
         expected_future = synthetic_ohlcv['close'].shift(-15)
-        expected_target = (expected_future > synthetic_ohlcv['close'] * 1.003).astype(float)
-        # Drop NaN rows (last 15)
+        threshold = getattr(config, 'PREDICTION_THRESHOLD', 0.001)
+        pct_change = (expected_future - synthetic_ohlcv['close']) / synthetic_ohlcv['close']
+        
+        expected_target = pd.Series(index=synthetic_ohlcv.index, dtype=float)
+        expected_target[pct_change > threshold] = 1.0
+        expected_target[pct_change < -threshold] = 0.0
+        
+        # Drop NaN rows (last 15 and neutral zone)
         expected_target = expected_target.dropna()
 
         actual = df_out['target'].values
-        expected = expected_target.iloc[:len(actual)].values
+        # Match expected target using df_out's original index (which was preserved)
+        expected = expected_target.loc[df_out.index].values
 
         assert len(actual) > 0, "No target rows produced"
         np.testing.assert_array_equal(actual, expected)
@@ -155,8 +162,8 @@ class TestCausalIntegrity:
         if valid_mask.any():
             # Spot-check first valid row
             idx = df_out.index[valid_mask][0]
-            row_pos = df_out.index.get_loc(idx)
-            expected_future = synthetic_ohlcv['close'].iloc[row_pos + 15]
+            # Use original index for expected_future because idx is preserved from synthetic_ohlcv
+            expected_future = synthetic_ohlcv.loc[idx + 15, 'close']
             actual_future = df_out.loc[idx, 'future_price']
             assert abs(actual_future - expected_future) < 1e-6
 

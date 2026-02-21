@@ -1164,11 +1164,12 @@ class PaperTrader:
         if os.path.exists(self._feedback_path):
             try:
                 with open(self._feedback_path, 'r') as f:
-                    self._feedback_log = json.load(f)
+                    data = json.load(f)
+                    self._feedback_log = deque(data, maxlen=2000)
                 logging.info(f"Loaded {len(self._feedback_log)} trade feedback entries")
             except Exception as e:
                 logging.warning(f"Failed to load feedback: {e}")
-                self._feedback_log = []
+                self._feedback_log = deque(maxlen=2000)
         
         # Load adaptive config
         if os.path.exists(self._adaptive_path):

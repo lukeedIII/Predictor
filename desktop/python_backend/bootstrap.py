@@ -109,6 +109,11 @@ def main():
         emit("done", 100, "All dependencies satisfied ✓")
         return 0
 
+    if os.environ.get("NEXUS_IS_PACKAGED", "0") == "1":
+        emit("warning", 95, f"Packaged mode: skipping runtime installation of {len(missing)} packages.")
+        emit("done", 100, "Proceeding with bundled environment.")
+        return 0
+
     emit("install", 10, f"Need to install {len(missing)} packages: {', '.join(missing)}")
 
     # 3. Ensure pip is available and up to date

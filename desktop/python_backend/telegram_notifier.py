@@ -153,7 +153,7 @@ class TelegramNotifier:
     
     def _reload_credentials(self):
         """Reload Telegram credentials from environment."""
-        self._token = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
+        self._token = os.environ.get('TELEGRAM_BOT_TOKEN', os.environ.get('TELEGRAM_TOKEN', '')).strip()
         self._chat_id = os.environ.get('TELEGRAM_CHAT_ID', '').strip()
         self._enabled = bool(self._token and self._chat_id and len(self._token) > 10)
         if self._enabled:
@@ -164,7 +164,7 @@ class TelegramNotifier:
     @property
     def is_enabled(self) -> bool:
         """Check if Telegram is configured and ready."""
-        token = os.environ.get('TELEGRAM_BOT_TOKEN', '').strip()
+        token = os.environ.get('TELEGRAM_BOT_TOKEN', os.environ.get('TELEGRAM_TOKEN', '')).strip()
         chat_id = os.environ.get('TELEGRAM_CHAT_ID', '').strip()
         if token and chat_id and len(token) > 10:
             self._token = token

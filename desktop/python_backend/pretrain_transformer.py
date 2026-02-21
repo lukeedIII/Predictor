@@ -474,7 +474,7 @@ def pretrain(df: pd.DataFrame, feature_cols: list, epochs: int = 10, lr: float =
             x_tensor = torch.FloatTensor(batch_X).to(device)
             y_tensor = torch.FloatTensor(batch_y).unsqueeze(1).to(device)
 
-            with autocast('cuda', dtype=torch.float16):
+            with autocast(device_type=device.type, dtype=torch.float16):
                 output = model(x_tensor, return_logits=True)  # Raw logits for AMP
                 loss = criterion(output, y_tensor) / grad_accum
 
@@ -532,7 +532,7 @@ def pretrain(df: pd.DataFrame, feature_cols: list, epochs: int = 10, lr: float =
                 x_tensor = torch.FloatTensor(batch_X).to(device)
                 y_tensor = torch.FloatTensor(batch_y).unsqueeze(1).to(device)
 
-                with autocast('cuda', dtype=torch.float16):
+                with autocast(device_type=device.type, dtype=torch.float16):
                     output = model(x_tensor, return_logits=True)
                     loss = criterion(output, y_tensor)
 

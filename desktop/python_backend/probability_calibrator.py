@@ -193,7 +193,7 @@ class ProbabilityCalibrator:
         Returns:
             Calibrated P(UP) (0-1). Falls back to raw if not fitted.
         """
-        if not self.is_fitted:
+        if not self.is_fitted or len(self._oos_probs) < 100:
             return raw_prob
         
         try:
@@ -204,7 +204,7 @@ class ProbabilityCalibrator:
     
     def calibrate_batch(self, raw_probs: np.ndarray) -> np.ndarray:
         """Calibrate an array of probabilities."""
-        if not self.is_fitted:
+        if not self.is_fitted or len(self._oos_probs) < 100:
             return raw_probs
         try:
             return np.clip(self.calibrator.predict(raw_probs), 0.01, 0.99)

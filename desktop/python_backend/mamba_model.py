@@ -533,15 +533,15 @@ class SmallJamba(nn.Module):
                 aux = aux + block.moe.aux_loss
         return aux
 
-    def forward(self, x, return_logits=False):
+    def forward(self, x, return_logits=True):
         """
         Args:
             x: (B, seq_len, input_size) — e.g., (batch, 120, 36)
-            return_logits: If True, return raw logits
+            return_logits: Deprecated. Always returns raw logits for AMP stability.
 
         Returns:
             Tuple of (output, aux_loss) where:
-              output: num_classes=1 → (B, 1), num_classes=3 → (B, 3)
+              output: num_classes=1 → (B, 1), num_classes=3 → (B, 3) (RAW LOGITS)
               aux_loss: scalar MoE load-balancing loss (0 if no MoE blocks)
         """
         # Project input features to model dimension
@@ -560,14 +560,9 @@ class SmallJamba(nn.Module):
 
         # Classify
         logits = self.head(x)                 # (B, num_classes)
-        if return_logits:
-            return ModelOut(logits=logits, aux_loss=aux_loss)
-
-        # Apply appropriate activation
-        if self.num_classes == 1:
-            return ModelOut(logits=self.sigmoid(logits), aux_loss=aux_loss)
-        else:
-            return ModelOut(logits=F.softmax(logits, dim=-1), aux_loss=aux_loss)
+        
+        # ALWAYS return raw logits to prevent numerical instability and double-activation
+        return ModelOut(logits=logits, aux_loss=aux_loss)
 
     @property
     def num_parameters(self):

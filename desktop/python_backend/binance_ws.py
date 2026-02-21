@@ -62,6 +62,7 @@ class BinanceWSClient:
         self._connected: bool = False
         self._running: bool = False
         self._thread: Optional[threading.Thread] = None
+        self._ws_app = None
         self._backoff: float = BASE_DELAY_SEC
         self._reconnect_count: int = 0
         self._last_message_time: float = 0.0
@@ -197,6 +198,11 @@ class BinanceWSClient:
         """Stop the WebSocket client gracefully."""
         self._running = False
         self._connected = False
+        if getattr(self, '_ws_app', None):
+            try:
+                self._ws_app.close()
+            except Exception:
+                pass
         logger.info("🔌 BinanceWS client stopped")
 
     # ═══════════════════════════════════════════════════
@@ -245,7 +251,7 @@ class BinanceWSClient:
 
         logger.info(f"BinanceWS connecting to combined stream...")
 
-        ws = ws_lib.WebSocketApp(
+        self._ws_app = ws_lib.WebSocketApp(
             COMBINED_STREAM_URL,
             on_open=self._on_open,
             on_message=self._on_message,
@@ -254,7 +260,7 @@ class BinanceWSClient:
         )
         # run_forever blocks until disconnect
         # ping_interval handles Binance's 20s ping requirement
-        ws.run_forever(
+        self._ws_app.run_forever(
             ping_interval=20,
             ping_timeout=10,
             reconnect=0,  # we handle reconnect ourselves

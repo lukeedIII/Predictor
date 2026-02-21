@@ -75,6 +75,9 @@ _retrain_status = {
 _data_collect_stop = threading.Event()
 DATA_COLLECT_INTERVAL_SEC = 60  # Collect every minute
 
+# Prediction refresh thread stop event
+_prediction_refresh_stop = threading.Event()
+
 # App boot timestamp — used by agent for lifetime awareness
 _app_boot_time = time.time()
 
@@ -98,9 +101,8 @@ def _check_system_requirements():
         cc_major, cc_minor = torch.cuda.get_device_capability(0)
         compute_cap = cc_major + cc_minor / 10
         
-        # RTX 3060 = compute capability 8.6, RTX 4060 = 8.9, RTX 5080 = 12.0
-        if compute_cap < 8.6:
-            return False, f"GPU '{gpu_name}' (compute {cc_major}.{cc_minor}) is below minimum. Requires RTX 3060 or higher (compute 8.6+)."
+        if compute_cap < 8.0:
+            logging.warning(f"GPU '{gpu_name}' (compute {cc_major}.{cc_minor}) is below recommended Ampere architecture (8.0+). Performance may be degraded.")
         
         vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         logging.info(f"GPU check passed: {gpu_name} (compute {cc_major}.{cc_minor}, {vram_gb:.1f} GB VRAM)")
@@ -534,6 +536,7 @@ async def lifespan(app: FastAPI):
     _retrain_stop.set()
     _data_collect_stop.set()
     _gpu_game_stop.set()
+    _prediction_refresh_stop.set()
     push_task.cancel()
     if binance_ws:
         binance_ws.stop()
@@ -592,7 +595,7 @@ def _prediction_refresh_loop():
     Results are stored in `_cached_prediction` and merged by the fast loop.
     """
     global _cached_prediction
-    while True:
+    while not _prediction_refresh_stop.is_set():
         try:
             if predictor and predictor.is_trained:
                 pred = predictor.get_prediction()
@@ -626,7 +629,7 @@ def _prediction_refresh_loop():
                     _cached_prediction = enrichment
         except Exception as e:
             logging.debug(f"Prediction refresh error: {e}")
-        time.sleep(_SLOW_TICK_INTERVAL)
+        _prediction_refresh_stop.wait(_SLOW_TICK_INTERVAL)
 
 
 async def _ws_push_loop():
@@ -2274,7 +2277,7 @@ def paper_reset():
     # Close all positions
     for pos in list(trader.positions):
         try:
-            trader.close_position(pos, pos.entry_price, "RESET")
+            trader.close_position(current_price=pos.entry_price, reason="RESET", pos=pos)
         except Exception:
             pass
     trader.positions.clear()

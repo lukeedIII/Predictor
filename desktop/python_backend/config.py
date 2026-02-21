@@ -157,7 +157,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 
 # Notifications
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", os.getenv("TELEGRAM_TOKEN", ""))
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "")
 
 # ── Intervals ─────────────────────────────────────────
@@ -215,6 +215,7 @@ PAPER_FEE_MAKER_PCT = 0.02     # Binance maker fee per side (unused — paper us
 PAPER_SLIPPAGE_PCT = 0.01      # Estimated slippage per fill (0.01%)
 
 # ── Prediction Target ────────────────────────────────
+LABEL_POLICY_VERSION = "v2_3class_symmetric"   # Master version of the label/target strategy
 PREDICTION_THRESHOLD = 0.001   # Symmetric UP/DOWN threshold (0.1%)
                                # UP = future_price > close * (1 + threshold)
                                # DOWN = future_price < close * (1 - threshold)

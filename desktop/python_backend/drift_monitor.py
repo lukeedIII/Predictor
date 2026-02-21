@@ -161,16 +161,23 @@ class DriftMonitor:
         )
 
     def _save_snapshot(self):
-        """Persist reference distributions to disk."""
+        """Persist reference distributions to disk with atomic replace."""
+        tmp_path = self._snapshot_path + ".tmp"
         try:
             save_dict = {'_snapshot_time': np.array([self._snapshot_time])}
             for name, values in self._ref_feature_stats.items():
                 save_dict[f'feat_{name}'] = values
             if self._ref_prob_hist is not None:
                 save_dict['_prob_hist'] = self._ref_prob_hist
-            np.savez_compressed(self._snapshot_path, **save_dict)
+            np.savez_compressed(tmp_path, **save_dict)
+            os.replace(tmp_path, self._snapshot_path)
         except Exception as e:
             logging.warning(f"[DRIFT-MONITOR] Failed to save snapshot: {e}")
+            if os.path.exists(tmp_path):
+                try:
+                    os.remove(tmp_path)
+                except:
+                    pass
 
     def _load_snapshot(self):
         """Load persisted reference distributions."""

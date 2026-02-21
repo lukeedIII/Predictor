@@ -28,7 +28,16 @@
       },
       {
         "from": "python_backend",
-        "to": "python_backend"
+        "to": "python_backend",
+        "filter": [
+          "**/*",
+          "!**/tests/**",
+          "!**/train_*.py",
+          "!**/pretrain_*.py",
+          "!**/data/**",
+          "!**/*.md",
+          "!**/*.log"
+        ]
       }
     ],
     "win": {

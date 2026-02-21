@@ -30,3 +30,19 @@ python-dotenv>=1.0.0
 GPUtil>=1.4.0
 plyer>=2.1.0
 platformdirs>=4.0.0
+
+# === Communication / Scraping ===
+websocket-client>=1.8.0
+httpx>=0.27.0
+
+# === Pretraining / Hugging Face ===
+huggingface_hub>=0.23.0
+datasets>=2.19.0
+
+# === Hardware / System Utils ===
+psutil>=5.9.0
+
+# === Advanced Quant Models (Optional typically, but explicitly required by quant_models.py) ===
+arch>=7.0.0
+EMD-signal>=1.5.0
+PyWavelets>=1.4.1
